@@ -52,3 +52,9 @@ data/lab/
 
 # Agent worktrees (workflow sandboxes) are never part of the repo
 .claude/worktrees/
+
+# AgentHire local runtime (scripts/agenthire-up.sh): clone, venv, db, logs,
+# and the demo's Allowance-side incident file
+.agenthire/
+# Outputs of a demo run whose checks failed (the committed files are left alone)
+apps/web/public/*.failed.json

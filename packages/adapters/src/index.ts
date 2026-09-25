@@ -15,6 +15,10 @@
  *   uniswap.ts     Uniswap v4 hook      -> off-chain spend-cap mirror
  *   curvegrid.ts   Curvegrid MultiBaas  -> dashboard view models + chain reader
  *   sui.ts         Sui (stretch)        -> programmable escrow w/ clawback
+ *   agenthire.ts   AgentHire marketplace -> SettlementService + ScreeningService
+ *                  (x402/EIP-3009 on Mock USDC, reputation + operator incidents),
+ *                  plus SerializedPayer (one payment at a time per root mandate)
+ *   agenthire-audit.ts  AgentHire A2A    -> shadow audit (replay sub-agent hires through pay())
  */
 
 import type { PaymentAdapters } from "@allowance/core";
@@ -31,6 +35,15 @@ export * from "./ens";
 export * from "./uniswap";
 export * from "./curvegrid";
 export * from "./sui";
+export * from "./agenthire";
+export * from "./agenthire-audit";
+// Both AgentHire modules define these two names. The package-level ones are
+// agenthire.ts's: its `usdcToMicro` throws on a negative or non-finite amount,
+// which is what payment code wants. The audit's lenient variant (clamps
+// AgentHire's float event amounts to 0n) stays importable as `simUsdcToMicro`.
+// The two `AgentHireSimEvent` shapes are the same wire type.
+export { usdcToMicro, type AgentHireSimEvent } from "./agenthire";
+export { usdcToMicro as simUsdcToMicro } from "./agenthire-audit";
 
 /* ------------------------------------------------------------------ */
 /* Convenience aliases (match the prose names used in the build brief). */

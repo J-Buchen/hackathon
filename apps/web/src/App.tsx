@@ -13,6 +13,7 @@ import type { Snapshot } from "./types";
 import { parseSnapshot } from "./snapshot";
 import { DashboardSkeleton } from "./components/DashboardSkeleton";
 import { parseSwarmSnapshot, type SwarmSnapshot } from "./swarm/types";
+import { parseAgentHireSummary, type AgentHireSummary } from "./agenthire";
 import "./styles.css";
 
 // Code-split the live dashboard: it renders only below the fold AND only after
@@ -181,6 +182,8 @@ export function App() {
 
       <CenterBookSection />
 
+      <AgentHireSection />
+
       <Sponsors />
       </main>
       <SiteFooter />
@@ -255,7 +258,108 @@ function CenterBookSection() {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Nav                                                                         */
+/* AgentHire — the live marketplace run (npm run demo:agenthire)               */
+/* -------------------------------------------------------------------------- */
+// This tree settles through AgentHire (keyless, so simulated), not 1inch Aqua,
+// and a BLOCKED_MANDATE here can also be the settlement guard refusing a challenge.
+// Screening blocks on Allowance's own operator-incident record as well as on
+// AgentHire's (simulated) reputation, so the label names both.
+const AGENTHIRE_STAGES = {
+  SETTLED: "AgentHire · simulated",
+  BLOCKED_MANDATE: "mandate · settlement guard",
+  BLOCKED_SCREENING: "screening · operator incidents / AgentHire reputation",
+} as const;
+
+type AgentHireLoad =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; snapshot: Snapshot; summary: AgentHireSummary | null };
+
+function AgentHireSection() {
+  const [state, setState] = useState<AgentHireLoad>({ status: "loading" });
+  useEffect(() => {
+    let cancelled = false;
+    const getJson = (path: string) =>
+      fetch(path).then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} loading ${path.slice(1)}`);
+        return r.json() as Promise<unknown>;
+      });
+    Promise.all([
+      getJson("/agenthire-snapshot.json").then(parseSnapshot),
+      // The sidecar only adds the headline and notes; the tree renders without it.
+      getJson("/agenthire-receipts.json").then(parseAgentHireSummary).catch(() => null),
+    ])
+      .then(([snapshot, summary]) => {
+        if (!cancelled) setState({ status: "ready", snapshot, summary });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled)
+          setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <section className="section" id="agenthire">
+      <div className="container">
+        <Reveal className="dash-head">
+          <span className="overline">A live agent marketplace</span>
+          <h2 className="h2">
+            A fund's PM hires a scraper on AgentHire. One <span className="hl">close</span> takes it all back.
+          </h2>
+          <p className="lede">
+            Rendered from <code>agenthire-snapshot.json</code>, written by{" "}
+            <code>npm run demo:agenthire</code> against an unmodified, keyless AgentHire on this machine.
+            The scraper is hired at AgentHire's own quote. The overspend attempts, scripted by the demo
+            on the scraper's behalf, are blocked and recorded as an incident on Allowance's side, which
+            is not a slash; operators are bound through a World ID <em>mock</em>. On a synthetic arena
+            return path (not market data), the drawdown ladder stops the PM out, and closing the PM's
+            mandate kills the data budget in the same step. AgentHire's settlement and agent-to-agent
+            routes are simulated in keyless mode, and its escrow is off-chain, so nothing here claims
+            escrow protection.
+          </p>
+          {state.status === "ready" && state.summary && (
+            <div className="notice" style={{ marginTop: 28, textAlign: "left" }}>
+              <strong>Shadow audit (simulated marketplace):</strong> {state.summary.auditHeadline}
+              {state.summary.incidents.map((i) => (
+                <div key={i} className="notice-hint">
+                  Incident: {i}
+                </div>
+              ))}
+              {state.summary.honesty.length > 0 && (
+                <ul className="notice-hint" style={{ margin: "12px 0 0", paddingLeft: 18 }}>
+                  {state.summary.honesty.map((h) => (
+                    <li key={h}>{h}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </Reveal>
+        {state.status === "loading" && <DashboardSkeleton />}
+        {state.status === "error" && (
+          <div className="notice notice-error">
+            Could not load <code>/agenthire-snapshot.json</code>: {state.message}
+            <div className="notice-hint">
+              Boot AgentHire with <code>bash scripts/agenthire-up.sh</code> (127.0.0.1:5301), run{" "}
+              <code>npm run demo:agenthire</code>, then reload.
+            </div>
+          </div>
+        )}
+        {state.status === "ready" && (
+          <Suspense fallback={<DashboardSkeleton />}>
+            <Dashboard snapshot={state.snapshot} stageLabels={AGENTHIRE_STAGES} />
+          </Suspense>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Nav                                                                        */
 /* -------------------------------------------------------------------------- */
 function Nav() {
   return (
@@ -269,6 +373,7 @@ function Nav() {
         <a href="#how" className="nav-hide-sm">How it works</a>
         <a href="#dashboard">Dashboard</a>
         <a href="#center-book" className="nav-hide-sm">Center book</a>
+        <a href="#agenthire" className="nav-hide-sm">AgentHire</a>
         <span className="nav-pill">
           <span className="dot" /> live · x402
         </span>

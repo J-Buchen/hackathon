@@ -12,11 +12,13 @@
     "typecheck": "tsc -b",
     "test": "node --import tsx --test src/flow.test.ts",
     "demo": "tsx src/demo.ts",
-    "demo:swarm": "tsx src/swarm-demo.ts"
+    "demo:swarm": "tsx src/swarm-demo.ts",
+    "demo:agenthire": "tsx src/agenthire-demo.ts"
   },
   "dependencies": {
     "@allowance/core": "*",
     "@allowance/adapters": "*",
+    "@allowance/lab": "*",
     "@allowance/swarm": "*"
   }
 }

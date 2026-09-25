@@ -264,6 +264,23 @@ class DelegationTree {
   //   available budget (root cannot grow); shrink only down to spentDirect +
   //   reserved; revoked subtrees refused. Success → RESIZE / OK; failure records
   //   RESIZE / ATTENUATION_REJECTED then throws AttenuationError.
+  close(name: string): bigint;
+  // ^ close a mandate and return the authority it frees. Every descendant,
+  //   deepest first, is shrunk to what its whole subtree spent (spentDirect +
+  //   everything spent under its children; a child that overspent keeps its
+  //   budget but its parent still counts the real spend, so no ancestor ends
+  //   below what its subtree spent), then the node itself, then the node is
+  //   revoked. Result = budgetBefore - budgetAfter = exactly
+  //   how much the parent's available() rises (for the root: returned to the
+  //   principal). Events: RESIZE / OK per node whose budget changed, then
+  //   REVOKE / REVOKED with amount = freed. Only ever shrinks, so it also
+  //   reclaims budget stranded under individually revoked descendants (which
+  //   resize() refuses). Idempotent: an already-closed node frees 0n and
+  //   records nothing; a revoked-but-unclosed node is shrunk without a second
+  //   REVOKE. Unknown name → throws UnknownNodeError. Synchronous, so it cannot
+  //   interleave with pay()'s checks — but a settlement already awaiting inside
+  //   pay() can land after it; run close() through the same per-root queue as
+  //   payments (SerializedPayer in @allowance/adapters) when payments are live.
   recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent; // custom events
 }
 ```
@@ -364,6 +381,71 @@ class WorldIDKitVerifier       implements PrincipalVerifier {}
 
 `MockAdapterConfig` (suggested): `{ deniedMerchants?: string[]; swapRate?: number; verifiedNames?: string[]; }`.
 
+### 5.1 AgentHire (`agenthire.ts`)
+
+AgentHire (shalpate/agenthire @ ab317f2) is a Flask agent marketplace paid over
+x402 / EIP-3009 on Mock USDC (Fuji 43113). Its x402 server does not bind the
+permit value to the price or check `validBefore` or the nonce, so the payer side
+does those checks. Merchants are `agenthire:<agentId>`; money is micro-USDC bigint.
+
+```ts
+class AgentHireClient {            // (baseUrl, fetchImpl?, { timeoutMs?, payTimeoutMs? = 150s }); non-JSON bodies (HTML 429) throw AgentHireError
+  getAgent(id); listAgents(q?); quote(id); onchainInfo(); reputation(id); stake(id);
+  x402Challenge(agentId, amountMicro);          // 402 from GET /api/x402/demo-execute/:id?amountUSDC=
+  x402Pay(permit);                              // POST /api/x402/pay (keyless: status "mock", realTx false)
+  x402Execute(agentId, amountMicro, permit);    // FUJI: same permit as X-Payment on the x402 route
+  triggerDirect({ fromId, toId, amountMicro, reason? }); simEvents(sinceId, limit?);
+  simStatus(); simStart(); setSimSpeed(tickRealSeconds); a2aCandidates();
+  submitDispute({ agentId, severity, reason, affectedUser }); // keyless: printed to AgentHire's log, pending_review; nothing stored, no slash
+}
+class AgentHireSettlementService implements SettlementService {} // never throws; refusals -> settled:false, "settlement: ..."; post-send failures -> UNCONFIRMED (charged)
+class AgentHireScreeningService  implements ScreeningService {}  // banned / tier / incidents / OPERATOR incidents (store re-read each check), fail-closed
+class OperatorRegistry {}   // agentId -> { deployerWallet, worldIdNullifier (World ID mock) }: one counterparty per operator
+class IncidentLedger {}     // Allowance-side incidents keyed by agent AND operator (AgentHire has no keyless non-slashing route); in memory or an IncidentStore
+class JsonFileIncidentStore implements IncidentStore {} // local JSON file: other processes / restarts see the same incidents (single writer)
+class OverspendWatch {}     // repeated "exceeds available" -> incident (+ sent to AgentHire's dispute route, which keyless only logs)
+class SerializedPayer {}    // pay()/close() one at a time per root mandate; queues shared by every payer in the process
+function agentHireTreeHooks(tree): { mandateExpiry, nextSeq };
+function quoteMicro(quote): bigint; function encodeUsdcParam(micro): string; // survives Python int(float*1e6)
+function settleModeFromEnv(env?): "mock" | "fuji";                            // AGENTHIRE_SETTLE
+function payerSignerFromEnv(env?): { signer, source };                        // AGENTHIRE_PAYER_KEY (env only) or a throwaway
+class QuoteBook {}          // (node, agentId) -> quote; fetch(client, node, agentId) reads /api/pricing/quote itself and is the ONLY way in
+function planHire({ cap, main, subs: {key, weight}[] }): HirePlan;  // main = its quote; subs split cap - main pro rata, summing to the micro
+function delegateAll(tree, parent, children): AgentNode[];            // all-or-nothing: a whole subtree (children may carry children) is checked, then written
+function aliasNodeLabel(hirerId, subAgentId): string;                 // "a<sub>-via-a<hirer>": one node per A2A edge (cycles, shared children)
+function aliasPayerAgentId(node): number | undefined;                 // payerAgentIdOf for alias nodes
+function recoverPermitSigner(permit, usdc, chainId?): string; function createThrowawaySigner(): TypedDataSigner;
+```
+
+Settlement always refuses an amount that is not AgentHire's own quote for the
+agent being paid, to the micro-USDC: the `QuoteBook` entry the hire was sized
+from (read from this same AgentHire, at most `quoteMaxAgeSeconds` old, default
+900), or, with no book, a live GET /api/pricing/quote read at settle time.
+AgentHire's x402 route prices whatever `?amountUSDC=` it is asked for, so the
+challenge's echo binds nothing; the quote does. Settlement then refuses unless
+the 402 challenge matches: chainId 43113 (challenge, domain, deployment), token
+and domain `verifyingContract` = MockUSDC, recipient and `permit.to` =
+EscrowPayment (from /api/onchain/info), `amountMicro` = permit value = the
+checked amount, domain "Mock USDC" v1, and `validBefore` later than now but no
+later than the paying node's mandate expiry. It then signs its own EIP-3009
+permit (fresh nonce). A node that is itself an AgentHire agent
+(`payerAgentIdOf`) settles through /api/sim/trigger-direct with reason
+`allowance:<node>#<seq>`. Once the permit or the trigger-direct request has
+been sent, a timeout, 5xx, refusal of the permit or mismatched answer is
+UNCONFIRMED, not refused: it returns `settled:true` so pay() charges the
+mandate (AgentHire may have booked it, and a permit is redeemable until
+`validBefore`), with an `agenthire-unconfirmed:` reference and
+`receipt.unconfirmed` for reconciliation. The only post-send refusal is a 4xx
+from trigger-direct, which AgentHire answers before booking. Both keyless routes
+are simulated and receipts say so. AgentHire's escrow is off-chain in live
+flows, so nothing here claims escrow protection. The `fuji` path is unit-tested
+with a fake fetch only. It needs AgentHire facilitator keys, a Fuji RPC, and a
+payer holding Fuji Mock USDC (`AGENTHIRE_PAYER_KEY`; a throwaway signer holds
+none), so it has not been run. On chain, `contracts/contracts/SpendCapHook.sol`
+enforces the cap at swap time (a view-style `beforeSwap` check against
+`MandateRegistry.canSpend`); the same check in front of
+`transferWithAuthorization` is not built.
+
 ---
 
 ## 6. `@allowance/orchestrator` responsibilities
@@ -378,6 +460,13 @@ class WorldIDKitVerifier       implements PrincipalVerifier {}
 - IDKit failure path (§8 has success): call `MockPrincipalVerifier.verify` with a
   failing proof and log that funding was refused — do **not** call `fundRoot`.
 - May also host the x402 payment flow; keep the demo runnable with `npm run demo`.
+- `src/agenthire-demo.ts` (`npm run demo:agenthire`) runs the AgentHire story
+  LIVE against a local keyless AgentHire (`scripts/agenthire-up.sh`; base URL from
+  `AGENTHIRE_URL`). It also depends on `@allowance/swarm` (`nextLadderState`) and
+  `@allowance/lab` (arena return path). Every payment and `close()` goes through
+  a `SerializedPayer`. On success it writes `apps/web/public/agenthire-snapshot.json`
+  (this schema, via `writeSnapshotFile`) and `apps/web/public/agenthire-receipts.json`;
+  a run with a failed check writes `*.failed.json` instead. See `docs/AGENTHIRE.md`.
 
 ---
 

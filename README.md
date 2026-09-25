@@ -66,6 +66,9 @@ npm run dev:web      # opens the dashboard that renders the snapshot
 - `npm run demo:swarm` runs the **center book** (below): a Tiger-Cub fund of
   agents, head-to-head vs per-agent guardrails, a 20-seed sweep and an
   ablation. It writes `apps/web/public/swarm-snapshot.json`.
+- `npm run demo:agenthire` runs the **AgentHire** story (below) against a local
+  AgentHire booted with `scripts/agenthire-up.sh`. It writes
+  `apps/web/public/agenthire-snapshot.json` and a receipts sidecar.
 - `npm run typecheck` runs `tsc -b` across every package.
 - `npm test` runs the aggregated Node test suite (core + adapters + orchestrator).
   See [Testing](#testing) for the full matrix, including the web and Solidity suites.
@@ -107,6 +110,47 @@ control is where the value comes from.
 Full write-up, including what didn't help: [`docs/CENTER-BOOK.md`](docs/CENTER-BOOK.md).
 Prices are synthetic and the research is illustrative; this is not investment
 advice.
+
+---
+
+## A live agent marketplace: AgentHire
+
+[AgentHire](https://github.com/shalpate/agenthire) is a Flask marketplace where
+agents are hired over x402 and hire each other. The integration runs against an
+unmodified, keyless AgentHire on `127.0.0.1`:
+
+```bash
+bash scripts/agenthire-up.sh        # 127.0.0.1:5301 (PORT=... for another port)
+npm run demo:agenthire              # AGENTHIRE_URL=http://127.0.0.1:<port> for another port
+bash scripts/agenthire-down.sh
+```
+
+In the demo, a fund's Luckin PM gets a capital mandate. It hires AgentHire's
+WebCrawler X, at its quote, to pull Baidu Maps store counts. The steps:
+
+1. The scraper's budget, and those of WebCrawler X's own sub-hires, are sized
+   from AgentHire's quotes.
+2. Before signing the x402 permit, Allowance checks that the amount is
+   AgentHire's own quote, and checks the chain, the token, the recipient and
+   how long the permit stays valid. AgentHire's server does not check these.
+3. Acting for WebCrawler X (scripted by the demo), the scraper's sub-hire node
+   tries twice to spend past its mandate. It is blocked both times, and an
+   incident (not a slash) lands on Allowance's record for its operator.
+4. A second buyer, whose own services load that record from disk, is refused
+   at screening.
+5. The allocator's drawdown ladder stops the PM out on a synthetic (simulated)
+   track record. A single `tree.close()` then frees the PM's capital and kills
+   the data budget while it still holds a full hire at every level.
+6. A shadow audit replays AgentHire's own agent-to-agent hires through `pay()`
+   and reports how many would have been blocked even under AgentHire's own
+   displayed Hard Spend Cap.
+
+In keyless mode AgentHire's settlement and A2A routes are simulated, and its
+escrow is off-chain in live flows, so nothing here claims escrow protection.
+The `AGENTHIRE_SETTLE=fuji` path has not been run from this sandbox, and as
+shipped it cannot settle without a funded payer (`AGENTHIRE_PAYER_KEY`).
+Details, gaps with file:line references, and what is real vs simulated:
+[`docs/AGENTHIRE.md`](docs/AGENTHIRE.md).
 
 ---
 
@@ -211,6 +255,9 @@ You can also run any layer in isolation:
 | `@allowance/core` — tree | `packages/core/src/tree.test.ts` | ENS subname helpers (parent/label parsing) and `DelegationTree` — insert/lookup, remaining-budget accounting, revoke cascades over the subtree. |
 | `@allowance/core` — payment | `packages/core/src/payment.test.ts` | The four-stage `pay()` gauntlet in order — identity → mandate → screening → settle — with each blocked/denied/revoked path; amount round-trips through settlement without precision loss. |
 | `@allowance/adapters` | `packages/adapters/src/adapters.test.ts` | Sponsor ports on deterministic mocks: Intercepta screening **block**, 1inch Aqua swap-rate math, identity/principal verification paths, and the `SpendCapHook` mirror of the on-chain cap. |
+| `@allowance/adapters` — AgentHire | `packages/adapters/src/agenthire.test.ts` | Against a fake AgentHire: settlement refuses any amount that is not AgentHire's quote (with or without a `QuoteBook`, whose entries only `fetch()` can add), and any challenge whose chain, token, recipient, domain or `validBefore` disagrees with the mandate, and signs nothing; before a permit is sent HTML 429s and timeouts are refusals, after it they are charged as UNCONFIRMED so a node cannot spend the same authority twice (Fuji 402 and timeout cases); sub-agent budgets split `cap − main` to the micro and are delegated all-or-nothing; repeated overspend becomes an operator incident plus a dispute (never a slash), persisted so a fresh ledger in another process screens the next buyer out; `SerializedPayer` stops two payments, even from two payer instances, spending one leftover. |
+| `@allowance/adapters` — shadow audit | `packages/adapters/src/agenthire-audit.test.ts` | On a recorded AgentHire capture: A2A hires link to their primary job, direct and orphan hires are excluded, cycles and shared children get one alias node per parent, the headline comes from the replay-decided Hard Spend Cap scenario while `strict` is the by-definition total, `--organic-only` drops demo-cascade jobs, and AgentHire operator screening plugs into the replay. |
+| `@allowance/core` — close | `packages/core/src/tree.test.ts` | `close` shrinks a subtree to what it spent, revokes it, and returns exactly what the parent's `available` rises by; never shrinks a parent below what its subtree really spent (even after an unserialized overspend); idempotent; reclaims budget under individually revoked descendants. |
 | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
 | `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
 | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
@@ -236,10 +283,11 @@ test to force a green run — fix the code instead.
 packages/core         @allowance/core         pure domain: types, attenuation, tree, payment engine (zero runtime deps)
 packages/adapters     @allowance/adapters     sponsor ports: deterministic mock + real-integration stub
 packages/swarm        @allowance/swarm        the center book: agent swarm, allocator, Tiger-Cub process, coffee thesis
-services/orchestrator @allowance/orchestrator x402 flow + demo runner (writes the snapshot)
+services/orchestrator @allowance/orchestrator x402 flow + demo runners (demo, demo:swarm, demo:agenthire)
+scripts/              agenthire-up.sh / agenthire-down.sh (local keyless AgentHire), agenthire-audit.ts (shadow audit)
 apps/web              allowance-web           Vite + React dashboard of the spend tree + event ledger
 contracts             solidity (Hardhat)      Uniswap v4 hook / settlement guard enforcing the cap on-chain
-docs/                 ARCHITECTURE.md · SPONSORS.md · FEEDBACK.md
+docs/                 ARCHITECTURE.md · SPONSORS.md · FEEDBACK.md · CENTER-BOOK.md · AGENTHIRE.md · AGENTHIRE-SHADOW-AUDIT.md
 DESIGN.md             authoritative spec — locked types, signatures, and the storyline
 ```
 
@@ -252,6 +300,7 @@ DESIGN.md             authoritative spec — locked types, signatures, and the s
   dashboard, GPU-only animation, `content-visibility`, reduced-motion, no
   external fonts/CDNs) — read it before touching `apps/web`.
 - [`docs/CENTER-BOOK.md`](docs/CENTER-BOOK.md) — the center book and the Tiger-Cub example portfolio: design, results, ablation, limits.
+- [`docs/AGENTHIRE.md`](docs/AGENTHIRE.md) — the AgentHire integration: the demo, the gaps it closes, what is simulated, the Fuji switch. The shadow audit has its own page: [`docs/AGENTHIRE-SHADOW-AUDIT.md`](docs/AGENTHIRE-SHADOW-AUDIT.md).
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — domain model, attenuation rule, payment pipeline, data flow, on-chain vs off-chain split.
 - [`docs/SPONSORS.md`](docs/SPONSORS.md) — per-track submission checklist with the required failure-path demos flagged.
 - [`docs/FEEDBACK.md`](docs/FEEDBACK.md) — the Uniswap-required developer feedback.

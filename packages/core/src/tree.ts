@@ -412,6 +412,91 @@ export class DelegationTree {
   }
 
   /**
+   * Close a mandate: give back everything its subtree has not spent, then
+   * revoke it. Returns the authority freed back to the parent (or, for the
+   * root, back to the principal) as a bigint.
+   *
+   * Order of operations (synchronous, so no pay() budget check interleaves;
+   * a settlement already awaiting inside pay() can still land afterwards, so
+   * queue close() with payments via SerializedPayer when they are live):
+   *   1. Every descendant, DEEPEST FIRST, is shrunk to what its whole subtree
+   *      actually spent: its own `spentDirect` plus everything spent under
+   *      each of its children. A leaf therefore ends at exactly what it spent.
+   *   2. The node itself is shrunk the same way, so its budget ends equal to
+   *      the total spent anywhere in its subtree.
+   *   3. The node is revoked; descendants then fail `pay()` with REVOKED (and
+   *      have 0 available anyway).
+   *
+   * Budgets only ever shrink. If a descendant overspent its budget (possible
+   * only when unserialized concurrent pay() calls both passed the budget check),
+   * it keeps its budget, and its ancestors count what it really spent, not its
+   * budget: a parent is never shrunk below what its subtree spent, so close()
+   * cannot turn a local overspend into extra authority for the grandparent.
+   *
+   * `freed = budgetBefore(name) - budgetAfter(name)`, which is exactly how much
+   * the parent's `available()` rises. Descendant shrinks flow up into the
+   * node's own budget before it is shrunk, so they are included in `freed`.
+   *
+   * Events: one RESIZE / OK per node whose budget actually changed (deepest
+   * first), then one REVOKE / REVOKED for the node carrying `freed` as its
+   * amount. Shrinking to the committed amount can never violate attenuation,
+   * so unlike `resize()` it also applies to descendants that were revoked
+   * individually earlier — their dead, unspent authority is reclaimed too.
+   *
+   * Idempotent: closing an already-closed node frees 0n and records nothing.
+   * A node that was revoked (but not closed) can still be closed to reclaim
+   * its unspent budget; it is not revoked a second time.
+   *
+   * @throws UnknownNodeError for a name that is not in the tree.
+   */
+  close(name: string): bigint {
+    const node = this.requireNode(name);
+    const before = node.mandate.budget;
+
+    // Post-order walk: children are settled before their parent. Returns what
+    // the subtree under `current` (itself included) actually spent.
+    const shrinkSubtree = (current: AgentNode): bigint => {
+      let spent = current.mandate.spentDirect;
+      const bucket = this.childrenIndex_.get(current.name);
+      // A child's own budget can be BELOW what its subtree spent (it overspent
+      // and was left at its budget), so count the spend, not the budget.
+      if (bucket) for (const child of bucket) spent += shrinkSubtree(child);
+      const old = current.mandate.budget;
+      // Only ever shrink. spent > old only arises when unserialized concurrent
+      // pay() calls overspent a node (see SerializedPayer in
+      // @allowance/adapters); growing here would hand out authority the parent
+      // never granted.
+      if (spent >= old) return spent;
+      current.mandate.budget = spent;
+      this.recordEvent({
+        type: "RESIZE",
+        node: current.name,
+        detail: `close("${name}"): budget of "${current.name}" shrunk ${old} -> ${spent} (what its subtree spent)`,
+        result: "OK",
+        amount: spent,
+        merchant: null,
+      });
+      return spent;
+    };
+    shrinkSubtree(node);
+
+    const freed = before - node.mandate.budget;
+    if (!node.mandate.revoked) {
+      node.mandate.revoked = true;
+      const to = node.parent === null ? "the principal" : `"${node.parent}"`;
+      this.recordEvent({
+        type: "REVOKE",
+        node: name,
+        detail: `mandate for "${name}" closed: subtree kept ${node.mandate.budget} spent, freed ${freed} back to ${to}; all descendants disabled`,
+        result: "REVOKED",
+        amount: freed,
+        merchant: null,
+      });
+    }
+    return freed;
+  }
+
+  /**
    * Append an event to the log, assigning the next sequence number. Used
    * internally and by the payment pipeline; orchestrators may also use it to
    * record custom events into the same ordered stream.

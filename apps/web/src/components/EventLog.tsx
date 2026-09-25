@@ -70,11 +70,15 @@ export const EventLog = memo(function EventLog({
   events,
   currency,
   decimals,
+  stageLabels,
 }: {
   events: SnapshotEvent[];
   currency: string;
   decimals: number;
+  /** Overrides the stage tag per result (e.g. a snapshot that did not settle through 1inch Aqua). */
+  stageLabels?: Partial<Record<EventResult, string>>;
 }) {
+  const stages = stageLabels ? { ...RESULT_STAGE, ...stageLabels } : RESULT_STAGE;
   // A snapshot with zero events (malformed/partial file that still passes shape
   // validation, or a future minimal demo) would otherwise render an empty <ol> —
   // a blank void inside the panel. Show a real empty state instead.
@@ -135,8 +139,8 @@ export const EventLog = memo(function EventLog({
             >
               {e.result}
             </span>
-            {RESULT_STAGE[e.result] && (
-              <span className="result-stage">{RESULT_STAGE[e.result]}</span>
+            {stages[e.result] && (
+              <span className="result-stage">{stages[e.result]}</span>
             )}
           </div>
         </li>

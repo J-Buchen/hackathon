@@ -56,7 +56,14 @@ function Reveal({
 /* -------------------------------------------------------------------------- */
 /* Dashboard (live data)                                                       */
 /* -------------------------------------------------------------------------- */
-function Dashboard({ snapshot }: { snapshot: Snapshot }) {
+function Dashboard({
+  snapshot,
+  stageLabels,
+}: {
+  snapshot: Snapshot;
+  /** Per-result stage tags for the event log (the defaults name the main demo's sponsors). */
+  stageLabels?: Partial<Record<EventResult, string>>;
+}) {
   const roots = useMemo(() => buildTree(snapshot.nodes), [snapshot.nodes]);
 
   const stats = useMemo(() => {
@@ -189,6 +196,7 @@ function Dashboard({ snapshot }: { snapshot: Snapshot }) {
               events={snapshot.events}
               currency={snapshot.currency}
               decimals={snapshot.decimals}
+              stageLabels={stageLabels}
             />
           </div>
         </Reveal>
