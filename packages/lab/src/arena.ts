@@ -222,6 +222,12 @@ export interface AllocatorScore {
   naiveSharpe: number;
   centerMaxDD: number;
   naiveMaxDD: number;
+  /**
+   * The center book's max drawdown with its daily returns scaled to the
+   * guardrails' volatility in the same world: drawdown per unit of risk run,
+   * for reporting only (the judge never reads it).
+   */
+  centerMaxDDAtNaiveVol: number;
 }
 
 export async function scoreAllocator(world: World, policy: CenterBookPolicy = defaultCenterBookPolicy()): Promise<AllocatorScore> {
@@ -229,6 +235,11 @@ export async function scoreAllocator(world: World, policy: CenterBookPolicy = de
   const naive = await runBook(world.market, world.swarm(), { ...defaultNaivePolicy(), leverage: policy.leverage, deploy: policy.deploy, ddStop: policy.ddStop });
   const pc = performance(center.returns);
   const pn = performance(naive.returns);
+  const sd = (r: readonly number[]) => {
+    const m = r.reduce((a, b) => a + b, 0) / r.length;
+    return Math.sqrt(r.reduce((a, b) => a + (b - m) ** 2, 0) / Math.max(1, r.length - 1));
+  };
+  const k = sd(center.returns) > 0 ? sd(naive.returns) / sd(center.returns) : 1;
   return {
     seed: world.seed,
     centerUtility: certaintyEquivalent(center.returns),
@@ -237,6 +248,7 @@ export async function scoreAllocator(world: World, policy: CenterBookPolicy = de
     naiveSharpe: pn.sharpe,
     centerMaxDD: pc.maxDrawdown,
     naiveMaxDD: pn.maxDrawdown,
+    centerMaxDDAtNaiveVol: performance(center.returns.map((x) => x * k)).maxDrawdown,
   };
 }
 
@@ -321,9 +333,11 @@ export interface TrackSummary {
   baselineSharpe: number;
   maxDD: number;
   baselineMaxDD: number;
+  /** Allocator track only: mean max drawdown with returns scaled to the baseline's volatility. */
+  maxDDAtBaselineVol?: number;
 }
 
-function summarize(pairs: { a: number; b: number; sa: number; sb: number; da: number; db: number }[]): TrackSummary {
+function summarize(pairs: { a: number; b: number; sa: number; sb: number; da: number; db: number; dv?: number }[]): TrackSummary {
   const n = pairs.length;
   const mean = (f: (p: (typeof pairs)[number]) => number) => pairs.reduce((s, p) => s + f(p), 0) / n;
   const d = pairs.map((p) => p.a - p.b);
@@ -342,6 +356,7 @@ function summarize(pairs: { a: number; b: number; sa: number; sb: number; da: nu
     baselineSharpe: mean((p) => p.sb),
     maxDD: mean((p) => p.da),
     baselineMaxDD: mean((p) => p.db),
+    ...(pairs.every((p) => p.dv !== undefined) ? { maxDDAtBaselineVol: mean((p) => p.dv!) } : {}),
   };
 }
 
@@ -382,7 +397,7 @@ export async function evaluate(
     const w = makeWorld(seed);
     metas.push(w.meta);
     const a = await scoreAllocator(w, opts.policy);
-    alloc.push({ a: a.centerUtility, b: a.naiveUtility, sa: a.centerSharpe, sb: a.naiveSharpe, da: a.centerMaxDD, db: a.naiveMaxDD });
+    alloc.push({ a: a.centerUtility, b: a.naiveUtility, sa: a.centerSharpe, sb: a.naiveSharpe, da: a.centerMaxDD, db: a.naiveMaxDD, dv: a.centerMaxDDAtNaiveVol });
     const t = scoreTiger(w, opts.tiger);
     tiger.push({ a: t.overlayUtility, b: t.buyHoldUtility, sa: t.overlaySharpe, sb: t.buyHoldSharpe, da: t.overlayMaxDD, db: t.buyHoldMaxDD });
     perWorld.push({

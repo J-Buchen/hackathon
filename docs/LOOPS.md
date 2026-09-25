@@ -32,8 +32,11 @@ multi-manager fund whose PMs are AI agents**, where
    numbers (one proposal gained +3.9 pp by lifting max drawdown from 7.6% to 10.4%) and before
    any loop-2 sealed run.
    **Risk track (from loop 3).** A proposal may instead claim lower drawdown: it wins if the center
-   book's paired change in max drawdown has a 90% upper bound below zero and neither track's mean
-   utility falls by more than 0.1 pp.
+   book's paired change in max drawdown has a 90% upper bound below zero, neither track's mean
+   utility falls by more than 0.1 pp, and it beats plain deleveraging: when utility falls, it must
+   buy at least 1.3 pp of drawdown per pp given up (uniform deleveraging buys about 0.65). A loop-3
+   researcher showed that without this last rule, trimming the deploy fraction from 0.80 to 0.79
+   would pass; it was added before any loop-3 sealed run.
 4. **Confirmation.** Winners are combined and must **confirm on a separate sealed block B** (target
    track lower bound > 0; every other track neutral as above; risk guard held). Only then does
    anything merge.

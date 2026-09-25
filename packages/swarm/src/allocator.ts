@@ -64,7 +64,11 @@ export interface CenterBookPolicy {
    * drawdown ladder, not by forgetting the evidence.
    */
   recordWindow: number;
-  /** Bayesian-style shrinkage: Sharpe × n / (n + shrinkageObs). */
+  /**
+   * Bayesian-style shrinkage: Sharpe × n / (n + shrinkageObs). It only matters
+   * between records of different lengths: when every agent started together
+   * (the examples, the arena), the factor is common and cancels in the shares.
+   */
   shrinkageObs: number;
   /** Max share of deployable capital any single agent may hold. */
   maxAgentShare: number;

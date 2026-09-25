@@ -108,8 +108,11 @@ Around them sit agents that give the allocator something to allocate between:
 ## The allocator (`allocator.ts`, pure functions)
 
 - **Score** = shrunk Sharpe over the agent's last year of record
-  (`recordWindow`, 252 days). Shrinkage is `n / (n + 60)`: a 30-day track
-  record is pulled hard toward zero. A Sharpe estimate's standard error is
+  (`recordWindow`, 252 days). Shrinkage is `n / (n + 60)`, which pulls a
+  short record toward zero relative to a long one. (In the examples and the
+  arena every agent starts on day one, so all records have the same length and
+  the factor cancels when scores become shares; it changes no allocation there.
+  It matters only for agents added mid-run.) A Sharpe estimate's standard error is
   about √(252 / n) — ±1.7 on a 90-day window — so a short window re-ranks
   agents on luck; the whole year is the evidence. Scores are not divided by
   volatility again (a Kelly weight): every agent's Sharpe has the same

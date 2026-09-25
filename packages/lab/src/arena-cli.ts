@@ -29,7 +29,8 @@ async function main() {
   for (const [name, s] of Object.entries({ allocator: r.allocator, tiger: r.tiger })) {
     console.log(
       `${name.padEnd(9)} utility ${pct(s.utility)} vs baseline ${pct(s.baseline)} | uplift ${pct(s.uplift)} [90% ${pct(s.upliftLo)}, ${pct(s.upliftHi)}] ` +
-        `| wins ${(s.winRate * 100).toFixed(0)}% | Sharpe ${s.sharpe.toFixed(2)} vs ${s.baselineSharpe.toFixed(2)} | maxDD ${pct(s.maxDD)} vs ${pct(s.baselineMaxDD)}`,
+        `| wins ${(s.winRate * 100).toFixed(0)}% | Sharpe ${s.sharpe.toFixed(2)} vs ${s.baselineSharpe.toFixed(2)} | maxDD ${pct(s.maxDD)} vs ${pct(s.baselineMaxDD)}` +
+          (s.maxDDAtBaselineVol !== undefined ? ` (${pct(s.maxDDAtBaselineVol)} at the baseline's vol)` : ""),
     );
   }
   console.log(`${count} worlds (seeds ${from}–${from + count - 1}) in ${((Date.now() - t0) / 1000).toFixed(1)}s`);

@@ -23,7 +23,9 @@
 //   2c. A RISK proposal (track "risk", from loop 3) claims lower drawdown, not
 //      higher utility: it wins if the center book's paired max-drawdown change
 //      has a 90% upper bound < 0 and neither track's mean utility falls by more
-//      than 0.1 pp.
+//      than 0.1 pp. From loop 3 it must also beat uniform deleveraging, which
+//      buys about 0.65 pp of max drawdown per pp of utility in the arena: when
+//      utility falls, the drawdown bought per pp given up must be at least 1.3.
 //   3. Winners are combined (best first; any that no longer applies is dropped)
 //      and the combination must CONFIRM on a separate block B (target track
 //      lower bound > 0). Otherwise the best single winner is tried on B.
@@ -77,7 +79,10 @@ function judge(block, dirs) {
 }
 const target = (p) => (p.track === "both" ? ["allocator", "tiger"] : p.track === "structure" || p.track === "risk" ? [] : [p.track]);
 const other = (p) => (p.track === "allocator" ? ["tiger"] : p.track === "tiger" ? ["allocator"] : p.track === "structure" || p.track === "risk" ? ["allocator", "tiger"] : []);
-const lowersRisk = (c) => !!c.risk?.allocatorMaxDD && c.risk.allocatorMaxDD.hi < 0;
+const lowersRisk = (c) =>
+  !!c.risk?.allocatorMaxDD &&
+  c.risk.allocatorMaxDD.hi < 0 &&
+  (c.allocator.mean >= 0 || -c.risk.allocatorMaxDD.mean / -c.allocator.mean >= 1.3);
 const cheap = (c) => ["allocator", "tiger"].every((t) => c[t].mean > -0.001);
 const RISK = { maxDDUp: 0.005, sharpeDown: 0.03 };
 const riskHeld = (c, base) =>
