@@ -36,12 +36,21 @@ const paired = (a, b, key) => {
   const h = 1.645 * sd / Math.sqrt(n);
   return { mean: m, lo: m - h, hi: m + h, wins: d.filter((x) => x > 0).length / n };
 };
+// Paired risk changes (candidate − baseline): max drawdown and Sharpe per world.
+// Checkouts older than loop 2 do not report them; those fields are then null.
+const pairedRisk = (a, b, key) => (a.perWorld[0]?.[key] === undefined || b.perWorld[0]?.[key] === undefined ? null : paired(a, b, key));
 const report = results.slice(1).map(({ dir, sha, dirty, r }) => ({
   dir,
   sha,
   dirty,
   allocator: paired(r, base, "allocator"),
   tiger: paired(r, base, "tiger"),
+  risk: {
+    allocatorMaxDD: pairedRisk(r, base, "allocatorMaxDD"),
+    allocatorSharpe: pairedRisk(r, base, "allocatorSharpe"),
+    tigerMaxDD: pairedRisk(r, base, "tigerMaxDD"),
+    tigerSharpe: pairedRisk(r, base, "tigerSharpe"),
+  },
   summary: { allocator: r.allocator, tiger: r.tiger },
 }));
 console.log(JSON.stringify({ from: Number(from), count: Number(count), baseline: { dir: dirs[0], sha: results[0].sha, dirty: results[0].dirty, allocator: base.allocator, tiger: base.tiger }, candidates: report }, null, 2));

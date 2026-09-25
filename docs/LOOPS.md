@@ -24,8 +24,19 @@ multi-manager fund whose PMs are AI agents**, where
    0.1 pp on average. A structural claim (a new tested guarantee, not a return claim) must be
    neutral: mean change > −0.05 pp and lower bound > −0.2 pp on both tracks. That tolerates a
    small cost; it is not "no reduction".
+   **Risk guard (from loop 2).** Under CRRA γ=3 the fund's certainty equivalent rises almost
+   linearly with the capital at work at this book's ~10% vol, so a change can win utility just by
+   taking more risk. A risk layer must not. Every candidate must also hold each track's risk on
+   every block it is judged on: mean max drawdown at most 0.5 pp above the code it replaces, and
+   mean Sharpe at most 0.03 below. This rule was fixed after reading loop 2's research-seed
+   numbers (one proposal gained +3.9 pp by lifting max drawdown from 7.6% to 10.4%) and before
+   any loop-2 sealed run.
+   **Risk track (from loop 3).** A proposal may instead claim lower drawdown: it wins if the center
+   book's paired change in max drawdown has a 90% upper bound below zero and neither track's mean
+   utility falls by more than 0.1 pp.
 4. **Confirmation.** Winners are combined and must **confirm on a separate sealed block B** (target
-   track lower bound > 0; every other track neutral as above). Only then does anything merge.
+   track lower bound > 0; every other track neutral as above; risk guard held). Only then does
+   anything merge.
 5. **Record.** Each report (`docs/loops/loop-N.json`) carries the commit judged against, every
    candidate's diff (`docs/loops/loop-N/`), and each book's utility, Sharpe and max drawdown, not
    just the paired uplift (from loop 2; loop 1's baseline commit was re-derived by verification).

@@ -14,6 +14,16 @@
 //      tested guarantees such as reservation or subtree close, not a return
 //      claim) wins if it does not hurt: both tracks' mean change > -0.05 pp
 //      and lower bound > -0.2 pp.
+//   2b. RISK GUARD (from loop 2, fixed before any loop-2 sealed run): under
+//      CRRA γ=3 the fund's certainty equivalent rises almost linearly with the
+//      capital at work at this book's ~10% vol, so a change can win utility just
+//      by taking more risk. A risk layer must not. On every block it is judged
+//      on, each track must hold its risk: mean max drawdown at most 0.5 pp above
+//      the code it replaces and mean Sharpe at most 0.03 below.
+//   2c. A RISK proposal (track "risk", from loop 3) claims lower drawdown, not
+//      higher utility: it wins if the center book's paired max-drawdown change
+//      has a 90% upper bound < 0 and neither track's mean utility falls by more
+//      than 0.1 pp.
 //   3. Winners are combined (best first; any that no longer applies is dropped)
 //      and the combination must CONFIRM on a separate block B (target track
 //      lower bound > 0). Otherwise the best single winner is tried on B.
@@ -65,11 +75,18 @@ function judge(block, dirs) {
   const out = execFileSync("node", ["scripts/loop-judge.mjs", String(block.from), String(block.count), REPO, ...dirs], { cwd: REPO, maxBuffer: 1 << 27 }).toString();
   return JSON.parse(out);
 }
-const target = (p) => (p.track === "both" ? ["allocator", "tiger"] : p.track === "structure" ? [] : [p.track]);
-const other = (p) => (p.track === "allocator" ? ["tiger"] : p.track === "tiger" ? ["allocator"] : p.track === "structure" ? ["allocator", "tiger"] : []);
+const target = (p) => (p.track === "both" ? ["allocator", "tiger"] : p.track === "structure" || p.track === "risk" ? [] : [p.track]);
+const other = (p) => (p.track === "allocator" ? ["tiger"] : p.track === "tiger" ? ["allocator"] : p.track === "structure" || p.track === "risk" ? ["allocator", "tiger"] : []);
+const lowersRisk = (c) => !!c.risk?.allocatorMaxDD && c.risk.allocatorMaxDD.hi < 0;
+const cheap = (c) => ["allocator", "tiger"].every((t) => c[t].mean > -0.001);
+const RISK = { maxDDUp: 0.005, sharpeDown: 0.03 };
+const riskHeld = (c, base) =>
+  ["allocator", "tiger"].every(
+    (t) => c.summary[t].maxDD - base[t].maxDD <= RISK.maxDDUp && c.summary[t].sharpe - base[t].sharpe >= -RISK.sharpeDown,
+  );
 const neutral = (c) => ["allocator", "tiger"].every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002);
 
-const report = { loop: L, head: HEAD, blocks: { A, B }, candidates: [], merged: null };
+const report = { loop: L, head: HEAD, blocks: { A, B }, riskGuard: RISK, candidates: [], merged: null };
 // Utility, Sharpe and max drawdown of each book, not just the paired uplift.
 const books = (s) => Object.fromEntries(["allocator", "tiger"].map((t) => [t, { utility: s[t].utility, sharpe: s[t].sharpe, maxDD: s[t].maxDD, baselineUtility: s[t].baseline, baselineMaxDD: s[t].baselineMaxDD }]));
 const live = [];
@@ -91,11 +108,19 @@ if (live.length) {
   const res = judge(A, live.map((c) => c.dir));
   res.candidates.forEach((c, i) => {
     const e = live[i].entry;
-    e.blockA = { allocator: c.allocator, tiger: c.tiger };
+    e.blockA = { allocator: c.allocator, tiger: c.tiger, risk: c.risk };
     e.booksA = books(c.summary);
     const p = live[i].p;
+    if (!riskHeld(c, res.baseline)) {
+      e.status = "adds-risk-A";
+      return;
+    }
     if (p.track === "structure") {
       e.status = neutral(c) ? "winner-A" : "harms-A";
+      return;
+    }
+    if (p.track === "risk") {
+      e.status = lowersRisk(c) && cheap(c) ? "winner-A" : "no-risk-cut-A";
       return;
     }
     const up = target(p).every((t) => c[t].lo > 0);
@@ -116,12 +141,18 @@ const tryConfirm = (set, label) => {
   const res = judge(B, [wt.dir]);
   const c = res.candidates[0];
   const tracks = [...new Set(kept.flatMap((x) => target(x.p)))];
+  const risky = kept.some((x) => x.p.track === "risk");
   // Performance tracks must confirm a gain; untargeted tracks (and pure
-  // structure changes) must confirm they are not harmed.
+  // structure changes) must confirm they are not harmed; a risk proposal must
+  // confirm lower drawdown at a utility cost within its tolerance.
+  const untargeted = ["allocator", "tiger"].filter((t) => !tracks.includes(t));
   const ok =
+    riskHeld(c, res.baseline) &&
     tracks.every((t) => c[t].lo > 0) &&
-    ["allocator", "tiger"].filter((t) => !tracks.includes(t)).every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002);
-  return { ok, kept: kept.map((x) => x.k), blockB: { allocator: c.allocator, tiger: c.tiger }, booksB: books(c.summary), baselineB: { ...res.baseline, dir: undefined, books: books(res.baseline) }, dir: wt.dir };
+    (risky
+      ? lowersRisk(c) && untargeted.every((t) => c[t].mean > -0.001)
+      : untargeted.every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002));
+  return { ok, kept: kept.map((x) => x.k), blockB: { allocator: c.allocator, tiger: c.tiger, risk: c.risk }, booksB: books(c.summary), baselineB: { ...res.baseline, dir: undefined, books: books(res.baseline) }, dir: wt.dir };
 };
 if (winners.length) {
   let conf = winners.length > 1 ? tryConfirm(winners, "combined") : null;

@@ -360,6 +360,12 @@ export interface WorldResult {
   allocatorBaseline: number;
   tiger: number;
   tigerBaseline: number;
+  /** Center book's max drawdown and Sharpe in this world (for paired risk checks). */
+  allocatorMaxDD: number;
+  allocatorSharpe: number;
+  /** Tiger overlay's max drawdown and Sharpe in this world. */
+  tigerMaxDD: number;
+  tigerSharpe: number;
 }
 
 export async function evaluate(
@@ -379,7 +385,17 @@ export async function evaluate(
     alloc.push({ a: a.centerUtility, b: a.naiveUtility, sa: a.centerSharpe, sb: a.naiveSharpe, da: a.centerMaxDD, db: a.naiveMaxDD });
     const t = scoreTiger(w, opts.tiger);
     tiger.push({ a: t.overlayUtility, b: t.buyHoldUtility, sa: t.overlaySharpe, sb: t.buyHoldSharpe, da: t.overlayMaxDD, db: t.buyHoldMaxDD });
-    perWorld.push({ seed, allocator: a.centerUtility, allocatorBaseline: a.naiveUtility, tiger: t.overlayUtility, tigerBaseline: t.buyHoldUtility });
+    perWorld.push({
+      seed,
+      allocator: a.centerUtility,
+      allocatorBaseline: a.naiveUtility,
+      tiger: t.overlayUtility,
+      tigerBaseline: t.buyHoldUtility,
+      allocatorMaxDD: a.centerMaxDD,
+      allocatorSharpe: a.centerSharpe,
+      tigerMaxDD: t.overlayMaxDD,
+      tigerSharpe: t.overlaySharpe,
+    });
   }
   return { allocator: summarize(alloc), tiger: summarize(tiger), worlds: metas, perWorld };
 }
