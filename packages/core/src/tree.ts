@@ -97,6 +97,16 @@ export interface DelegateOptions {
 export class DelegationTree {
   private principal_: Principal | null = null;
   private readonly nodes_ = new Map<string, AgentNode>();
+  /**
+   * Parent-name → direct-children bucket index, maintained incrementally on every
+   * node insertion (see `indexNode_`). This turns `childrenOf` into an O(1) map
+   * lookup instead of an O(n) full-scan-and-filter, which matters because
+   * `reserved()`/`available()` — and therefore the hot `delegate()`/attenuation
+   * path and `toSnapshot()` (which calls both for every node) — depend on it. The
+   * bucket holds live `AgentNode` references in insertion order; `childrenOf`
+   * returns a defensive copy so callers can't corrupt the index.
+   */
+  private readonly childrenIndex_ = new Map<string | null, AgentNode[]>();
   private readonly events_: AllowanceEvent[] = [];
   private seq_ = 0;
 
@@ -127,9 +137,13 @@ export class DelegationTree {
     return node;
   }
 
-  /** Direct children of a node. */
+  /**
+   * Direct children of a node. O(1) lookup via `childrenIndex_`; returns a
+   * defensive copy of the bucket so callers may freely mutate the result.
+   */
   childrenOf(name: string): AgentNode[] {
-    return this.listNodes().filter((n) => n.parent === name);
+    const bucket = this.childrenIndex_.get(name);
+    return bucket ? [...bucket] : [];
   }
 
   /** Ancestors from the immediate parent up to the root. */
@@ -147,7 +161,13 @@ export class DelegationTree {
 
   /** Sum of direct children's budgets — authority already handed downward. */
   reserved(name: string): bigint {
-    return this.childrenOf(name).reduce((sum, child) => sum + child.mandate.budget, 0n);
+    // Iterate the index bucket directly (read-only) to avoid the defensive copy
+    // that `childrenOf` makes — keeps this O(children) with zero allocation.
+    const bucket = this.childrenIndex_.get(name);
+    if (!bucket) return 0n;
+    let sum = 0n;
+    for (const child of bucket) sum += child.mandate.budget;
+    return sum;
   }
 
   /** budget - spentDirect - reserved. What this node can still delegate or spend. */
@@ -156,25 +176,51 @@ export class DelegationTree {
     return node.mandate.budget - node.mandate.spentDirect - this.reserved(name);
   }
 
-  /** True if this node or any ancestor is revoked. */
+  /**
+   * True if this node or any ancestor is revoked. Walks parent pointers inline
+   * rather than materializing an `ancestors()` array and calling `.some()`, so
+   * external callers (e.g. SpendCapHook.checkFromTree) pay zero allocation cost.
+   */
   isRevokedInChain(name: string): boolean {
-    const node = this.getNode(name);
-    if (!node) return false;
-    if (node.mandate.revoked) return true;
-    return this.ancestors(name).some((a) => a.mandate.revoked);
+    let current = this.nodes_.get(name);
+    while (current) {
+      if (current.mandate.revoked) return true;
+      if (current.parent === null) break;
+      current = this.nodes_.get(current.parent);
+    }
+    return false;
   }
 
-  /** True if this node or any ancestor is expired at `now` (unix seconds). */
+  /**
+   * True if this node or any ancestor is expired at `now` (unix seconds). Walks
+   * parent pointers inline (no intermediate `ancestors()` array), matching
+   * `isRevokedInChain`.
+   */
   isExpiredInChain(name: string, now: number): boolean {
-    const node = this.getNode(name);
-    if (!node) return false;
-    if (now > node.mandate.expiry) return true;
-    return this.ancestors(name).some((a) => now > a.mandate.expiry);
+    let current = this.nodes_.get(name);
+    while (current) {
+      if (now > current.mandate.expiry) return true;
+      if (current.parent === null) break;
+      current = this.nodes_.get(current.parent);
+    }
+    return false;
   }
 
   /* ---------------------------------------------------------------- */
   /* Mutations                                                        */
   /* ---------------------------------------------------------------- */
+
+  /**
+   * Insert a node into both the primary `nodes_` map and the `childrenIndex_`
+   * bucket keyed by its parent. Single choke-point for node creation so the
+   * index can never drift out of sync with the node map.
+   */
+  private indexNode_(node: AgentNode): void {
+    this.nodes_.set(node.name, node);
+    const bucket = this.childrenIndex_.get(node.parent);
+    if (bucket) bucket.push(node);
+    else this.childrenIndex_.set(node.parent, [node]);
+  }
 
   /**
    * Establish the principal and fund the root agent. Records a FUND event.
@@ -204,7 +250,7 @@ export class DelegationTree {
         revoked: false,
       },
     };
-    this.nodes_.set(node.name, node);
+    this.indexNode_(node);
 
     this.recordEvent({
       type: "FUND",
@@ -267,7 +313,7 @@ export class DelegationTree {
         revoked: false,
       },
     };
-    this.nodes_.set(node.name, node);
+    this.indexNode_(node);
 
     this.recordEvent({
       type: "DELEGATE",

@@ -21,7 +21,7 @@ import type {
   Snapshot,
   SnapshotEvent,
 } from "@allowance/core";
-import { formatAmount, leftLabel } from "@allowance/core";
+import { formatAmount, isFailureResult, leftLabel } from "@allowance/core";
 import { AdapterNotConfiguredError } from "./errors";
 
 /** One node rendered for the spend-tree view. */
@@ -101,14 +101,6 @@ export interface ChainActivityEntry {
   /** Monotonic mock block number. */
   blockNumber: number;
 }
-
-const FAILED_RESULTS = new Set<SnapshotEvent["result"]>([
-  "BLOCKED_MANDATE",
-  "BLOCKED_SCREENING",
-  "DENIED_IDENTITY",
-  "REVOKED",
-  "ATTENUATION_REJECTED",
-]);
 
 /**
  * Offline MultiBaas dashboard builder + mock chain reader. Pure functions over a
@@ -213,7 +205,7 @@ export class MultiBaasDashboard {
       amount: e.amount,
       amountHuman: e.amount === null ? null : formatAmount(BigInt(e.amount), decimals),
       merchant: e.merchant,
-      failed: FAILED_RESULTS.has(e.result),
+      failed: isFailureResult(e.result),
     };
   }
 
@@ -232,7 +224,7 @@ export class MultiBaasDashboard {
     };
     const baseBlock = 8_000_000;
     return snapshot.events.map((e, i) => {
-      const failed = FAILED_RESULTS.has(e.result);
+      const failed = isFailureResult(e.result);
       const event: ChainActivityEntry["event"] =
         e.type === "PAYMENT" && failed ? "Blocked" : map[e.type];
       return {

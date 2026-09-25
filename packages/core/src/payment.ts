@@ -150,12 +150,16 @@ export async function pay(
   }
 
   /* 2) MANDATE ----------------------------------------------------- */
+  // Revocation / expiry are checked inline over the `node` + `ancestors` we
+  // already materialized above, instead of calling tree.isRevokedInChain /
+  // isExpiredInChain — which would each re-walk the parent chain and allocate a
+  // fresh ancestors array. Same semantics (self OR any ancestor), zero extra work.
   // Revocation (self or any ancestor) is its own terminal result.
-  if (tree.isRevokedInChain(req.node)) {
+  if (node.mandate.revoked || ancestors.some((a) => a.mandate.revoked)) {
     return finalize("REVOKED", { reason: "node or an ancestor is revoked" });
   }
   // Expiry (self or any ancestor).
-  if (tree.isExpiredInChain(req.node, now)) {
+  if (now > node.mandate.expiry || ancestors.some((a) => now > a.mandate.expiry)) {
     return finalize("BLOCKED_MANDATE", { reason: "node or an ancestor mandate is expired" });
   }
   // Budget: only the node's own remaining authority is spendable. Attenuation

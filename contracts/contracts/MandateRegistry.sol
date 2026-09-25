@@ -251,8 +251,12 @@ contract MandateRegistry {
         if (msg.sender != controllerOf[node] && msg.sender != owner) {
             revert NotAuthorized();
         }
-        if (_revokedInChain(node)) revert RevokedInChain();
-        if (_expiredInChain(node)) revert ExpiredInChain();
+        // Single ancestor-chain walk yields both statuses (halves the SLOADs vs.
+        // the old two-pass _revokedInChain + _expiredInChain). Ordering preserved:
+        // revoked wins over expired.
+        (bool chainRevoked, bool chainExpired) = _chainStatus(node);
+        if (chainRevoked) revert RevokedInChain();
+        if (chainExpired) revert ExpiredInChain();
 
         uint256 avail = _available(node);
         if (amount > avail) revert OverBudget(amount, avail);
@@ -340,8 +344,10 @@ contract MandateRegistry {
     ) public view returns (bool ok, bytes32 reason) {
         Node storage n = _nodes[node];
         if (!n.exists) return (false, "UNKNOWN_NODE");
-        if (_revokedInChain(node)) return (false, "REVOKED");
-        if (_expiredInChain(node)) return (false, "EXPIRED");
+        // Single ancestor-chain walk, same ordering as spend(): revoked, then expired.
+        (bool chainRevoked, bool chainExpired) = _chainStatus(node);
+        if (chainRevoked) return (false, "REVOKED");
+        if (chainExpired) return (false, "EXPIRED");
         if (amount > _available(node)) return (false, "OVER_BUDGET");
         if (n.merchantsRestricted && !_merchantAllowed[node][merchant]) {
             return (false, "MERCHANT_NOT_ALLOWED");
@@ -357,6 +363,31 @@ contract MandateRegistry {
         Node storage n = _nodes[node];
         // Invariant: budget >= spentDirect + reserved (enforced by spend/delegate).
         return n.budget - n.spentDirect - n.reserved;
+    }
+
+    /**
+     * @notice Walk the ancestor chain ONCE, collecting both the revoked and the
+     *         expired status in a single traversal.
+     * @dev    This is the hot-path replacement for calling `_revokedInChain` and
+     *         `_expiredInChain` back-to-back: it loads each ancestor's
+     *         `Node storage` a single time and OR-s both conditions as it climbs,
+     *         halving the SLOAD-heavy traversal in `spend()` / `canSpend()`.
+     *         Stops at the root (`bytes32(0)`) or the first non-existent node,
+     *         exactly like the single-condition helpers.
+     * @return revoked  true if `node` or any ancestor is revoked.
+     * @return expired  true if `node` or any ancestor is past its expiry.
+     */
+    function _chainStatus(
+        bytes32 node
+    ) internal view returns (bool revoked, bool expired) {
+        bytes32 cursor = node;
+        while (cursor != bytes32(0)) {
+            Node storage n = _nodes[cursor];
+            if (!n.exists) break;
+            if (n.revoked) revoked = true;
+            if (block.timestamp > n.expiry) expired = true;
+            cursor = n.parent;
+        }
     }
 
     function _revokedInChain(bytes32 node) internal view returns (bool) {

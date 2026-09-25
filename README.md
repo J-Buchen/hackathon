@@ -64,7 +64,8 @@ npm run dev:web      # opens the dashboard that renders the snapshot
 - `npm run dev:web` serves the React dashboard that visualizes the spend tree
   and the event ledger from that snapshot.
 - `npm run typecheck` runs `tsc -b` across every package.
-- `npm test` runs the core domain unit tests.
+- `npm test` runs the aggregated Node test suite (core + adapters + orchestrator).
+  See [Testing](#testing) for the full matrix, including the web and Solidity suites.
 
 ---
 
@@ -145,6 +146,44 @@ renders. (Budgets in USDC, 6 decimals.)
 
 ---
 
+## Testing
+
+Every layer of the protocol is exercised by an offline, deterministic suite —
+no network, no credentials, no live chain. There are three runners, split by the
+toolchain each layer needs:
+
+| Command | Runner | Covers |
+| --- | --- | --- |
+| `npm test` | Node `--test` (tsx loader) | `@allowance/core` (attenuation, tree, payment gauntlet) + `@allowance/adapters` (sponsor ports) + `@allowance/orchestrator` (demo flow) |
+| `npm -w allowance-web run test` | Node `--test` (tsx loader) | web fetch-boundary logic: snapshot validation, amount formatting, tree view-model |
+| `npm -w @allowance/contracts test` | Hardhat (`hardhat test`) | Solidity: `MandateRegistry`, `SpendCapHook`, screening `Escrow` |
+
+You can also run any layer in isolation:
+`npm -w @allowance/core test`, `npm -w @allowance/adapters test`,
+`npm -w @allowance/orchestrator test`.
+
+### What each module's tests guarantee
+
+| Module | Test file | Guarantees |
+| --- | --- | --- |
+| `@allowance/core` — attenuation | `packages/core/src/attenuation.test.ts` | A child mandate is always a slice of its parent's *remaining* budget; a hop can only **narrow** budget/merchants/expiry, never broaden them; over-broad delegations are rejected. |
+| `@allowance/core` — tree | `packages/core/src/tree.test.ts` | ENS subname helpers (parent/label parsing) and `DelegationTree` — insert/lookup, remaining-budget accounting, revoke cascades over the subtree. |
+| `@allowance/core` — payment | `packages/core/src/payment.test.ts` | The four-stage `pay()` gauntlet in order — identity → mandate → screening → settle — with each blocked/denied/revoked path; amount round-trips through settlement without precision loss. |
+| `@allowance/adapters` | `packages/adapters/src/adapters.test.ts` | Sponsor ports on deterministic mocks: Intercepta screening **block**, 1inch Aqua swap-rate math, identity/principal verification paths, and the `SpendCapHook` mirror of the on-chain cap. |
+| `@allowance/orchestrator` | `services/orchestrator/src/flow.test.ts` | The end-to-end demo flow reproduces the storyline outcomes (§8 balances and event count), and the off-chain result **agrees** with the `SpendCapHook` cap decision (hook agreement). |
+| `allowance-web` — snapshot | `apps/web/src/snapshot.test.ts` | Runtime validation of `demo-snapshot.json` against the frozen schema: well-formed input round-trips unchanged; malformed/stale input throws a precise, path-tagged `SnapshotParseError`. |
+| `allowance-web` — format | `apps/web/src/format.test.ts` | Smallest-unit integer strings render to human token amounts via BigInt (no float drift), including fractional, zero, and negative values. |
+| `allowance-web` — tree | `apps/web/src/tree.test.ts` | `buildTree` reconstructs the delegation hierarchy from the flat `nodes` array and marks a node `effectivelyRevoked` when it or any ancestor is revoked (dashboard view models). |
+| `@allowance/contracts` — MandateRegistry | `contracts/test/MandateRegistry.test.ts` | On-chain delegation tree: attenuating `delegate`, cap enforcement, and revoke cascades match the off-chain `DelegationTree` semantics. |
+| `@allowance/contracts` — SpendCapHook / Escrow | `contracts/test/SpendCapHook.test.ts`, `contracts/test/Escrow.test.ts` | The Uniswap v4 hook rejects swaps that exceed the attenuated cap; the screening escrow releases only after an approved screen. |
+
+The suites are the guardrail for every invariant in [`DESIGN.md`](DESIGN.md): the
+snapshot schema (§7) is pinned by the web snapshot tests, and the storyline
+outcomes (§8) are pinned by the orchestrator flow test. Do not weaken or skip a
+test to force a green run — fix the code instead.
+
+---
+
 ## Repo layout
 
 ```
@@ -159,7 +198,12 @@ DESIGN.md             authoritative spec — locked types, signatures, and the s
 
 ## Docs
 
-- [`DESIGN.md`](DESIGN.md) — the authoritative, locked spec.
+- [`DESIGN.md`](DESIGN.md) — the authoritative, locked spec. See
+  [§11 Web UX states & motion performance](DESIGN.md#11-web-ux-states--motion-performance-appsweb-invariants)
+  for the dashboard's four render states (loading skeleton / error / empty /
+  ready) and the motion-performance invariants (`LazyMotion` + `m`, code-split
+  dashboard, GPU-only animation, `content-visibility`, reduced-motion, no
+  external fonts/CDNs) — read it before touching `apps/web`.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — domain model, attenuation rule, payment pipeline, data flow, on-chain vs off-chain split.
 - [`docs/SPONSORS.md`](docs/SPONSORS.md) — per-track submission checklist with the required failure-path demos flagged.
 - [`docs/FEEDBACK.md`](docs/FEEDBACK.md) — the Uniswap-required developer feedback.

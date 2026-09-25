@@ -196,6 +196,23 @@ The orchestrator's `src/demo.ts` drives the eight-step storyline with
 lives at that path so the web app renders before the orchestrator runs;
 `npm run demo` overwrites it with freshly computed state.
 
+### Boundary safety (why the seam is trustworthy)
+
+The snapshot is a **frozen contract** (see §3 and DESIGN.md §7 / `types.ts`) —
+but a file on disk is still untrusted input at read time, so the web app hardens
+the seam in two ways:
+
+- **Validated fetch, not a blind cast.** Rather than casting the fetched JSON to
+  `Snapshot` and hoping, the app runs it through `parseSnapshot` — a runtime
+  guard that checks shape and field types at the fetch boundary. A truncated or
+  malformed snapshot therefore surfaces as a clean error state in the UI instead
+  of a crash deep in a component.
+- **Exhaustive union handling.** The domain's closed unions (`PaymentOutcome`,
+  `EventResult`, `EventType`) are handled without gaps: switch/lookup sites use
+  the `assertNever` helper and a total `Record<EventResult, …>` failure
+  classifier, so adding a new union member is a **compile error** until every
+  consumer accounts for it — the contract can't silently drift.
+
 ---
 
 ## 8. On-chain vs off-chain split

@@ -10,6 +10,7 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc -b",
+    "test": "node --import tsx --test src/flow.test.ts",
     "demo": "tsx src/demo.ts"
   },
   "dependencies": {

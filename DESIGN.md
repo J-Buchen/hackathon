@@ -473,3 +473,52 @@ available = **12 USDC** (30 − 10 reserved − 8 spent). 10 events total.
 - Strict, commented, production-quality TypeScript. No `throw "todo"` on mock paths.
 - Bind to the exact names/paths above. If you need a new shared type, add it to
   `@allowance/core` and update this file.
+
+---
+
+## 11. Web UX states & motion performance (`apps/web` invariants)
+
+The dashboard is a marketing-grade single page that renders the snapshot from
+§7. Its UX-state contract and motion-performance discipline have grown across
+rounds (R1 perf, R5 a11y, R6 skeleton/empty/motion) and are **invariants** — do
+not silently drop them when touching `apps/web`.
+
+### 11.1 The four dashboard render states (a contract)
+
+The `#dashboard` section is a small state machine over the async
+`demo-snapshot.json` fetch. All four states must survive:
+
+| state | trigger | UI |
+| --- | --- | --- |
+| **loading** | fetch in flight (`{status:"loading"}`) | **zero-CLS skeleton** that reserves the dashboard's final height, so the ready state swaps in without layout shift |
+| **error** | fetch/`parseSnapshot` fails (`{status:"error"}`) | actionable `.notice-error` that shows the message **and** the `npm run demo` hint to regenerate the file, then reload |
+| **empty** | snapshot parses but has **no nodes or no events** | a clear "run the demo" empty notice — never a blank panel or a crash |
+| **ready** | valid, non-empty snapshot (`{status:"ready"}`) | the code-split `Dashboard` (summary tiles, spend tree, event ledger) |
+
+The fetch validates untrusted JSON against the frozen §7 schema via
+`parseSnapshot` **at the boundary** (App.tsx), so malformed/stale input lands in
+`error` with a precise path-tagged message instead of crashing downstream.
+
+### 11.2 Motion-performance rules (already in force)
+
+- **`LazyMotion` + `m`, never full `motion.*`.** The tree is wrapped in
+  `<LazyMotion features={domAnimation} strict>`; `strict` throws if a heavyweight
+  `motion.*` component sneaks back onto the critical path. Keeps the entry bundle small.
+- **Code-split `Dashboard`** via `React.lazy` — its subtree (NodeCard, EventLog,
+  `buildTree`, format helpers) is pulled out of the entry chunk and loaded only
+  after the fetch resolves, cutting time-to-interactive on the hero.
+- **GPU-promoted animations only** — animate `transform`/`opacity` (with
+  `will-change: transform` on the animated layers); never animate layout-affecting
+  properties (width/height/top/left/margin).
+- **`content-visibility: auto`** on offscreen marketing sections so the browser
+  skips rendering/layout for content below the fold until it scrolls near.
+- **Complete `prefers-reduced-motion` coverage** — the CSS query neutralizes all
+  keyframe/transition animation and smooth-scroll, and every animated component
+  reads `useReducedMotion()` to render a static equivalent (no parallax, no
+  reveal, no inertia scroll).
+
+### 11.3 Self-contained constraint
+
+`apps/web` ships **no external fonts, CDNs, or network calls** beyond fetching
+its own `demo-snapshot.json`. Typography uses system font stacks (`--sans` /
+`--mono`); all assets are local. Keep it fully offline-renderable.

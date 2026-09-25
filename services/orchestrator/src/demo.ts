@@ -26,7 +26,6 @@ import {
   checkAttenuation,
   AttenuationError,
   type MandateInput,
-  type PaymentRecord,
   type PrincipalProof,
 } from "@allowance/core";
 import {
@@ -35,7 +34,7 @@ import {
   MultiBaasDashboard,
 } from "@allowance/adapters";
 
-import { AllowanceFlow } from "./flow";
+import { AllowanceFlow, type FlowResult } from "./flow";
 
 /* ------------------------------------------------------------------ */
 /* Console helpers (small, dependency-free, deterministic).           */
@@ -56,7 +55,7 @@ function line(msg: string): void {
 }
 
 /** Pretty one-line verdict for a payment attempt + the on-chain hook mirror. */
-function reportPayment(label: string, r: { record: PaymentRecord; hook: { allowed: boolean; revert?: string }; hookAgrees: boolean }): void {
+function reportPayment(label: string, r: FlowResult): void {
   const { record, hook, hookAgrees } = r;
   line(`${label}: ${record.outcome}${record.reason ? ` — ${record.reason}` : ""}`);
   if (record.settlement) {

@@ -37,6 +37,7 @@
  */
 
 import {
+  assertNever,
   pay,
   type AllowanceEvent,
   type DelegationTree,
@@ -148,6 +149,12 @@ export class AllowanceFlow {
   /* ---------------------------------------------------------------- */
 
   private requireEvent(seq: number): AllowanceEvent {
+    // Sequence numbers are assigned monotonically (seq_++) and events are only
+    // ever appended, so seq === array index. Try the O(1) direct index first;
+    // fall back to a linear scan only if that invariant is somehow violated.
+    const direct = this.tree.events[seq];
+    if (direct && direct.seq === seq) return direct;
+
     const event = this.tree.events.find((e) => e.seq === seq);
     if (!event) {
       // pay() always records exactly one event; a miss is a programming bug.
@@ -176,7 +183,10 @@ export class AllowanceFlow {
       case "BLOCKED_SCREENING":
         return hook.allowed;
       default:
-        return false;
+        // Exhaustive: every PaymentOutcome is handled above, so `record.outcome`
+        // narrows to `never` here. A newly-added outcome turns this into a
+        // compile error, forcing the mandate/cap agreement to be classified.
+        return assertNever(record.outcome, "mandateVerdictAgrees");
     }
   }
 }

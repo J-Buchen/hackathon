@@ -1,3 +1,4 @@
+import { memo } from "react";
 import type { TreeNode } from "../tree";
 import { formatAmount, shortLabel, usageFraction } from "../format";
 import { IdentityBadge } from "./IdentityBadge";
@@ -8,8 +9,12 @@ import { Allowlist } from "./Allowlist";
  * badge, the budget breakdown (budget / spent / reserved / AVAILABLE), the
  * allowlists, and revoked state. Indentation encodes depth; a connector rail
  * on the left makes the parent→child hierarchy legible.
+ *
+ * Memoized: this recursive, purely prop-driven component would otherwise
+ * re-walk the entire subtree whenever an unrelated parent state change (e.g. a
+ * Reveal animation) triggers a re-render under React.StrictMode.
  */
-export function NodeCard({
+export const NodeCard = memo(function NodeCardInner({
   tree,
   currency,
   decimals,
@@ -32,11 +37,26 @@ export function NodeCard({
     .filter(Boolean)
     .join(" ");
 
+  // Depth is otherwise encoded only visually (marginLeft), so summarize the node
+  // and its revoked state in one accessible label for the treeitem row.
+  const revokedSuffix = selfRevoked
+    ? ", revoked"
+    : effectivelyRevoked
+      ? ", ancestor revoked"
+      : "";
+  const rowLabel = `${shortLabel(node.name)}, available ${formatAmount(
+    m.available,
+    decimals,
+  )} ${currency}${revokedSuffix}`;
+
   return (
     <div
       className="node-row"
       style={{ marginLeft: depth * 28 }}
       data-depth={depth}
+      role="treeitem"
+      aria-level={depth + 1}
+      aria-label={rowLabel}
     >
       <div className={cls}>
         <div className="node-head">
@@ -58,8 +78,16 @@ export function NodeCard({
           </div>
         </div>
 
-        {/* Budget usage bar: spent (solid) + reserved (hatched) + available (rest). */}
-        <div className="usage-bar" role="img" aria-label="budget usage">
+        {/* Budget usage bar: spent (solid) + reserved (hatched) + available (rest).
+            The aria-label carries the actual proportions so the purely-visual bar
+            is meaningful to a screen reader. */}
+        <div
+          className="usage-bar"
+          role="img"
+          aria-label={`Budget usage: ${usage.spent.toFixed(0)}% spent, ${usage.reserved.toFixed(
+            0,
+          )}% reserved, ${availablePct.toFixed(0)}% available`}
+        >
           <div className="usage-spent" style={{ width: `${usage.spent}%` }} />
           <div className="usage-reserved" style={{ width: `${usage.reserved}%` }} />
         </div>
@@ -89,7 +117,7 @@ export function NodeCard({
       </div>
 
       {children.length > 0 && (
-        <div className="node-children">
+        <div className="node-children" role="group">
           {children.map((c) => (
             <NodeCard key={c.node.name} tree={c} currency={currency} decimals={decimals} />
           ))}
@@ -97,7 +125,7 @@ export function NodeCard({
       )}
     </div>
   );
-}
+});
 
 function Stat({
   label,

@@ -8,6 +8,8 @@
  *  - tree.ts        DelegationTree (delegate/revoke/available/reserved/events)
  *  - payment.ts     the pay() pipeline + injected adapter PORT interfaces
  *  - serialize.ts   toSnapshot() -> the exact dashboard JSON
+ *  - results.ts     exhaustiveness-checked EventResult failure classifier
+ *  - assert.ts      assertNever() compile-time exhaustiveness helper
  */
 
 export * from "./types";
@@ -16,3 +18,5 @@ export * from "./attenuation";
 export * from "./tree";
 export * from "./payment";
 export * from "./serialize";
+export * from "./results";
+export * from "./assert";

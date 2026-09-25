@@ -44,8 +44,11 @@ export function toSnapshot(tree: DelegationTree, opts: ToSnapshotOptions = {}): 
   const principal = tree.principal;
 
   const nodes: SnapshotNode[] = tree.listNodes().map((n) => {
+    // Compute `reserved` once and derive `available` from the node already in
+    // hand, rather than calling tree.available() (which would recompute
+    // reserved() and re-do a requireNode map lookup). Byte-identical output.
     const reserved = tree.reserved(n.name);
-    const available = tree.available(n.name);
+    const available = n.mandate.budget - n.mandate.spentDirect - reserved;
     return {
       name: n.name,
       parent: n.parent,

@@ -150,15 +150,18 @@ export class EnsRegistry {
    * names written. This is how the ENS view stays in lock-step with core state.
    */
   syncFromTree(tree: DelegationTree): number {
-    // Order by depth (fewer labels first) so parents exist before children.
-    const nodes = [...tree.listNodes()].sort(
-      (a, b) => a.name.split(".").length - b.name.split(".").length,
-    );
-    for (const node of nodes) {
+    // No sort needed: `tree.listNodes()` yields nodes in insertion order, and a
+    // node can only be inserted after its parent exists (fundRoot precedes any
+    // delegate; delegate throws UnknownNodeError without an existing parent). So
+    // parents already precede their children — iterate directly and skip the
+    // per-call O(n log n) sort + two String.split allocations per comparison.
+    let count = 0;
+    for (const node of tree.listNodes()) {
       this.upsertNode(node);
       this.setMandate(node.name, node.mandate);
+      count++;
     }
-    return nodes.length;
+    return count;
   }
 
   /** Register a node's name whether it is a root or a subname. */

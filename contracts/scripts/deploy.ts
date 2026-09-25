@@ -49,7 +49,12 @@ async function main() {
   console.log("MockERC20 (USDC):", await usdc.getAddress());
 
   // 4) Seed the demo tree (mirror of DESIGN.md §8 steps a–c).
-  const now = (await ethers.provider.getBlock("latest"))!.timestamp;
+  // getBlock can return null (e.g. a transient provider hiccup); guard explicitly
+  // rather than hiding it behind a non-null bang — the whole seeded expiry math
+  // below depends on this timestamp being real.
+  const latest = await ethers.provider.getBlock("latest");
+  if (!latest) throw new Error("deploy: could not fetch latest block");
+  const now = latest.timestamp;
   const expiry = now + 30 * 24 * 3600;
 
   await (await registry.fund(id(NAMES.alice), deployer.address, USDC(100), expiry, [])).wait();

@@ -7,7 +7,8 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import type { AgentNode, IdentityCheckContext, SettlementRequest } from "@allowance/core";
+import type { AgentNode, IdentityCheckContext, SettlementRequest, Snapshot } from "@allowance/core";
+import { DelegationTree, pay, toSnapshot, parseAmount } from "@allowance/core";
 
 import {
   MockScreeningService,
@@ -17,6 +18,7 @@ import {
   EnsRegistry,
   SpendCapHook,
   MockSuiEscrow,
+  MultiBaasDashboard,
   applySwapRate,
   createMockAdapters,
 } from "./index";
@@ -168,4 +170,158 @@ test("createMockAdapters returns a usable PaymentAdapters bundle", async () => {
   assert.ok(a.identity && a.screening && a.settlement);
   const r = await a.screening.screen({ node: "n", merchant: "sanctioned-vendor", amount: 1n });
   assert.equal(r.approved, false);
+});
+
+/* ---- Curvegrid MultiBaas dashboard over a real Snapshot ---- */
+
+const FAR = 4_000_000_000;
+const NOW = 1_700_000_000;
+
+/**
+ * Build a representative snapshot the way the demo does: fund a root, delegate,
+ * settle one payment and get one screening-blocked payment, then revoke the
+ * delegate. Exercises FUND / DELEGATE / PAYMENT(SETTLED) / PAYMENT(BLOCKED) /
+ * REVOKE events plus non-zero spentDirect and reserved balances.
+ */
+async function buildDemoSnapshot(): Promise<Snapshot> {
+  const tree = new DelegationTree();
+  const adapters = createMockAdapters();
+  tree.fundRoot({
+    principal: "alice",
+    rootName: "alice.eth",
+    mandate: { budget: parseAmount("100"), expiry: FAR },
+  });
+  tree.delegate("alice.eth", "researcher", {
+    budget: parseAmount("30"),
+    allowedMerchants: ["arxiv", "openai", "sanctioned-vendor"],
+    expiry: FAR,
+  });
+  // SETTLED: researcher pays openai 8.
+  await pay(tree, { node: "researcher.alice.eth", merchant: "openai", amount: parseAmount("8") }, adapters, { now: NOW });
+  // BLOCKED_SCREENING: researcher pays a sanctioned vendor 5 (mandate allows it).
+  await pay(tree, { node: "researcher.alice.eth", merchant: "sanctioned-vendor", amount: parseAmount("5") }, adapters, { now: NOW });
+  tree.revoke("researcher.alice.eth");
+  return toSnapshot(tree, { asOf: NOW });
+}
+
+test("dashboard totals: root budget, Σ spentDirect, and settled vs blocked counts", async () => {
+  const snap = await buildDemoSnapshot();
+  const t = new MultiBaasDashboard(snap.decimals).totals(snap);
+
+  assert.equal(t.nodeCount, 2);
+  assert.equal(t.rootBudget, parseAmount("100").toString());
+  assert.equal(t.rootBudgetHuman, "100.000000");
+  // Σ spentDirect across the tree = researcher's 8 (root spent nothing directly).
+  assert.equal(t.totalSpent, parseAmount("8").toString());
+  assert.equal(t.totalSpentHuman, "8.000000");
+  assert.equal(t.paymentCount, 2);
+  assert.equal(t.settledCount, 1);
+  assert.equal(t.blockedCount, 1);
+});
+
+test("dashboard spend tree: depth, utilization, and child names", async () => {
+  const snap = await buildDemoSnapshot();
+  const tree = new MultiBaasDashboard(snap.decimals).toSpendTree(snap);
+
+  const root = tree.find((n) => n.name === "alice.eth")!;
+  const researcher = tree.find((n) => n.name === "researcher.alice.eth")!;
+
+  assert.equal(root.depth, 0);
+  assert.equal(researcher.depth, 1);
+  assert.deepEqual(root.childNames, ["researcher.alice.eth"]);
+  assert.deepEqual(researcher.childNames, []);
+
+  // root utilization = (spent 0 + reserved 30) / budget 100 = 0.3
+  assert.equal(root.utilization, 0.3);
+  // researcher utilization = (spent 8 + reserved 0) / budget 30, rounded 4dp.
+  assert.equal(researcher.utilization, Math.round((8 / 30) * 10000) / 10000);
+  assert.equal(researcher.utilization, 0.2667);
+});
+
+test("dashboard spend tree: budget=0 yields utilization 0 (no divide-by-zero)", () => {
+  // A hand-built snapshot with a zero-budget node — the guard branch.
+  const snap: Snapshot = {
+    asOf: NOW,
+    currency: "USDC",
+    decimals: 6,
+    principal: { name: "alice", verified: true },
+    nodes: [
+      {
+        name: "alice.eth",
+        parent: null,
+        identityStatus: "verified",
+        mandate: {
+          budget: "0",
+          spentDirect: "0",
+          reserved: "0",
+          available: "0",
+          allowedMerchants: null,
+          allowedPurposes: null,
+          expiry: FAR,
+          revoked: false,
+        },
+      },
+    ],
+    events: [],
+  };
+  const [vm] = new MultiBaasDashboard(6).toSpendTree(snap);
+  assert.equal(vm!.utilization, 0);
+});
+
+test("dashboard chain reader: settled->Settled, blocked->Blocked, monotonic blocks", async () => {
+  const snap = await buildDemoSnapshot();
+  const activity = new MultiBaasDashboard(snap.decimals).readChainActivity(snap);
+
+  assert.equal(activity.length, snap.events.length);
+
+  // Both PAYMENT events map by result: settled -> Settled, failed -> Blocked.
+  const payments = activity.filter((a) => a.event === "Settled" || a.event === "Blocked");
+  assert.equal(payments.filter((a) => a.event === "Settled").length, 1);
+  assert.equal(payments.filter((a) => a.event === "Blocked").length, 1);
+
+  // FUND/DELEGATE/REVOKE map to their contract-event names.
+  assert.equal(activity[0]!.event, "Funded");
+  assert.ok(activity.some((a) => a.event === "Delegated"));
+  assert.ok(activity.some((a) => a.event === "Revoked"));
+
+  // Block numbers are strictly monotonic.
+  for (let i = 1; i < activity.length; i++) {
+    assert.ok(activity[i]!.blockNumber > activity[i - 1]!.blockNumber, "block numbers must increase");
+  }
+});
+
+test("dashboard summarize lists revoked node names", async () => {
+  const snap = await buildDemoSnapshot();
+  const summary = new MultiBaasDashboard(snap.decimals).summarize(snap);
+  assert.match(summary, /Revoked node\(s\): researcher\.alice\.eth\./);
+});
+
+/* ---- 1inch Aqua swap-rate rounding edge cases ---- */
+
+test("applySwapRate: rate 1 is the identity; rate 0.999999 truncates toward zero", () => {
+  // Identity.
+  assert.equal(applySwapRate(8_000000n, 1), 8_000000n);
+  assert.equal(applySwapRate(0n, 1), 0n);
+
+  // rate 0.999999 -> scaled 999999/1e6. Fixed-point bigint division truncates.
+  assert.equal(applySwapRate(1_000000n, 0.999999), 999999n);
+  // 1 * 999999 / 1_000000 = 0 (floor), proving truncation toward zero.
+  assert.equal(applySwapRate(1n, 0.999999), 0n);
+});
+
+/* ---- ENSv2 empty-allowlist roundtrip ---- */
+
+test("ens roundtrip: an empty allowedPurposes [] survives as [] (not undefined)", () => {
+  const ens = new EnsRegistry();
+  ens.register("alice.eth", "alice");
+  ens.setMandate("alice.eth", {
+    budget: parseAmount("10"),
+    allowedPurposes: [], // explicitly empty -> encodes as "" (not the "*" sentinel)
+    expiry: FAR,
+  });
+  const m = ens.getMandate("alice.eth");
+  // Empty list is meaningfully different from "any": it must decode back to [].
+  assert.deepEqual(m.allowedPurposes, []);
+  // allowedMerchants was undefined -> "*" -> undefined ("any merchant").
+  assert.equal(m.allowedMerchants, undefined);
 });
