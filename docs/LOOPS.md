@@ -1,6 +1,6 @@
 # Improvement loops: capital allocated across agents
 
-Five loops aimed at the most novel part of the project: **a delegation tree as the control layer of a
+Improvement loops (two run so far; more to come) aimed at the most novel part of the project: **a delegation tree as the control layer of a
 multi-manager fund whose PMs are AI agents**, where
 
 - **(R)** capital is *reserved* per agent when it is granted, not merely capped when spent;
@@ -60,7 +60,7 @@ Rejected ideas are recorded below with the reviewers' reasons.
 | (C) Stop-out closes the subtree: book | passed | +0.59 pp [90% +0.30 pp, +0.89 pp], better in 56% of worlds | winner on A |
 | Risk-scaled drawdown ladder | rejected | — | rejected by review |
 
-**Confirmation on sealed block B** (seeds 11500–11699): (A) alone, +5.07 pp [90% +4.12 pp, +6.01 pp], better in 74% of worlds; tiger track unchanged (0.00 pp).
+**Confirmation on sealed block B** (seeds 11500–11699): (A) alone, +5.07 pp [90% +4.12 pp, +6.01 pp], better in 74.5% of worlds; tiger track unchanged (0.00 pp).
 
 (C) also won on block A (+0.59 pp) but its diff conflicts with (A) in the ladder code, so it could not be combined. It is carried into loop 2, rebased onto the new code, to face the judge again.
 
@@ -153,6 +153,8 @@ Rejected:
   ladder had cut and then restored, still at half capital, was halved again (seeds 59, 168, 260).
 
 All five proposals were written against `d2151ed` and rebased by the orchestrator onto the corrected
-code (`dc01ec0`) before judging. Full numbers: [`docs/loops/loop-2.json`](loops/loop-2.json); diffs:
+code (`dc01ec0`); the judge ran at `370e0b8`, which adds only the risk guard and per-world drawdown
+reporting. Independent verification (fresh clone of `69d0dcf`) reproduced block B and every
+block-A number bit for bit. Full numbers: [`docs/loops/loop-2.json`](loops/loop-2.json); diffs:
 [`docs/loops/loop-2/`](loops/loop-2/).
 

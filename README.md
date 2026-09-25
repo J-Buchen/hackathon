@@ -279,14 +279,16 @@ renders. (Budgets in USDC, 6 decimals.)
 
 ## Testing
 
-Every layer of the protocol is exercised by an offline, deterministic suite —
-no network, no credentials, no live chain. There are three runners, split by the
-toolchain each layer needs:
+Every layer of the protocol is exercised by a deterministic suite with no
+credentials and no live chain. The Node and web suites run offline; the Solidity
+suite needs network access once, for Hardhat to download the `solc` compiler.
+There are three runners, split by the toolchain each layer needs:
 
 | Command | Runner | Covers |
 | --- | --- | --- |
-| `npm test` | Node `--test` (tsx loader) | `@allowance/core` (attenuation, tree, payment gauntlet) + `@allowance/adapters` (sponsor ports) + `@allowance/swarm` (center book, Tiger-Cub process, example thesis) + `@allowance/orchestrator` (demo flow) |
-| `npm -w allowance-web run test` | Node `--test` (tsx loader) | web fetch-boundary logic: snapshot validation, amount formatting, tree view-model |
+| `npm test` | Node `--test` (tsx loader) | `@allowance/core` (attenuation, tree, close, audit, payment gauntlet) + `@allowance/adapters` (sponsor ports, AgentHire, shadow audit) + `@allowance/swarm` (center book, close, Tiger-Cub process, example thesis) + `@allowance/lab` (series, metrics, strategy, research, close in the arena) + `@allowance/orchestrator` (demo flow, fund-console snapshot) |
+| `npm -w @allowance/lab run test` | Node `--test` (tsx loader) | the research lab and the virtual-world arena |
+| `npm -w allowance-web run test` | Node `--test` (tsx loader) | web fetch-boundary logic: payment, swarm, AgentHire and fund-console snapshot validation, amount formatting, tree view-model, console replay and log folding |
 | `npm -w @allowance/contracts test` | Hardhat (`hardhat test`) | Solidity: `MandateRegistry`, `SpendCapHook`, screening `Escrow` |
 
 You can also run any layer in isolation:
@@ -333,11 +335,13 @@ test to force a green run — fix the code instead.
 packages/core         @allowance/core         pure domain: types, attenuation, tree, payment engine (zero runtime deps)
 packages/adapters     @allowance/adapters     sponsor ports: deterministic mock + real-integration stub
 packages/swarm        @allowance/swarm        the center book: agent swarm, allocator, Tiger-Cub process, coffee thesis
+packages/lab          @allowance/lab          research lab (Luckin study, provenance-checked data) + the virtual-world arena
 services/orchestrator @allowance/orchestrator x402 flow + demo runners (demo, demo:fund, demo:swarm, demo:agenthire)
-scripts/              agenthire-up.sh / agenthire-down.sh (local keyless AgentHire), agenthire-audit.ts (shadow audit)
+scripts/              agenthire-up.sh / agenthire-down.sh (local keyless AgentHire), agenthire-audit.ts (shadow audit),
+                      loop-driver.mjs / loop-judge.mjs / worktree-setup.sh (sealed improvement loops)
 apps/web              allowance-web           Vite + React dashboard of the spend tree + event ledger
 contracts             solidity (Hardhat)      Uniswap v4 hook / settlement guard enforcing the cap on-chain
-docs/                 ARCHITECTURE.md · SPONSORS.md · FEEDBACK.md · CENTER-BOOK.md · AGENTHIRE.md · AGENTHIRE-SHADOW-AUDIT.md
+docs/                 ARCHITECTURE.md · SPONSORS.md · FEEDBACK.md · CENTER-BOOK.md · LOOPS.md (+ loops/) · AGENTHIRE.md · AGENTHIRE-SHADOW-AUDIT.md
 DESIGN.md             authoritative spec — locked types, signatures, and the storyline
 ```
 
@@ -350,6 +354,7 @@ DESIGN.md             authoritative spec — locked types, signatures, and the s
   dashboard, GPU-only animation, `content-visibility`, reduced-motion, no
   external fonts/CDNs) — read it before touching `apps/web`.
 - [`docs/CENTER-BOOK.md`](docs/CENTER-BOOK.md) — the center book and the Tiger-Cub example portfolio: design, results, ablation, limits.
+- [`docs/LOOPS.md`](docs/LOOPS.md) — the improvement loops: protocol (sealed virtual worlds, risk guard), every candidate with its verdict, corrections found by post-push verification. Reports and diffs in [`docs/loops/`](docs/loops/).
 - [`docs/AGENTHIRE.md`](docs/AGENTHIRE.md) — the AgentHire integration: the demo, the gaps it closes, what is simulated, the Fuji switch. The shadow audit has its own page: [`docs/AGENTHIRE-SHADOW-AUDIT.md`](docs/AGENTHIRE-SHADOW-AUDIT.md).
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — domain model, attenuation rule, payment pipeline, data flow, on-chain vs off-chain split.
 - [`docs/SPONSORS.md`](docs/SPONSORS.md) — per-track submission checklist with the required failure-path demos flagged.

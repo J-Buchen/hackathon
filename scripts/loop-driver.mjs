@@ -163,7 +163,7 @@ if (winners.length) {
       const diff = sh("git add -A && git diff --cached HEAD -- . ':(exclude)node_modules'", conf.dir);
       writeFileSync(join(root, "merge.diff"), diff);
       writeFileSync(join(archive, "merge.diff"), diff);
-      report.merged = { kept: conf.kept, diffFile: join(root, "merge.diff"), archived: `docs/loops/loop-${L}/merge.diff` };
+      report.merged = { kept: conf.kept, diffFile: `docs/loops/loop-${L}/merge.diff` };
     }
   }
 }

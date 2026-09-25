@@ -21,7 +21,7 @@
   },
   {
    "title": "Deploy a constant share of NAV and redeploy freed capital",
-   "reason": "rejected in review: it won utility by taking risk (Sharpe down, drawdown up) and its '80% of NAV at work' claim was false"
+   "reason": "rejected in review: written against the pre-fix code, it did not apply to the judged commit and one of its own tests failed once rebased; it also won utility by taking risk (Sharpe down, drawdown up) and its '80% of NAV at work' claim was false"
   },
   {
    "title": "Operator credit event (G)",
@@ -369,7 +369,7 @@
    1,
    0
   ],
-  "diffFile": "/tmp/loops/L2/merge.diff",
+  "diffFile": "docs/loops/loop-2/merge.diff",
   "archived": "docs/loops/loop-2/merge.diff"
  },
  "baselineA": {
@@ -524,7 +524,8 @@
      "baselineUtility": -0.21874271257552838,
      "baselineMaxDD": 0.43627260965974907
     }
-   }
+   },
+   "shaNote": "The block-B confirmation worktree was created after commit ccc2b7c (which only archived the candidate diffs), so it records ccc2b7c; its code is identical to head 370e0b8 and verification reproduced the numbers with the baseline at 370e0b8."
   }
  },
  "mergedAs": "(this commit)"

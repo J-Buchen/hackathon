@@ -8,7 +8,8 @@
 // reports, per candidate and track, the paired utility difference vs the
 // baseline checkout with a 90% normal-approximation interval (mean ± 1.645 ·
 // sd/√n; with n = 200 worlds the t quantile, 1.653, differs in the third
-// decimal), plus each checkout's commit and whether it had local changes.
+// decimal), plus each checkout's commit and whether it had local changes
+// (demo snapshots under apps/web/public do not count: they are not code).
 import { execFileSync } from "node:child_process";
 import { readFileSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
@@ -25,7 +26,7 @@ const run = (dir, i) => {
 };
 const commit = (dir) => {
   const git = (...a) => execFileSync("git", a, { cwd: dir }).toString().trim();
-  return { sha: git("rev-parse", "HEAD"), dirty: git("status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)node_modules").length > 0 };
+  return { sha: git("rev-parse", "HEAD"), dirty: git("status", "--porcelain", "--untracked-files=no", "--", ".", ":(exclude)node_modules", ":(exclude)apps/web/public").length > 0 };
 };
 const results = dirs.map((d, i) => ({ dir: d, ...commit(d), r: run(d, i) }));
 const base = results[0].r;
