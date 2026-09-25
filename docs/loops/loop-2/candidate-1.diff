@@ -1,0 +1,150 @@
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index 983ef1e..a0f0d94 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -85,8 +85,14 @@ Around them sit agents that give the allocator something to allocate between:
+ 
+ ## The allocator (`allocator.ts`, pure functions)
+ 
+-- **Score** = shrunk Sharpe ÷ volatility, over a trailing window. Shrinkage is
+-  `n / (n + 60)`: a 30-day track record is pulled hard toward zero.
++- **Score** = shrunk Sharpe over the agent's last year of record
++  (`recordWindow`, 252 days). Shrinkage is `n / (n + 60)`: a 30-day track
++  record is pulled hard toward zero. A Sharpe estimate's standard error is
++  about √(252 / n) — ±1.7 on a 90-day window — so a short window re-ranks
++  agents on luck; the whole year is the evidence. Scores are not divided by
++  volatility again (a Kelly weight): every agent's Sharpe has the same
++  sampling error, so ranking by it ranks by evidence, and with capital capped
++  per agent and in total the binding constraint is capital, not risk budget.
+ - **Correlation-aware.** Each score is divided by the agent's *multiplicity*: the
+   sum of its positive return correlations with the other scoring agents. Two
+   clones split one allocation.
+diff --git a/packages/swarm/src/allocator.test.ts b/packages/swarm/src/allocator.test.ts
+index 029fec6..1b3fe10 100644
+--- a/packages/swarm/src/allocator.test.ts
++++ b/packages/swarm/src/allocator.test.ts
+@@ -82,6 +82,55 @@ test("allocate: equal weight during warmup; ladder and crowd caps shrink targets
+   assert.equal(t.y, 100);
+ });
+ 
++test("allocate: scores use a year of record, so one lucky quarter does not outrank a persistent edge", () => {
++  const policy = { ...defaultCenterBookPolicy(), maxAgentShare: 1 };
++  assert.equal(policy.recordWindow, 252);
++  // n ticks alternating between two returns (mean (up + down) / 2).
++  const alt = (n: number, first: number, second: number) => Array.from({ length: n }, (_, i) => (i % 2 === 0 ? first : second));
++  // An edge that held for 160 ticks and went flat for the last 90, and an agent
++  // flat for 160 ticks whose last 90 happened to be as good as the other's edge.
++  const persistent = [...alt(160, 0.006, -0.003), ...alt(90, 0.004, -0.004)];
++  const lucky = [...alt(160, -0.004, 0.004), ...alt(90, -0.003, 0.006)];
++  const agents = [
++    { name: "persistent", unitReturns: persistent, stopped: false, ladderMultiplier: 1 },
++    { name: "lucky", unitReturns: lucky, stopped: false, ladderMultiplier: 1 },
++  ];
++  const share = (out: ReturnType<typeof allocate>, name: string) => out.find((s) => s.name === name)!.share;
++  const year = allocate(agents, 1_000_000, policy);
++  assert.ok(share(year, "persistent") > 0.6, `the year of record backs the persistent edge (${share(year, "persistent").toFixed(2)})`);
++  assert.ok(share(year, "lucky") > 0, "the recent run still counts, as a quarter of the evidence");
++  // Judged on a trailing 90-tick window, the same records see only the lucky quarter.
++  const trailing = allocate(agents, 1_000_000, { ...policy, recordWindow: 90 });
++  assert.equal(share(trailing, "persistent"), 0);
++  assert.equal(share(trailing, "lucky"), 1);
++});
++
++test("allocate: an agent's share is the same whatever the size of the book it runs (Sharpe, not Sharpe ÷ vol)", () => {
++  const policy = { ...defaultCenterBookPolicy(), maxAgentShare: 1 };
++  const a = noise(21, 200, 0.001);
++  const b = noise(22, 200, 0.0008);
++  const c = noise(23, 200, 0.0012);
++  const run = (ka: number, kc: number) =>
++    allocate(
++      [
++        { name: "a", unitReturns: a.map((x) => ka * x), stopped: false, ladderMultiplier: 1 },
++        { name: "b", unitReturns: b, stopped: false, ladderMultiplier: 1 },
++        { name: "c", unitReturns: c.map((x) => kc * x), stopped: false, ladderMultiplier: 1 },
++      ],
++      1_000_000,
++      policy,
++    );
++  const base = run(1, 1);
++  // Agent a runs half the risk and c three times the risk on the same record of decisions.
++  const rescaled = run(0.5, 3);
++  for (let i = 0; i < 3; i++) {
++    assert.ok(Math.abs(base[i]!.share - rescaled[i]!.share) < 1e-9, `${base[i]!.name}: same evidence, same share`);
++    assert.ok(Math.abs(base[i]!.sharpe - rescaled[i]!.sharpe) < 1e-9);
++  }
++  assert.ok(Math.abs(rescaled[0]!.vol / base[0]!.vol - 0.5) < 1e-9, "the vol did change");
++  assert.ok(base.every((s) => s.share > 0));
++});
++
+ test("drawdown ladder: cut → restore → stop, and stop is final", () => {
+   const th = { ddCut: 0.1, ddRecover: 0.05, ddStop: 0.2 };
+   assert.equal(nextLadderState("active", [-0.12], th), "cut");
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index 4b1f5a7..61282a4 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -6,7 +6,7 @@
+  * Three things a pod shop does that per-agent guardrails cannot:
+  *
+  *  1. ALLOCATE BY RISK-ADJUSTED, ATTRIBUTABLE RETURNS, CORRELATION-AWARE.
+- *     score = shrunk Sharpe (short track records are pulled toward zero) ÷ vol,
++ *     score = shrunk Sharpe over the agent's last year of record (`recordWindow`),
+  *     then divided by how many OTHER agents are really the same bet (sum of
+  *     positive return correlations). Two clones split one allocation instead of
+  *     each taking a full one.
+@@ -44,8 +44,21 @@ export interface CenterBookPolicy {
+   rebalanceEvery: number;
+   /** Ticks of track record before scores replace equal weighting. */
+   warmup: number;
+-  /** Trailing window (ticks) scores and correlations are computed over. */
++  /**
++   * Trailing window (ticks) of the ladder's risk measure: the vol each agent
++   * runs, measured up to its high-water mark (see `ddStopVol`).
++   */
+   window: number;
++  /**
++   * Trailing ticks of track record that scores and correlations are estimated
++   * on. A Sharpe ratio estimated on n daily returns carries a standard error
++   * of about √(252 / n): ±1.7 on 90 ticks, as large as the skill being
++   * measured, so a short trailing window re-ranks agents on luck every few
++   * weeks. Skill that persists is measured on all of the record that is still
++   * current — one trading year. Agents whose edge decays are handled by the
++   * drawdown ladder, not by forgetting the evidence.
++   */
++  recordWindow: number;
+   /** Bayesian-style shrinkage: Sharpe × n / (n + shrinkageObs). */
+   shrinkageObs: number;
+   /** Max share of deployable capital any single agent may hold. */
+@@ -107,6 +120,7 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
+     rebalanceEvery: 5,
+     warmup: 30,
+     window: 90,
++    recordWindow: 252,
+     shrinkageObs: 60,
+     maxAgentShare: 0.25,
+     rebalanceBand: 0.1,
+@@ -169,7 +183,7 @@ export function allocate(
+   policy: CenterBookPolicy,
+ ): AgentScore[] {
+   const live = agents.filter((a) => !a.stopped);
+-  const windows = live.map((a) => a.unitReturns.slice(-policy.window));
++  const windows = live.map((a) => a.unitReturns.slice(-policy.recordWindow));
+   const n = windows[0]?.length ?? 0;
+ 
+   const base = live.map((a, i) => {
+@@ -186,7 +200,14 @@ export function allocate(
+     raw = live.map(() => 1);
+     multiplicity = live.map(() => 1);
+   } else {
+-    const scores = base.map((b) => Math.max(0, b.shrunkSharpe) / b.vol);
++    // Rank on Sharpe itself, not Sharpe ÷ vol (the Kelly weight μ/σ²). Every
++    // agent's Sharpe estimate carries the same sampling error, ≈ √(252 / n),
++    // so ranking by it ranks by strength of evidence. Dividing by vol again
++    // gives a low-vol book's luck 1/σ times the weight of a high-vol book's —
++    // and buys nothing here: capital is capped per agent (`maxAgentShare`)
++    // and in aggregate (`deploy`) far below any skilled agent's Kelly
++    // fraction, so what is scarce is capital, not risk budget.
++    const scores = base.map((b) => Math.max(0, b.shrunkSharpe));
+     const corr = correlationMatrix(windows);
+     multiplicity = scores.map((_, i) => {
+       let m = 0;

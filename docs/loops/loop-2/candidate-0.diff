@@ -1,0 +1,1579 @@
+diff --git a/DESIGN.md b/DESIGN.md
+index 301f721..add19ab 100644
+--- a/DESIGN.md
++++ b/DESIGN.md
+@@ -281,6 +281,18 @@ class DelegationTree {
+   //   interleave with pay()'s checks — but a settlement already awaiting inside
+   //   pay() can land after it; run close() through the same per-root queue as
+   //   payments (SerializedPayer in @allowance/adapters) when payments are live.
++  subtree(name: string): AgentNode[];                // node + descendants, parents first
++  spentInSubtree(name: string): bigint;              // Σ spentDirect over the subtree
++  isClosed(name: string): boolean;
++  // ^ revoked AND no node in its subtree has available > 0 (what close()
++  //   leaves; a bare revoke strands the unspent budget and is not closed).
++  audit(): TreeViolation[];
++  // ^ standing invariants, [] when sound: OVER_COMMITTED (spentDirect +
++  //   Σ children's budgets > budget), NEGATIVE_BUDGET, NOT_ATTENUATED (a
++  //   child's merchants/purposes/expiry broaden its parent's), BROKEN_LINK.
++  //   The API preserves all of them; audit() catches an unserialized
++  //   overspend or a direct write. delegate() also refuses (PARENT_REVOKED)
++  //   under any revoked ANCESTOR, so nothing is minted inside a closed subtree.
+   recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent; // custom events
+ }
+ ```
+diff --git a/README.md b/README.md
+index ed1a19d..0326952 100644
+--- a/README.md
++++ b/README.md
+@@ -83,15 +83,18 @@ multi-manager ("pod shop") fund does **across** its PMs when the PMs are agents
+ trading real capital. `@allowance/swarm` is that center book, built directly on
+ the mandate tree:
+ 
+-- **Allocation is a `resize`, a stop-out is a `revoke`.** Fund → pod → agent is
++- **Allocation is a `resize`, a stop-out is a `close`.** Fund → pod → agent is
+   a mandate tree, and every allocator action lands in the same audited event
+   log as payments.
+ - **Allocation uses risk-adjusted, attributable returns, and is
+   correlation-aware.** Clones split one allocation.
+-- **A risk-scaled drawdown ladder:** cut at 10% and stop out (revoke) at 20%,
++- **A risk-scaled drawdown ladder:** cut at 10% and stop out at 20%,
+   widened for a volatile agent to 1.5× the volatility it runs (measured up to its
+   last high-water mark, so a loss cannot loosen its own stop), and never past a
+-  40% ceiling, so every agent can still be stopped out.
++  40% ceiling, so every agent can still be stopped out. A stop-out is one
++  `tree.close`: the agent's capital and every sub-mandate it handed out go back
++  to its pod. The book audits the tree's reservation and close invariants before
++  and after every tick.
+ - **Crowding control.** Agents in different pods running the same trade are cut
+   back to a book-level limit, even when each is inside its own mandate.
+ 
+@@ -266,10 +269,13 @@ You can also run any layer in isolation:
+ | `@allowance/adapters` — AgentHire | `packages/adapters/src/agenthire.test.ts` | Against a fake AgentHire: settlement refuses any amount that is not AgentHire's quote (with or without a `QuoteBook`, whose entries only `fetch()` can add), and any challenge whose chain, token, recipient, domain or `validBefore` disagrees with the mandate, and signs nothing; before a permit is sent HTML 429s and timeouts are refusals, after it they are charged as UNCONFIRMED so a node cannot spend the same authority twice (Fuji 402 and timeout cases); sub-agent budgets split `cap − main` to the micro and are delegated all-or-nothing; repeated overspend becomes an operator incident plus a dispute (never a slash), persisted so a fresh ledger in another process screens the next buyer out; `SerializedPayer` stops two payments, even from two payer instances, spending one leftover. |
+ | `@allowance/adapters` — shadow audit | `packages/adapters/src/agenthire-audit.test.ts` | On a recorded AgentHire capture: A2A hires link to their primary job, direct and orphan hires are excluded, cycles and shared children get one alias node per parent, the headline comes from the replay-decided Hard Spend Cap scenario while `strict` is the by-definition total, `--organic-only` drops demo-cascade jobs, and AgentHire operator screening plugs into the replay. |
+ | `@allowance/core` — close | `packages/core/src/tree.test.ts` | `close` shrinks a subtree to what it spent, revokes it, and returns exactly what the parent's `available` rises by; never shrinks a parent below what its subtree really spent (even after an unserialized overspend); idempotent; reclaims budget under individually revoked descendants. |
++| `@allowance/core` — invariants | `packages/core/src/tree.test.ts` | `audit()` is empty for any tree built through the API and flags over-commitment (children + spend > budget, incl. an unserialized overspend), broadened merchants/purposes/expiry, negative budgets and broken links; `isClosed` separates a close (no unspent authority left) from a bare revoke (authority stranded); nothing can be delegated anywhere inside a closed subtree. |
++| `@allowance/swarm` — close | `packages/swarm/src/close.test.ts` | With PMs holding sub-mandates that pay every tick, the tree is checked from outside at every tick under three policies: children ≤ parent, available ≥ 0, sub-mandates hold exactly their ppm slice of the PM (never more), a closed subtree's budgets are frozen and it can never pay, delegate or grow; every stop-out is exactly one `close` freeing budget − spent into the pod; shares are validated in the ppm they are cut in; the book's audit stops a broken tree before the tick trades (and a mid-tick break at that tick's end); spent authority is a floor no resize crosses, and a grow the fund cannot fund is clipped, never refused. |
++| `@allowance/lab` — close in the arena | `packages/lab/src/arena-close.test.ts` | On randomized arena rosters with desks that spend every tick, center book and guardrails both run to the end on a sound tree, every stop-out is one `close` of the agent with its desks, and no move is refused. |
+ | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
+ | `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+ | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
+-| `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are revoked with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book. |
++| `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are closed with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book. |
+ | `@allowance/swarm` — example | `packages/swarm/src/example.test.ts` | The coffee thesis is well-formed (scores 1–5, sourced trend claims, parseable catalyst dates); the three Tiger Cubs converge on one long; the center book flags it on day one and loses less in the unwind. |
+ | `@allowance/orchestrator` | `services/orchestrator/src/flow.test.ts` | `executePayment` reaches every `PaymentOutcome`; in each, the off-chain result **agrees** with the `SpendCapHook` cap decision (hook agreement), the emitted event matches the record, and a settled payment moves the node's ENS `spentDirect` record in lock-step. |
+ | `allowance-web` — snapshot | `apps/web/src/snapshot.test.ts` | Runtime validation of `demo-snapshot.json` against the frozen schema: well-formed input round-trips unchanged; malformed/stale input throws a precise, path-tagged `SnapshotParseError`. |
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index 983ef1e..f17b70b 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -14,7 +14,7 @@ has limits. It wins through the **center book**:
+ 1. **Allocating capital by risk-adjusted, attributable returns.** Allocation is
+    correlation-aware, so clones don't get paid twice.
+ 2. **A drawdown ladder.** A PM is cut at one drawdown and stopped out at a
+-   second.
++   second. The stop-out closes its whole mandate subtree in one operation.
+ 3. **Crowding control.** Pods that pile into the same trade get cut, even when
+    every one of them is inside its own limits.
+ 
+@@ -25,14 +25,36 @@ has limits. It wins through the **center book**:
+ | fund → pod → PM | `fund.eth` → `consumer.fund.eth` → `tiger-quality.consumer.fund.eth` |
+ | capital allocation | the node's **budget**: `tree.resize(node, budget)` |
+ | allowed instruments | the node's **allowlist**, attenuated fund ⊇ pod ⊇ PM |
++| a PM's own sub-agents (execution, data) | **sub-mandates**: children of the PM node, each reserved as a ppm `share` of its budget when granted and resized with it |
+ | drawdown cut | `resize` to `cutFactor` × capital |
+-| stop-out | `resize` to 0, then **`revoke`** |
++| stop-out | **`close`**: the PM and every sub-mandate shrink to what they spent and are revoked, in one operation; the unspent authority is back in the pod |
+ | audit trail | the same ordered event log as payments (`RESIZE`, `REVOKE`) |
+ 
+-`resize` is the one addition to `@allowance/core`. It can grow a node's budget
+-only out of its parent's *available* budget. It can shrink it only down to what
+-the node has already committed (its own spend plus what it has delegated). A
+-revoked subtree can't be resized, and the root can only shrink.
++`resize` can grow a node's budget only out of its parent's *available* budget.
++It can shrink it only down to what the node has already committed (its own
++spend plus what it has delegated). A revoked subtree can't be resized, and the
++root can only shrink. The book clips a grow to what the parent still has, so
++once sub-mandates have spent the fund's undeployed buffer the allocator's
++targets become ceilings instead of refused moves. `close` is why a stop-out
++can't leave authority behind: the old stop-out was "resize to 0, then revoke",
++and a PM that had delegated sub-budgets couldn't be resized to 0 at all.
++
++**Invariants, checked twice a tick.** The book audits its tree
++(`bookViolations`) before each tick trades and again at its end, and throws
++`BookInvariantError` on any failure:
++
++- no node has spent plus delegated more than it holds (children ≤ parent,
++  `available` ≥ 0), and no budget is negative;
++- merchants, purposes and expiry attenuate;
++- the root still holds exactly the AUM;
++- every revoked mandate is *closed*: nothing under it holds unspent authority;
++- every stopped PM's mandate is dead, and no PM that is not stopped sits in a
++  dead subtree.
++
++`packages/swarm/src/close.test.ts` checks these from the outside at every tick
++of books whose PMs hold spending sub-mandates. It also shows that each stop-out
++is one `close` that frees exactly budget − spent into the pod, and that a closed
++subtree can never pay, delegate or grow again.
+ 
+ ---
+ 
+@@ -96,7 +118,7 @@ Around them sit agents that give the allocator something to allocate between:
+   track record:
+   - cut to 50% capital at a 10% drawdown;
+   - restore once it recovers to within 5% of its high-water mark;
+-  - **stop out (revoke) at a 20% drawdown;**
++  - **stop out at a 20% drawdown: the PM's mandate subtree is closed;**
+   - **risk-scaled** (loop 1): the rungs widen for an agent that runs more
+     volatility, so the stop sits at 1.5σ of the agent's annualized vol (σ
+     measured over the last 90 ticks up to its last high-water mark, so the losses
+@@ -184,7 +206,13 @@ What this says, plainly:
+ - **The drawdown-cut rung does not earn its keep on this market.** Removing it
+   raises Sharpe from 0.61 to 0.64. It stays in the default because it's standard
+   pod-shop practice and costs little drawdown, but the data doesn't support it
+-  here. The stop-out rung (revocation) stays either way.
++  here. The stop-out rung (now a `close`) stays either way. Since loop 1 the
++  rungs are risk-scaled. The cut still fires (about 9 times per arena world on
++  research seeds 801–900, against 18 under the fixed ladder), but dropping it
++  moves the arena's CRRA (γ = 3) certainty-equivalent return by only +0.05
++  points on seeds 801–1000 (paired 90% CI −0.06..+0.16) and +0.12 on 5600–5749
++  (−0.03..+0.27). That is not enough to change the default. It is optional:
++  leave `ddCut` unset for a stop-only ladder.
+ - **The risk-scaled ladder (loop 1) trades drawdown for Sharpe here.** With
+   fixed 10%/20% rungs the center book's mean max drawdown is 4.6% (Sharpe 0.56);
+   risk-scaled, 5.0% (Sharpe 0.61). It was adopted because it raised fund utility
+diff --git a/package.json b/package.json
+index 9b4796d..f8a8f8a 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts services/orchestrator/src/flow.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/core/src/tree.test.ts b/packages/core/src/tree.test.ts
+index a1899ab..1df56c2 100644
+--- a/packages/core/src/tree.test.ts
++++ b/packages/core/src/tree.test.ts
+@@ -355,3 +355,109 @@ test("close frees exactly the unspent part of a deep, partly spent subtree", asy
+     [30n, 130n, 7n, 187n],
+   );
+ });
++
++/* ---------------------------------------------------------------- */
++/* subtree, isClosed, audit — the invariants callers can check       */
++/* ---------------------------------------------------------------- */
++
++test("subtree lists a node and every descendant parents-first; spentInSubtree sums their spend", async () => {
++  const tree = await capitalTree();
++  assert.deepEqual(tree.subtree("pm.fund.eth").map((n) => n.name), ["pm.fund.eth", "scraper.pm.fund.eth"]);
++  assert.deepEqual(tree.subtree("fund.eth").map((n) => n.name), ["fund.eth", "pm.fund.eth", "scraper.pm.fund.eth", "pod.fund.eth"]);
++  assert.equal(tree.spentInSubtree("pm.fund.eth"), 8_000000n);
++  assert.equal(tree.spentInSubtree("scraper.pm.fund.eth"), 3_000000n);
++  assert.equal(tree.spentInSubtree("pod.fund.eth"), 0n);
++  assert.throws(() => tree.subtree("nobody.fund.eth"), UnknownNodeError);
++});
++
++test("isClosed: a revoke strands unspent authority, a close leaves none", async () => {
++  const tree = await capitalTree();
++  assert.equal(tree.isClosed("pm.fund.eth"), false, "live");
++  tree.revoke("pm.fund.eth");
++  assert.equal(tree.isClosed("pm.fund.eth"), false, "revoked, but 32 unspent is stranded under it");
++  const stranded = tree.subtree("pm.fund.eth").reduce((s, n) => s + tree.available(n.name), 0n);
++  assert.equal(stranded, 32_000000n);
++  const freed = tree.close("pm.fund.eth");
++  assert.equal(freed, stranded, "close frees exactly what the revoke stranded");
++  assert.equal(tree.isClosed("pm.fund.eth"), true);
++  assert.equal(tree.isClosed("scraper.pm.fund.eth"), false, "the scraper is dead via its parent, not itself revoked");
++  assert.ok(tree.subtree("pm.fund.eth").every((n) => tree.available(n.name) === 0n));
++});
++
++test("nothing new is minted inside a closed subtree: a descendant of a closed node cannot delegate", async () => {
++  const tree = await capitalTree();
++  tree.close("pm.fund.eth");
++  const seq = tree.nextSeq;
++  // The scraper itself is not revoked, only its parent: still refused, even at zero budget.
++  assert.throws(
++    () => tree.delegate("scraper.pm.fund.eth", "late", { budget: 0n, expiry: FAR }),
++    (e: unknown) => e instanceof AttenuationError && e.reason === "PARENT_REVOKED",
++  );
++  assert.equal(tree.getNode("late.scraper.pm.fund.eth"), undefined);
++  assert.equal(tree.events.at(-1)!.result, "ATTENUATION_REJECTED");
++  assert.equal(tree.nextSeq, seq + 1);
++});
++
++test("audit: a tree built through the API is sound before and after resizes and closes", async () => {
++  const tree = await capitalTree();
++  assert.deepEqual(tree.audit(), []);
++  tree.resize("pod.fund.eth", 5_000000n);
++  tree.close("pm.fund.eth");
++  tree.delegate("fund.eth", "next", { budget: tree.available("fund.eth"), expiry: FAR });
++  assert.deepEqual(tree.audit(), []);
++});
++
++test("audit flags an over-committed node (the reservation invariant: children ≤ parent)", async () => {
++  // The unserialized-overspend path: two concurrent pay() calls both pass the
++  // budget check, so the child spends 200 against a budget of 100.
++  const tree = new DelegationTree();
++  tree.fundRoot({ principal: "p", rootName: "r.eth", mandate: { budget: 1000n, expiry: FAR } });
++  tree.delegate("r.eth", "c", { budget: 100n, expiry: FAR });
++  const slow: PaymentAdapters = {
++    ...allowAll,
++    settlement: {
++      settle: async (req) => {
++        await new Promise((res) => setTimeout(res, 5));
++        return allowAll.settlement.settle(req);
++      },
++    },
++  };
++  await Promise.all([
++    pay(tree, { node: "c.r.eth", merchant: "m", amount: 100n }, slow, { now: 1_000 }),
++    pay(tree, { node: "c.r.eth", merchant: "m", amount: 100n }, slow, { now: 1_000 }),
++  ]);
++  const v = tree.audit();
++  assert.equal(v.length, 1);
++  assert.equal(v[0]!.kind, "OVER_COMMITTED");
++  assert.equal(v[0]!.node, "c.r.eth");
++
++  // A caller writing a parent's budget below what it handed down is caught too.
++  const t2 = seed();
++  t2.delegate("alice.eth", "kid", { budget: 60_000000n, expiry: FAR });
++  t2.requireNode("alice.eth").mandate.budget = 50_000000n;
++  assert.deepEqual(t2.audit().map((x) => [x.kind, x.node]), [["OVER_COMMITTED", "alice.eth"]]);
++});
++
++test("audit flags broadened authority, negative budgets and broken links", () => {
++  const tree = seed();
++  tree.delegate("alice.eth", "kid", { budget: 10_000000n, allowedMerchants: ["a"], allowedPurposes: ["data"], expiry: FAR - 10 });
++  tree.delegate("kid.alice.eth", "grandkid", { budget: 1_000000n, allowedMerchants: ["a"], allowedPurposes: ["data"], expiry: FAR - 10 });
++  assert.deepEqual(tree.audit(), []);
++  const kid = tree.requireNode("kid.alice.eth");
++  const grandkid = tree.requireNode("grandkid.kid.alice.eth");
++  grandkid.mandate.allowedMerchants = ["a", "b"];
++  grandkid.mandate.allowedPurposes = ["data", "trade"];
++  grandkid.mandate.expiry = FAR;
++  kid.mandate.budget = -1n;
++  const kinds = tree.audit().map((x) => `${x.kind} ${x.node}`);
++  assert.ok(kinds.includes("NEGATIVE_BUDGET kid.alice.eth"));
++  assert.ok(kinds.includes("OVER_COMMITTED kid.alice.eth"));
++  const broadened = tree.audit().find((x) => x.kind === "NOT_ATTENUATED")!;
++  assert.equal(broadened.node, "grandkid.kid.alice.eth");
++  assert.match(broadened.message, /merchants, purposes, expiry broaden parent "kid.alice.eth"/);
++
++  const orphan = seed();
++  const n = orphan.delegate("alice.eth", "kid", { budget: 1n, expiry: FAR });
++  n.parent = "ghost.eth";
++  assert.ok(orphan.audit().some((x) => x.kind === "BROKEN_LINK" && x.node === "kid.alice.eth"));
++});
+diff --git a/packages/core/src/tree.ts b/packages/core/src/tree.ts
+index 8fcf29d..d75c558 100644
+--- a/packages/core/src/tree.ts
++++ b/packages/core/src/tree.ts
+@@ -11,6 +11,7 @@
+ import {
+   AttenuationError,
+   checkAttenuation,
++  isAllowlistSubset,
+   type AttenuationDecision,
+   type AttenuationRejectionReason,
+ } from "./attenuation";
+@@ -69,6 +70,26 @@ export class DuplicateNodeError extends Error {
+   }
+ }
+ 
++/* ------------------------------------------------------------------ */
++/* Invariants                                                         */
++/* ------------------------------------------------------------------ */
++
++/**
++ * A broken standing invariant of the tree (see `DelegationTree.audit`):
++ *  - OVER_COMMITTED  spentDirect + Σ children's budgets > budget, i.e. the node
++ *                    handed down or spent more than it holds (available < 0)
++ *  - NEGATIVE_BUDGET a budget below zero
++ *  - NOT_ATTENUATED  a child's merchants/purposes/expiry broaden its parent's
++ *  - BROKEN_LINK     a node whose parent is not in the tree
++ */
++export type TreeViolationKind = "OVER_COMMITTED" | "NEGATIVE_BUDGET" | "NOT_ATTENUATED" | "BROKEN_LINK";
++
++export interface TreeViolation {
++  kind: TreeViolationKind;
++  node: string;
++  message: string;
++}
++
+ /* ------------------------------------------------------------------ */
+ /* Options                                                            */
+ /* ------------------------------------------------------------------ */
+@@ -283,11 +304,16 @@ export class DelegationTree {
+       throw new DuplicateNodeError(fullName);
+     }
+ 
+-    const decision: AttenuationDecision = checkAttenuation(
+-      parent,
+-      mandate,
+-      this.available(parentName),
+-    );
++    // A revoked ANCESTOR kills the parent too (checkAttenuation only sees the
++    // parent itself): nothing new is ever minted inside a dead subtree.
++    const deadAbove = !parent.mandate.revoked && this.isRevokedInChain(parentName);
++    const decision: AttenuationDecision = deadAbove
++      ? {
++          ok: false,
++          reason: "PARENT_REVOKED",
++          message: `an ancestor of "${parentName}" is revoked; it cannot delegate`,
++        }
++      : checkAttenuation(parent, mandate, this.available(parentName));
+ 
+     if (!decision.ok) {
+       this.recordEvent({
+@@ -496,6 +522,92 @@ export class DelegationTree {
+     return freed;
+   }
+ 
++  /* ---------------------------------------------------------------- */
++  /* Subtrees and invariants                                          */
++  /* ---------------------------------------------------------------- */
++
++  /** The node and every descendant, each parent before its children. */
++  subtree(name: string): AgentNode[] {
++    const out: AgentNode[] = [];
++    const walk = (node: AgentNode): void => {
++      out.push(node);
++      const bucket = this.childrenIndex_.get(node.name);
++      if (bucket) for (const child of bucket) walk(child);
++    };
++    walk(this.requireNode(name));
++    return out;
++  }
++
++  /** Everything spent anywhere in the node's subtree, its own spend included. */
++  spentInSubtree(name: string): bigint {
++    let spent = 0n;
++    for (const node of this.subtree(name)) spent += node.mandate.spentDirect;
++    return spent;
++  }
++
++  /**
++   * True when `name` is revoked AND nothing in its subtree still holds unspent
++   * authority (every node's `available` ≤ 0) — the state `close()` leaves. A
++   * node that was only `revoke()`d still strands its unspent budget (dead
++   * authority its parent cannot reuse), so it is not closed.
++   */
++  isClosed(name: string): boolean {
++    if (!this.requireNode(name).mandate.revoked) return false;
++    return this.subtree(name).every((node) => this.available(node.name) <= 0n);
++  }
++
++  /**
++   * Check the tree's standing invariants and return every violation (empty
++   * when the tree is sound). `delegate`, `resize` and `close` preserve all of
++   * them on their own; the audit is for callers that want the guarantee
++   * checked rather than assumed (the swarm book runs it every tick), and it
++   * catches what the API cannot prevent: an overspend by unserialized
++   * concurrent `pay()` calls, or a caller writing to a node object directly.
++   *
++   *  - reservation: spentDirect + Σ children's budgets ≤ budget for every node
++   *    (children ≤ parent, available ≥ 0), and no budget is negative;
++   *  - attenuation: every child's merchants, purposes and expiry are within
++   *    its parent's;
++   *  - structure: every non-root node's parent exists.
++   */
++  audit(): TreeViolation[] {
++    const out: TreeViolation[] = [];
++    for (const node of this.nodes_.values()) {
++      const m = node.mandate;
++      if (m.budget < 0n) {
++        out.push({ kind: "NEGATIVE_BUDGET", node: node.name, message: `budget ${m.budget} < 0` });
++      }
++      const committed = m.spentDirect + this.reserved(node.name);
++      if (committed > m.budget) {
++        out.push({
++          kind: "OVER_COMMITTED",
++          node: node.name,
++          message: `spent ${m.spentDirect} + delegated ${committed - m.spentDirect} > budget ${m.budget}`,
++        });
++      }
++      if (node.parent === null) continue;
++      const parent = this.nodes_.get(node.parent);
++      if (!parent) {
++        out.push({ kind: "BROKEN_LINK", node: node.name, message: `parent "${node.parent}" is not in the tree` });
++        continue;
++      }
++      const p = parent.mandate;
++      const broadened = [
++        !isAllowlistSubset(m.allowedMerchants, p.allowedMerchants) && "merchants",
++        !isAllowlistSubset(m.allowedPurposes, p.allowedPurposes) && "purposes",
++        m.expiry > p.expiry && "expiry",
++      ].filter((x): x is string => typeof x === "string");
++      if (broadened.length > 0) {
++        out.push({
++          kind: "NOT_ATTENUATED",
++          node: node.name,
++          message: `${broadened.join(", ")} broaden parent "${parent.name}"`,
++        });
++      }
++    }
++    return out;
++  }
++
+   /**
+    * Append an event to the log, assigning the next sequence number. Used
+    * internally and by the payment pipeline; orchestrators may also use it to
+diff --git a/packages/lab/package.json b/packages/lab/package.json
+index fd88a55..da5f86b 100644
+--- a/packages/lab/package.json
++++ b/packages/lab/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts",
++    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts",
+     "lab": "tsx src/cli.ts"
+   },
+   "dependencies": {
+diff --git a/packages/lab/src/arena-close.test.ts b/packages/lab/src/arena-close.test.ts
+new file mode 100644
+index 0000000..a352963
+--- /dev/null
++++ b/packages/lab/src/arena-close.test.ts
+@@ -0,0 +1,81 @@
++/**
++ * The book's tree guarantees on randomized arena rosters (clones under two
++ * names, herders, a rogue, crowd crashes), with every agent holding desks that
++ * pay for something every tick. The book audits its own tree before and after
++ * every tick and throws on any break, so each run finishing is itself the
++ * check that reservation and close invariants held throughout; on top of that:
++ * every stop-out is exactly one close of the stopped agent, it leaves nothing
++ * unspent under it, and the book never makes a move the tree refuses.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { pay, type PaymentAdapters } from "@allowance/core";
++import { defaultCenterBookPolicy, defaultNaivePolicy, runBook, tickToUnix } from "@allowance/swarm";
++import { makeWorld } from "./arena";
++
++const allowAll: PaymentAdapters = {
++  identity: { verify: async () => ({ ok: true }) },
++  screening: { screen: async () => ({ approved: true }) },
++  settlement: {
++    settle: async (req) => ({
++      settled: true,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: req.amount,
++      amountOut: req.amount,
++    }),
++  },
++};
++
++let stopOuts = 0;
++for (const seed of [1, 2, 3, 4, 5, 6]) {
++  test(`arena world ${seed}: with spending desks, every stop-out is one close and the tree stays sound`, async () => {
++    const world = makeWorld(seed);
++    for (const policy of [defaultCenterBookPolicy(), defaultNaivePolicy()]) {
++      const spec = world.swarm();
++      for (const a of spec.agents) {
++        a.subMandates = [
++          { label: "exec", share: 0.2 },
++          { label: "data", share: 0.01, instruments: [a.instruments[0]!] },
++        ];
++      }
++      const closed: string[] = [];
++      const book = await runBook(world.market, spec, policy, {
++        onTick: async (t, tree) => {
++          if (t === 0) {
++            const close = tree.close.bind(tree);
++            tree.close = (name: string) => {
++              closed.push(name);
++              return close(name);
++            };
++          }
++          for (const n of tree.listNodes()) {
++            const desk = n.name.split(".")[0];
++            if ((desk !== "exec" && desk !== "data") || tree.isRevokedInChain(n.name)) continue;
++            const amount = desk === "exec" ? 500_000000n : 50_000000n;
++            if (tree.available(n.name) < amount) continue;
++            const r = await pay(tree, { node: n.name, merchant: n.mandate.allowedMerchants![0]!, amount }, allowAll, { now: tickToUnix(t) });
++            assert.equal(r.outcome, "SETTLED");
++          }
++        },
++      });
++      const tree = book.tree;
++      assert.equal(book.nav.length, world.market.ticks.length);
++      assert.deepEqual(tree.events.filter((e) => e.result === "ATTENUATION_REJECTED"), []);
++      assert.deepEqual(tree.audit(), []);
++      const stopped = book.agents.filter((a) => a.ladder === "stopped").map((a) => a.name);
++      assert.deepEqual([...closed].sort(), [...stopped].sort(), "each stopped agent was closed exactly once");
++      for (const name of stopped) {
++        assert.ok(tree.isClosed(name), `${name} is closed`);
++        assert.equal(tree.subtree(name).length, 3, `${name} was closed with both desks`);
++      }
++      assert.ok(tree.listNodes().some((n) => n.name.startsWith("exec.") && n.mandate.spentDirect > 0n), "desks spent");
++      stopOuts += stopped.length;
++    }
++  });
++}
++
++test("those worlds did stop agents out, holding desks", () => {
++  assert.ok(stopOuts >= 20, `stop-outs across the worlds: ${stopOuts}`);
++});
+diff --git a/packages/swarm/package.json b/packages/swarm/package.json
+index f109a90..a3126f2 100644
+--- a/packages/swarm/package.json
++++ b/packages/swarm/package.json
+@@ -3,14 +3,14 @@
+   "version": "0.1.0",
+   "private": true,
+   "type": "module",
+-  "description": "The center book: a pod-shop allocator for a swarm of trading agents, built on the Allowance mandate tree. Correlation-aware capital allocation, a drawdown cut/stop-out ladder (stop-out = revocation), cross-agent crowding detection, and per-agent attributable track records. Zero runtime dependencies beyond @allowance/core.",
++  "description": "The center book: a pod-shop allocator for a swarm of trading agents, built on the Allowance mandate tree. Correlation-aware capital allocation, a drawdown stop-out that closes the agent's mandate subtree (optional cut rung), cross-agent crowding detection, and per-agent attributable track records. Zero runtime dependencies beyond @allowance/core.",
+   "exports": {
+     ".": "./src/index.ts"
+   },
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/example.test.ts"
++    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/example.test.ts"
+   },
+   "dependencies": {
+     "@allowance/core": "*"
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index 4b1f5a7..4ebd4d0 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -1,7 +1,7 @@
+ /**
+  * The center book's brain. Pure functions only — no tree, no I/O — so every
+  * allocation decision is reproducible and unit-testable. `book.ts` turns these
+- * decisions into mandate-tree writes (resize = reallocate, revoke = stop-out).
++ * decisions into mandate-tree writes (resize = reallocate, close = stop-out).
+  *
+  * Three things a pod shop does that per-agent guardrails cannot:
+  *
+@@ -12,10 +12,15 @@
+  *     each taking a full one.
+  *  2. A DRAWDOWN LADDER. At `ddCut` an agent's capital is cut to `cutFactor`;
+  *     it is restored only once it recovers above `ddRecover`. At `ddStop` it is
+- *     stopped out: capital to zero and the mandate revoked. The rungs are
+- *     RISK-SCALED: drawdowns are judged against the vol the agent runs
+- *     (`ddStopVol`), so a volatile skilled book is not revoked for ordinary
+- *     noise while the fixed percentages remain the floor.
++ *     stopped out: its mandate is closed together with every sub-mandate it
++ *     handed out, and it never trades again. The rungs are RISK-SCALED:
++ *     drawdowns are judged against the vol the agent runs (`ddStopVol`), so a
++ *     volatile skilled book is not revoked for ordinary noise while the fixed
++ *     percentages remain the floor. The cut rung is optional (leave `ddCut`
++ *     unset for a stop-only ladder). It stays on by default: under the scaled
++ *     ladder, dropping it moved CE utility by only +0.05pp on arena research
++ *     seeds 801–1000 (90% CI −0.06..+0.16) and +0.12pp on 5600–5749
++ *     (−0.03..+0.27), which is not evidence enough to change the default.
+  *  3. CROWDING. Agents whose proposed books point the same way (cosine
+  *     similarity ≥ `crowdSimilarity`) form a crowd. If a crowd's combined
+  *     exposure to any one instrument exceeds `crowdMaxShare` of NAV, every
+@@ -52,13 +57,17 @@ export interface CenterBookPolicy {
+   maxAgentShare: number;
+   /** Relative change below which a reallocation is skipped (avoids churn). */
+   rebalanceBand: number;
+-  /** Drawdown (from the agent's own high-water mark) that triggers a cut. */
+-  ddCut: number;
+-  /** Capital multiplier while cut. */
+-  cutFactor: number;
+-  /** Drawdown the agent must recover to before a cut is lifted. */
+-  ddRecover: number;
+-  /** Drawdown that triggers a stop-out (revocation). */
++  /**
++   * Drawdown (from the agent's own high-water mark) that cuts its capital to
++   * `cutFactor`. Optional: unset = no cut rung, only the stop-out (see the
++   * header). On by default.
++   */
++  ddCut?: number;
++  /** Capital multiplier while cut (with `ddCut`; default 1). */
++  cutFactor?: number;
++  /** Drawdown the agent must recover to before a cut is lifted (with `ddCut`). */
++  ddRecover?: number;
++  /** Drawdown that triggers a stop-out (the mandate subtree is closed). */
+   ddStop: number;
+   /**
+    * Risk-scaled ladder. A fixed-percentage drawdown is not evidence on its own:
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index c1cc962..ac72223 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -5,17 +5,29 @@
+  *   fund.eth                      ← principal funds the root with AUM
+  *    ├─ systematic.fund.eth       ← pods: budget = sum of their agents
+  *    │    ├─ trend-fast.systematic.fund.eth
+- *    │    └─ …
++ *    │    │    └─ exec.trend-fast.systematic.fund.eth   ← optional sub-mandate:
++ *    │    └─ …                                             a slice of the agent's budget
+  *    └─ macro.fund.eth
+  *         └─ …
+  *
+  * The mapping onto the tree is one-to-one:
+- *   - capital allocation  = the node's budget      (tree.resize)
+- *   - allowed instruments = the node's allowlist   (attenuated fund → pod → agent)
+- *   - stop-out            = resize to 0 + revoke   (tree.revoke); drawdown
+- *                           rungs are risk-scaled in the center book
++ *   - capital allocation  = the node's budget      (tree.resize; sub-mandates keep their slice)
++ *   - allowed instruments = the node's allowlist   (attenuated fund → pod → agent → sub)
++ *   - stop-out            = tree.close(agent)      (the agent AND every sub-mandate it
++ *                           handed out shrink to what they spent and are revoked, in one
++ *                           operation; the unspent authority is back in the pod); the
++ *                           drawdown rungs are risk-scaled in the center book
+  * so every allocator action lands in the same audited event log as payments.
+  *
++ * The tree's invariants (`bookViolations`) are checked twice a tick: before the
++ * tick trades (after anything outside the book, see `RunBookOptions.onTick`,
++ * has acted) and at its end. Children never exceed their parent, nothing is
++ * over-committed, the root still holds the AUM, every revoked mandate is
++ * closed (no authority stranded under a dead node), every stopped agent is
++ * closed and every live one is not. A violation throws `BookInvariantError`:
++ * no tick trades on a tree that failed the check, and a break made during a
++ * tick is caught before the next one starts.
++ *
+  * Money and authority are kept separate on purpose: PnL accrues to the fund's
+  * NAV ledger here, while the tree holds how much each agent is *allowed* to run.
+  */
+@@ -56,6 +68,26 @@ export interface AgentSpec {
+   /** Instruments this agent may trade (⊆ its pod's). */
+   instruments: string[];
+   strategy: Strategy;
++  /**
++   * Sub-mandates the agent hands down (an execution desk, a data scraper…).
++   * Each is a child node holding a slice of the agent's budget: reserved when
++   * granted, resized with the agent, and closed with it on a stop-out.
++   */
++  subMandates?: SubMandateSpec[];
++}
++
++export interface SubMandateSpec {
++  /** Left-most label: the node is `<label>.<agent>.<pod>.<fund>`. */
++  label: string;
++  /**
++   * Share of the agent's budget reserved for it, in [0, 1]. Shares are cut in
++   * whole parts per million (`sharePpm`), and one agent's must sum to at most
++   * 1,000,000 ppm, so its slices always fit inside its budget. A sub-mandate
++   * never shrinks below what it has spent or delegated.
++   */
++  share: number;
++  /** What it may trade or pay for (⊆ the agent's). Defaults to the agent's list. */
++  instruments?: string[];
+ }
+ 
+ export interface SwarmSpec {
+@@ -155,59 +187,196 @@ function describeViolation(v: GateViolation): string {
+   }
+ }
+ 
++const PPM = 1_000_000n;
++
++/** A share in whole parts per million: the unit sub-mandate slices are cut in. */
++export function sharePpm(share: number): bigint {
++  return BigInt(Math.round(share * 1_000_000));
++}
++
++/** `ppm` parts per million of `budget`, rounded down (so slices never sum above it). */
++function slice(budget: bigint, ppm: bigint): bigint {
++  return (budget * ppm) / PPM;
++}
++
++/** Agent node → the sub-mandates it handed out, with each one's share of its budget. */
++export type SubMandates = ReadonlyMap<string, readonly { name: string; ppm: bigint }[]>;
++
+ /**
+  * Set every agent's budget to its target, keeping the tree valid at every step:
+- * shrink agents → shrink pods → grow pods → grow agents. Shrinks free parent
+- * budget before any grow draws on it, so attenuation never rejects a move.
++ * shrink sub-mandates → shrink agents → shrink pods → grow pods → grow agents →
++ * grow sub-mandates. Every shrink frees its parent's budget before any grow
++ * draws on it, no node is shrunk below what it has committed (spent plus
++ * delegated), and every grow is clipped to what its parent still has
++ * available, so on a sound tree it never makes a move the tree refuses. A
++ * grow is clipped only when its parent has no authority left to give; in the
++ * book that takes sub-mandates whose spent (hence unreclaimable) authority
++ * has used up the fund's undeployed buffer. The allocator's target is then a
++ * ceiling, not a claim on authority the fund no longer holds.
++ *
++ * A sub-mandate is a slice of its agent: it is resized to its share of the
++ * agent's target (of what the agent actually got, if its grow was clipped),
++ * but never below what it has itself committed. If those floors (plus the
++ * agent's own spend and any children the book does not manage) exceed the
++ * target, the agent keeps the floor: authority that was already spent cannot
++ * be taken back.
+  */
+-function applyTargets(
++export function applyTargets(
+   tree: DelegationTree,
+   podOf: ReadonlyMap<string, string>,
++  subsOf: SubMandates,
+   targets: ReadonlyMap<string, bigint>,
+ ): void {
+   const budget = (n: string) => tree.requireNode(n).mandate.budget;
+-  const podTotals = new Map<string, bigint>();
+-  for (const [agent, pod] of podOf) {
+-    const target = targets.get(agent) ?? budget(agent);
+-    podTotals.set(pod, (podTotals.get(pod) ?? 0n) + target);
+-  }
++  const committed = (n: string) => tree.requireNode(n).mandate.spentDirect + tree.reserved(n);
+   const live = (n: string) => !tree.isRevokedInChain(n);
+-
++  const max = (a: bigint, b: bigint) => (a > b ? a : b);
++  const min = (a: bigint, b: bigint) => (a < b ? a : b);
++  // The agent's live sub-mandates, each sized to its slice of `of`, floored at what it committed.
++  const slices = (agent: string, of: bigint) =>
++    (subsOf.get(agent) ?? [])
++      .filter((sub) => live(sub.name))
++      .map((sub) => ({ name: sub.name, budget: max(committed(sub.name), slice(of, sub.ppm)) }));
++
++  const plan = new Map<string, { target: bigint; budget: bigint; subs: { name: string; budget: bigint }[] }>();
+   for (const [agent, target] of targets) {
+-    if (live(agent) && target < budget(agent)) tree.resize(agent, target);
++    if (!live(agent)) continue;
++    const subs = slices(agent, target);
++    const mine = new Set(subs.map((sub) => sub.name));
++    let floor = tree.requireNode(agent).mandate.spentDirect;
++    for (const child of tree.childrenOf(agent)) if (!mine.has(child.name)) floor += child.mandate.budget;
++    for (const sub of subs) floor += sub.budget;
++    plan.set(agent, { target, budget: max(target, floor), subs });
++  }
++  // A pod holds exactly what its children will hold (plus anything it spent itself).
++  const podTotals = new Map<string, bigint>();
++  for (const pod of new Set(podOf.values())) {
++    let total = tree.requireNode(pod).mandate.spentDirect;
++    for (const child of tree.childrenOf(pod)) total += plan.get(child.name)?.budget ?? child.mandate.budget;
++    podTotals.set(pod, total);
++  }
++  // Grow `n` toward `want` out of its parent's available authority, never past it.
++  const grow = (n: string, want: bigint): void => {
++    const node = tree.requireNode(n);
++    const room = node.parent === null ? 0n : tree.available(node.parent);
++    if (want <= node.mandate.budget || room <= 0n || !live(n)) return;
++    tree.resize(n, node.mandate.budget + min(want - node.mandate.budget, room));
++  };
++
++  for (const p of plan.values()) {
++    for (const sub of p.subs) if (sub.budget < budget(sub.name)) tree.resize(sub.name, sub.budget);
++  }
++  for (const [agent, p] of plan) {
++    if (p.budget < budget(agent)) tree.resize(agent, p.budget);
+   }
+   for (const [pod, total] of podTotals) {
+     if (live(pod) && total < budget(pod)) tree.resize(pod, total);
+   }
+-  for (const [pod, total] of podTotals) {
+-    if (live(pod) && total > budget(pod)) tree.resize(pod, total);
++  for (const [pod, total] of podTotals) grow(pod, total);
++  for (const [agent, p] of plan) {
++    grow(agent, p.budget);
++    const got = budget(agent);
++    if (got < p.budget) {
++      // Clipped: its sub-mandates are cut from what it got (this only shrinks them).
++      p.subs = slices(agent, min(p.target, got));
++      for (const sub of p.subs) if (sub.budget < budget(sub.name)) tree.resize(sub.name, sub.budget);
++    }
+   }
+-  for (const [agent, target] of targets) {
+-    if (live(agent) && target > budget(agent)) tree.resize(agent, target);
++  for (const p of plan.values()) {
++    for (const sub of p.subs) grow(sub.name, sub.budget);
+   }
+ }
+ 
++/* ------------------------------------------------------------------ */
++/* Invariants                                                         */
++/* ------------------------------------------------------------------ */
++
++/**
++ * Thrown by `runBook` when the tree breaks one of the book's invariants, at
++ * tick `t`: at its `"start"` (before it trades) or at its `"end"`.
++ */
++export class BookInvariantError extends Error {
++  constructor(
++    readonly t: number,
++    readonly at: "start" | "end",
++    readonly violations: readonly string[],
++  ) {
++    super(`book invariant broken at the ${at} of tick ${t}: ${violations.join("; ")}`);
++    this.name = "BookInvariantError";
++  }
++}
++
++/**
++ * Every standing guarantee of the book's tree, as a list of violations (empty
++ * when sound). `runBook` checks it at the start of every tick, before it
++ * trades, and at its end:
++ *
++ *  (R) reservation: the core audit (no node has handed down or spent more
++ *      than it holds, i.e. children ≤ parent and available ≥ 0; allowlists,
++ *      purposes and expiry attenuate; no negative budget, no broken link), and
++ *      the root still holds exactly the AUM it was funded with.
++ *  (C) close: every revoked mandate is CLOSED, so nothing under it holds
++ *      unspent authority. A dead subtree can neither spend nor strand capital
++ *      its pod could reuse. Every stopped agent's mandate is dead (revoked,
++ *      hence closed), and no agent that is not stopped sits in a dead subtree.
++ */
++export function bookViolations(
++  tree: DelegationTree,
++  root: { name: string; budget: bigint },
++  agents: readonly { name: string; ladder: LadderState }[],
++): string[] {
++  const out = tree.audit().map((v) => `${v.kind} ${v.node}: ${v.message}`);
++  const rootBudget = tree.requireNode(root.name).mandate.budget;
++  if (rootBudget !== root.budget) out.push(`ROOT_CHANGED ${root.name}: budget ${rootBudget} != funded ${root.budget}`);
++  for (const node of tree.listNodes()) {
++    if (node.mandate.revoked && !tree.isClosed(node.name)) {
++      const stranded = tree.subtree(node.name).reduce((s, n) => s + tree.available(n.name), 0n);
++      out.push(`NOT_CLOSED ${node.name}: revoked but its subtree still holds ${stranded} unspent`);
++    }
++  }
++  for (const a of agents) {
++    const dead = tree.isRevokedInChain(a.name);
++    if (a.ladder === "stopped" && !dead) out.push(`STOP_NOT_REVOKED ${a.name}: stopped out, but its mandate is live`);
++    if (a.ladder !== "stopped" && dead) out.push(`LIVE_BUT_REVOKED ${a.name}: not stopped out, but its mandate is dead`);
++  }
++  return out;
++}
++
+ /* ------------------------------------------------------------------ */
+ /* Run                                                                */
+ /* ------------------------------------------------------------------ */
+ 
++export interface RunBookOptions {
++  /**
++   * Called at the start of every tick, before the allocator acts, with the
++   * live tree: the seam through which agents' sub-mandates act outside the
++   * book (e.g. a data sub-agent paying a vendor through core's `pay()`), and
++   * through which a test can watch the tree tick by tick. Whatever it does is
++   * held to the book's invariants before the tick trades.
++   */
++  onTick?: (t: number, tree: DelegationTree) => void | Promise<void>;
++}
++
+ export async function runBook(
+   market: Market,
+   spec: SwarmSpec,
+   policy: AllocationPolicy,
++  options: RunBookOptions = {},
+ ): Promise<BookResult> {
+   const T = market.ticks.length;
+   const expiry = tickToUnix(T + 30);
+   const tree = new DelegationTree();
++  const root = { name: spec.fund, budget: toUnits(spec.aum) };
+   tree.fundRoot({
+     principal: spec.principal,
+     rootName: spec.fund,
+-    mandate: { budget: toUnits(spec.aum), allowedMerchants: [...market.instruments], expiry },
++    mandate: { budget: root.budget, allowedMerchants: [...market.instruments], expiry },
+   });
+ 
+   // Start with equal allocations — the only defensible prior with no track record.
+   const perAgent = (spec.aum * policy.deploy) / spec.agents.length;
+   const podOf = new Map<string, string>();
++  const subsOf = new Map<string, { name: string; ppm: bigint }[]>();
+   for (const pod of spec.pods) {
+     const n = spec.agents.filter((a) => a.pod === pod.label).length;
+     tree.delegate(spec.fund, pod.label, {
+@@ -224,6 +393,32 @@ export async function runBook(
+       expiry,
+     });
+     podOf.set(node.name, podName);
++    if (a.subMandates?.length) {
++      // Validated in the unit the slices are cut in, so shares that pass always
++      // fit: Σ ppm ≤ 1,000,000 ⇒ Σ slices ≤ the agent's budget.
++      const ppms = a.subMandates.map((sm) => {
++        if (!Number.isFinite(sm.share) || sm.share < 0 || sm.share > 1) {
++          throw new Error(`${node.name}: sub-mandate share ${sm.share} is not in [0, 1]`);
++        }
++        return sharePpm(sm.share);
++      });
++      const total = ppms.reduce((s, x) => s + x, 0n);
++      if (total > PPM) {
++        throw new Error(`${node.name}: sub-mandate shares sum to ${total} ppm, more than the agent's whole budget`);
++      }
++      // Each sub-mandate is reserved out of the agent's budget as it is granted.
++      subsOf.set(
++        node.name,
++        a.subMandates.map((sm, i) => ({
++          name: tree.delegate(node.name, sm.label, {
++            budget: slice(node.mandate.budget, ppms[i]!),
++            allowedMerchants: [...(sm.instruments ?? a.instruments)],
++            expiry,
++          }).name,
++          ppm: ppms[i]!,
++        })),
++      );
++    }
+     return {
+       label: a.label,
+       name: node.name,
+@@ -255,11 +450,21 @@ export async function runBook(
+   const bookReturns: number[] = [];
+   const crowdExposure: number[] = [];
+   let currentNav = spec.aum;
+-  const capitalOf = (a: AgentResult) => toUsdc(tree.requireNode(a.name).mandate.budget);
++  // A closed mandate runs no capital: what is left of its budget is only the
++  // record of what its subtree spent.
++  const capitalOf = (a: AgentResult) =>
++    tree.isRevokedInChain(a.name) ? 0 : toUsdc(tree.requireNode(a.name).mandate.budget);
++  const audit = (t: number, at: "start" | "end") => {
++    const violations = bookViolations(tree, root, agents);
++    if (violations.length > 0) throw new BookInvariantError(t, at, violations);
++  };
+ 
+   for (let t = 0; t < T; t++) {
+     const tick = market.ticks[t]!;
+     const now = tickToUnix(t);
++    await options.onTick?.(t, tree);
++    // Nothing trades on a tree that fails the audit (at t = 0 this checks setup).
++    audit(t, "start");
+ 
+     /* 1) Scheduled reallocation (center book only). ---------------- */
+     if (center && t >= center.warmup && (t - center.warmup) % center.rebalanceEvery === 0) {
+@@ -269,7 +474,7 @@ export async function runBook(
+           name: a.name,
+           unitReturns: a.unitReturns,
+           stopped: a.ladder === "stopped",
+-          ladderMultiplier: a.ladder === "cut" ? center.cutFactor : 1,
++          ladderMultiplier: a.ladder === "cut" ? (center.cutFactor ?? 1) : 1,
+           crowdCap: crowdCaps.get(a.name)?.cap,
+         })),
+         deployable,
+@@ -293,7 +498,7 @@ export async function runBook(
+             `same-bet ×${s.multiplicity.toFixed(2)})`,
+         });
+       }
+-      applyTargets(tree, podOf, targets);
++      applyTargets(tree, podOf, subsOf, targets);
+     }
+ 
+     /* 2) The swarm decides — every agent concurrently. -------------- */
+@@ -350,7 +555,7 @@ export async function runBook(
+           crowdCaps.set(name, { cap: prior ? Math.min(prior.cap, cut) : cut, book: gated[i]!.weights });
+           targets.set(name, toUnits(cut));
+         }
+-        applyTargets(tree, podOf, targets);
++        applyTargets(tree, podOf, subsOf, targets);
+         const podCount = (names: string[]) => new Set(names.map((m) => podOf.get(m))).size;
+         const plural = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
+         decisions.push({
+@@ -411,25 +616,32 @@ export async function runBook(
+       const why = rungs.scale > 1 ? ` (rungs risk-scaled ×${rungs.scale.toFixed(2)}: the agent runs ${pct(rungs.vol)} vol)` : "";
+       const capital = capitalOf(a);
+       if (next === "stopped") {
+-        // Stop-out: hand the capital back up the tree, then revoke authority.
+-        applyTargets(tree, podOf, new Map([[a.name, 0n]]));
+-        tree.revoke(a.name);
++        // Stop-out: ONE tree.close takes back the agent's capital and every
++        // sub-mandate it handed out (each shrinks to what it spent, then the
++        // subtree is revoked). The freed authority is available to the pod.
++        const subs = tree.subtree(a.name).length - 1;
++        const freed = toUsdc(tree.close(a.name));
+         decisions.push({
+           t,
+           kind: "STOP_OUT",
+           node: a.name,
+           detail:
+-            `drawdown ≥ ${pct(rungs.ddStop)}${why} → mandate revoked, ` +
+-            (capital > 0 ? `${capital.toFixed(0)} USDC handed back to the pod` : "no capital was at risk (already allocated zero)"),
++            `drawdown ≥ ${pct(rungs.ddStop)}${why} → mandate closed` +
++            (subs > 0 ? ` with its ${subs} sub-mandate${subs === 1 ? "" : "s"}` : "") +
++            ", " +
++            (freed > 0 ? `${freed.toFixed(0)} USDC handed back to the pod` : "no capital was at risk (already allocated zero)"),
+         });
+       } else if (next === "cut" && center) {
+-        applyTargets(tree, podOf, new Map([[a.name, toUnits(capital * center.cutFactor)]]));
+-        decisions.push({ t, kind: "CUT", node: a.name, detail: `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${center.cutFactor}` });
++        applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(capital * (center.cutFactor ?? 1))]]));
++        decisions.push({ t, kind: "CUT", node: a.name, detail: `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${center.cutFactor ?? 1}` });
+       } else if (next === "active" && center) {
+         decisions.push({ t, kind: "RESTORE", node: a.name, detail: `recovered to within ${pct(rungs.ddRecover)} of high-water mark; full sizing at next reallocation` });
+       }
+       a.ladder = next;
+     }
++
++    /* 7) Invariants: a break made during the tick is caught before the next. */
++    audit(t, "end");
+   }
+ 
+   return { policy, tree, startNav: spec.aum, nav, returns: bookReturns, crowdExposure, agents, decisions };
+diff --git a/packages/swarm/src/close.test.ts b/packages/swarm/src/close.test.ts
+new file mode 100644
+index 0000000..32a052b
+--- /dev/null
++++ b/packages/swarm/src/close.test.ts
+@@ -0,0 +1,526 @@
++/**
++ * (C) A stop-out closes the agent's whole subtree, and (R) the tree's
++ * reservation invariants hold at every tick of a book, checked here from the
++ * outside (the `onTick` seam) rather than trusted to the book's own audit.
++ * Each test names the guarantee it pins; each fails if that guarantee breaks.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { AttenuationError, DelegationTree, pay, type PaymentAdapters } from "@allowance/core";
++import { defaultCenterBookPolicy, defaultNaivePolicy, type AllocationPolicy, type LadderState } from "./allocator";
++import { applyTargets, BookInvariantError, bookViolations, runBook, sharePpm, tickToUnix, type BookResult, type SwarmSpec } from "./book";
++import { generateMarket, genericMarketConfig, type Market } from "./market";
++import { MeanReversionStrategy, NoiseStrategy, TrendStrategy, type Strategy, type Weights, type Observation } from "./strategies";
++
++const FUND = "fund.eth";
++const AUM = 10_000_000;
++const AUM_UNITS = 10_000_000_000000n;
++const TURN = 80;
++const DOOMED = `doomed.systematic.${FUND}`;
++
++/**
++ * The seed-7 generic market with GOLD's path scripted: a steady, low-vol
++ * run-up until TURN (the allocator sizes a GOLD holder up), then a 2%-a-day
++ * slide (its drawdown ladder must stop it out). Scripting the market rather
++ * than the agent keeps every agent here point-in-time: none reads a tick it
++ * has not seen.
++ */
++function scriptedMarket(): Market {
++  const m = generateMarket(genericMarketConfig(7));
++  m.ticks.forEach((tick, t) => {
++    tick.returns.GOLD = t < TURN ? 0.004 + (t % 2 === 0 ? 0.002 : -0.002) : -0.02;
++  });
++  return m;
++}
++const market = scriptedMarket();
++const T = market.ticks.length;
++
++/** Always long GOLD: sized up on the run-up, stopped out on the slide. */
++class LongGold implements Strategy {
++  readonly style = "long-gold";
++  decide(): Weights {
++    return { GOLD: 0.5 };
++  }
++}
++
++function subSwarm(): SwarmSpec {
++  const all = [...market.instruments];
++  return {
++    principal: "alice",
++    fund: FUND,
++    aum: AUM,
++    pods: [
++      { label: "systematic", instruments: all },
++      { label: "macro", instruments: all },
++    ],
++    agents: [
++      {
++        label: "doomed",
++        pod: "systematic",
++        instruments: all,
++        strategy: new LongGold(),
++        subMandates: [
++          { label: "exec", share: 0.3 },
++          { label: "data", share: 0.02, instruments: ["GOLD"] },
++        ],
++      },
++      {
++        label: "trend",
++        pod: "systematic",
++        instruments: all,
++        strategy: new TrendStrategy(30),
++        subMandates: [{ label: "exec", share: 0.5 }],
++      },
++      { label: "meanrev", pod: "macro", instruments: all, strategy: new MeanReversionStrategy(3) },
++      { label: "noise", pod: "macro", instruments: all, strategy: new NoiseStrategy(5) },
++    ],
++  };
++}
++
++/** Always-yes payment ports: these tests are about authority, not the adapters. */
++const allowAll: PaymentAdapters = {
++  identity: { verify: async () => ({ ok: true }) },
++  screening: { screen: async () => ({ approved: true }) },
++  settlement: {
++    settle: async (req) => ({
++      settled: true,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: req.amount,
++      amountOut: req.amount,
++    }),
++  },
++};
++
++/** The slice rule, restated independently: ppm parts per million of a budget, rounded down. */
++const slice = (budget: bigint, ppm: bigint) => (budget * ppm) / 1_000_000n;
++const max = (a: bigint, b: bigint) => (a > b ? a : b);
++
++interface CloseRecord {
++  name: string;
++  t: number;
++  nodes: number;
++  budget: bigint;
++  spent: bigint;
++  podAvailable: bigint;
++  freed: bigint;
++  podAvailableAfter: bigint;
++}
++
++interface Watch {
++  book: BookResult;
++  closes: CloseRecord[];
++  bareRevokes: string[];
++  /** ATTENUATION_REJECTED events this test provoked itself (probing dead nodes). */
++  probesRejected: number;
++  ticksChecked: number;
++  /** Tick × sub-mandate pairs whose slice was checked exactly / as a bound. */
++  slicesExact: number;
++  slicesBounded: number;
++}
++
++/**
++ * Run a book whose sub-mandates spend every tick, and check the tree from the
++ * outside at the start of every tick (= the end of the previous one):
++ *
++ *  - reservation: spent + Σ children ≤ budget and available ≥ 0 for every
++ *    node; the root never changes;
++ *  - sub-mandates are slices: a live one never holds more than its share of
++ *    its agent's budget (or what it committed, if more), and holds exactly
++ *    that whenever the agent has unreserved authority left;
++ *  - a closed subtree can never spend again: once a node is dead its budget
++ *    is frozen, it has 0 available, and pay / delegate / resize are refused;
++ *  - every stop-out is ONE tree.close (spied) that frees budget − spent, all of
++ *    it landing in the pod; no bare revoke is ever used.
++ *
++ * `spend(sub, available)` is what a live sub-mandate pays each tick.
++ */
++async function watch(
++  policy: AllocationPolicy,
++  spec: SwarmSpec = subSwarm(),
++  spend: (sub: string, available: bigint) => bigint = (sub) => (sub.startsWith("data.") ? 25_000000n : 100_000000n),
++): Promise<Watch> {
++  const ppmOf = new Map<string, bigint>();
++  for (const a of spec.agents) {
++    for (const sm of a.subMandates ?? []) ppmOf.set(`${sm.label}.${a.label}.${a.pod}.${FUND}`, sharePpm(sm.share));
++  }
++  const closes: CloseRecord[] = [];
++  const bareRevokes: string[] = [];
++  const frozen = new Map<string, bigint>();
++  const w = { probesRejected: 0, ticksChecked: 0, slicesExact: 0, slicesBounded: 0 };
++  let now = 0;
++  let tick = 0;
++
++  const check = async (tree: DelegationTree, t: number) => {
++    w.ticksChecked++;
++    assert.equal(tree.requireNode(FUND).mandate.budget, AUM_UNITS, `t=${t}: root authority changed`);
++    for (const n of tree.listNodes()) {
++      const handedDown = tree.childrenOf(n.name).reduce((s, c) => s + c.mandate.budget, 0n);
++      assert.ok(n.mandate.spentDirect + handedDown <= n.mandate.budget, `t=${t}: ${n.name} children + spend exceed its budget`);
++      assert.ok(tree.available(n.name) >= 0n, `t=${t}: ${n.name} over-committed`);
++    }
++    for (const [sub, ppm] of ppmOf) {
++      if (tree.isRevokedInChain(sub)) continue;
++      const agent = tree.requireNode(sub).parent!;
++      const s = tree.requireNode(sub).mandate;
++      const committed = s.spentDirect + tree.reserved(sub);
++      const want = max(committed, slice(tree.requireNode(agent).mandate.budget, ppm));
++      assert.ok(s.budget >= committed, `t=${t}: ${sub} below what it committed`);
++      if (tree.available(agent) > 0n) {
++        assert.equal(s.budget, want, `t=${t}: ${sub} is not its ${ppm} ppm slice of ${agent}`);
++        w.slicesExact++;
++      } else {
++        assert.ok(s.budget <= want, `t=${t}: ${sub} holds more than its ${ppm} ppm slice of ${agent}`);
++        w.slicesBounded++;
++      }
++    }
++    for (const n of tree.listNodes()) {
++      if (!tree.isRevokedInChain(n.name)) continue;
++      const was = frozen.get(n.name);
++      if (was === undefined) frozen.set(n.name, n.mandate.budget);
++      else assert.equal(n.mandate.budget, was, `t=${t}: closed ${n.name} budget moved`);
++      assert.equal(tree.available(n.name), 0n, `t=${t}: closed ${n.name} still holds authority`);
++      const r = await pay(tree, { node: n.name, merchant: "GOLD", amount: 1n }, allowAll, { now });
++      assert.equal(r.outcome, "REVOKED", `t=${t}: closed ${n.name} could pay`);
++      const refused = (e: unknown) => e instanceof AttenuationError && e.reason === "PARENT_REVOKED";
++      const late = { budget: 0n, allowedMerchants: ["GOLD"], expiry: now + 1 };
++      assert.throws(() => tree.delegate(n.name, `late${t}`, late), refused, `t=${t}: ${n.name} could delegate`);
++      assert.throws(() => tree.resize(n.name, n.mandate.budget + 1n), refused, `t=${t}: ${n.name} could grow`);
++      w.probesRejected += 2;
++    }
++  };
++
++  const book = await runBook(market, spec, policy, {
++    onTick: async (t, tree) => {
++      now = tickToUnix(t);
++      tick = t;
++      if (t === 0) {
++        const close = tree.close.bind(tree);
++        tree.close = (name: string) => {
++          const node = tree.requireNode(name);
++          const pod = node.parent!;
++          // The subtree by name (ENS-style: descendants end in ".<name>"),
++          // independent of the tree's own subtree helpers.
++          const under = tree.listNodes().filter((n) => n.name === name || n.name.endsWith(`.${name}`));
++          const before = {
++            nodes: under.length,
++            budget: node.mandate.budget,
++            spent: under.reduce((s, n) => s + n.mandate.spentDirect, 0n),
++            podAvailable: tree.available(pod),
++          };
++          const freed = close(name);
++          closes.push({ name, t: tick, ...before, freed, podAvailableAfter: tree.available(pod) });
++          return freed;
++        };
++        const revoke = tree.revoke.bind(tree);
++        tree.revoke = (name: string) => {
++          bareRevokes.push(name);
++          return revoke(name);
++        };
++      }
++      await check(tree, t);
++      for (const sub of ppmOf.keys()) {
++        if (tree.isRevokedInChain(sub)) continue;
++        const available = tree.available(sub);
++        const amount = spend(sub, available);
++        if (amount <= 0n || amount > available) continue;
++        const r = await pay(tree, { node: sub, merchant: "GOLD", amount }, allowAll, { now });
++        assert.equal(r.outcome, "SETTLED", `${sub} could not pay at t=${t}`);
++      }
++    },
++  });
++  await check(book.tree, T);
++  return { book, closes, bareRevokes, ...w };
++}
++
++const withCut = defaultCenterBookPolicy();
++const noCut = { ...defaultCenterBookPolicy(), ddCut: undefined, cutFactor: undefined, ddRecover: undefined };
++const policies: [string, AllocationPolicy][] = [
++  ["center book (default, with the cut rung)", withCut],
++  ["center book without a cut rung", noCut],
++  ["per-agent guardrails", defaultNaivePolicy()],
++];
++
++for (const [label, policy] of policies) {
++  test(`${label}: tree invariants hold at every tick, and every stop-out is one close`, async () => {
++    const w = await watch(policy);
++    const { book, closes } = w;
++    assert.equal(w.ticksChecked, T + 1);
++    const stopped = book.agents.filter((a) => a.ladder === "stopped").map((a) => a.name);
++    assert.ok(stopped.includes(DOOMED), "the doomed agent is stopped out");
++    assert.deepEqual(closes.map((c) => c.name).sort(), [...stopped].sort(), "each stopped agent closed exactly once");
++    assert.deepEqual(w.bareRevokes, [], "no stop-out is a bare revoke");
++    for (const c of closes) {
++      assert.equal(c.freed, c.budget - c.spent, `${c.name}: freed authority == budget - spent`);
++      assert.equal(c.podAvailableAfter - c.podAvailable, c.freed, `${c.name}: all of it lands in the pod`);
++    }
++    // The book itself never attempted an invalid move; the only rejections are this test's probes.
++    const rejected = book.tree.events.filter((e) => e.result === "ATTENUATION_REJECTED").length;
++    assert.equal(rejected, w.probesRejected);
++    assert.ok(w.probesRejected >= 100, `dead nodes were probed (${w.probesRejected})`);
++    assert.ok(w.slicesExact >= 200, `sub-mandate slices were checked exactly (${w.slicesExact})`);
++    // The cut rung fires only when the policy has one, and it resizes the sub-mandates with the agent.
++    const cuts = book.decisions.filter((d) => d.kind === "CUT");
++    if (policy.kind === "center" && policy.ddCut !== undefined) assert.ok(cuts.some((d) => d.node === DOOMED));
++    else assert.deepEqual(cuts, []);
++  });
++}
++
++test("the doomed agent's stop-out takes back its capital AND both sub-mandates in one operation", async () => {
++  const { book, closes } = await watch(defaultCenterBookPolicy());
++  const tree = book.tree;
++  const c = closes.find((x) => x.name === DOOMED)!;
++  assert.ok(c.t > TURN, "stopped on the slide");
++  assert.equal(c.nodes, 3, "the agent and its two sub-mandates");
++  assert.ok(c.budget - c.spent >= 200_000_000000n, `it was stopped holding real capital (${c.budget - c.spent})`);
++  assert.ok(c.spent > 0n, "its sub-mandates had spent something");
++  assert.ok(c.freed > 0n);
++
++  // What is left: every node holds exactly what it spent, nothing more.
++  for (const n of tree.subtree(DOOMED)) {
++    assert.equal(tree.available(n.name), 0n, n.name);
++    assert.equal(n.mandate.budget, tree.spentInSubtree(n.name), `${n.name} kept only what it spent`);
++  }
++  assert.equal(tree.isClosed(DOOMED), true);
++  assert.ok(tree.requireNode(`exec.${DOOMED}`).mandate.spentDirect > 0n);
++  assert.ok(tree.requireNode(`data.${DOOMED}`).mandate.spentDirect > 0n);
++
++  // One REVOKE, carrying the freed amount, preceded only by the close's own shrinks.
++  const revokes = tree.events.filter((e) => e.type === "REVOKE" && e.node === DOOMED);
++  assert.equal(revokes.length, 1);
++  assert.equal(revokes[0]!.amount, c.freed);
++  const at = tree.events.indexOf(revokes[0]!);
++  assert.deepEqual(
++    tree.events.slice(at - 3, at).map((e) => [e.type, e.node]),
++    [
++      ["RESIZE", `exec.${DOOMED}`],
++      ["RESIZE", `data.${DOOMED}`],
++      ["RESIZE", DOOMED],
++    ],
++  );
++  const stop = book.decisions.find((d) => d.kind === "STOP_OUT" && d.node === DOOMED)!;
++  assert.match(stop.detail, /mandate closed with its 2 sub-mandates/);
++
++  // A closed agent runs no capital from then on (its budget is only the record of what was spent).
++  const agent = book.agents.find((a) => a.name === DOOMED)!;
++  assert.ok(tree.requireNode(DOOMED).mandate.budget > 0n);
++  assert.ok(agent.capital.slice(c.t + 1).every((x) => x === 0));
++  assert.ok(agent.pnl.slice(c.t + 1).every((x) => x === 0));
++});
++
++test("sub-mandates are reserved out of the agent's budget when granted, and shares must fit in whole ppm", async () => {
++  const book = await runBook(market, subSwarm(), defaultNaivePolicy(), {
++    onTick: (t, tree) => {
++      if (t !== 0) return;
++      const agent = tree.requireNode(DOOMED).mandate.budget;
++      assert.equal(tree.requireNode(`exec.${DOOMED}`).mandate.budget, slice(agent, 300_000n));
++      assert.equal(tree.requireNode(`data.${DOOMED}`).mandate.budget, slice(agent, 20_000n));
++      assert.equal(tree.available(DOOMED), agent - slice(agent, 300_000n) - slice(agent, 20_000n));
++      assert.deepEqual(tree.requireNode(`data.${DOOMED}`).mandate.allowedMerchants, ["GOLD"]);
++    },
++  });
++  assert.equal(book.nav.length, T);
++
++  const withShares = (...shares: number[]) => {
++    const spec = subSwarm();
++    spec.agents[0]!.subMandates = shares.map((share, i) => ({ label: `s${i}`, share }));
++    return spec;
++  };
++  await assert.rejects(runBook(market, withShares(0.7, 0.4), defaultNaivePolicy()), /sum to 1100000 ppm/);
++  await assert.rejects(runBook(market, withShares(-0.1), defaultNaivePolicy()), /not in \[0, 1\]/);
++  await assert.rejects(runBook(market, withShares(Number.NaN), defaultNaivePolicy()), /not in \[0, 1\]/);
++  // Each share rounds UP to 333,334 ppm: the float sum is 1, but the slices would not fit.
++  await assert.rejects(runBook(market, withShares(0.3333335, 0.3333335, 0.333333), defaultNaivePolicy()), /sum to 1000001 ppm/);
++  // Exactly the whole budget in ppm is allowed, and the agent keeps what rounding leaves.
++  const full = await runBook(market, withShares(0.333334, 0.333333, 0.333333), defaultNaivePolicy(), {
++    onTick: (t, tree) => {
++      if (t !== 0) return;
++      assert.ok(tree.available(DOOMED) >= 0n);
++      assert.equal(tree.childrenOf(DOOMED).length, 3);
++    },
++  });
++  assert.equal(full.nav.length, T);
++});
++
++/** Records the last tick it was asked to decide, and can act on the tree mid-tick. */
++class Spy implements Strategy {
++  readonly style = "spy";
++  lastDecided = -1;
++  tree: DelegationTree | null = null;
++  constructor(private readonly midTick?: (t: number, tree: DelegationTree) => void) {}
++  decide(obs: Observation): Weights {
++    this.lastDecided = obs.t;
++    if (this.tree) this.midTick?.(obs.t, this.tree);
++    return {};
++  }
++}
++
++function spiedSwarm(spy: Spy): SwarmSpec {
++  const spec = subSwarm();
++  spec.agents.push({ label: "spy", pod: "macro", instruments: [...market.instruments], strategy: spy });
++  return spec;
++}
++
++test("no tick trades on a tree that fails the audit: a break from outside is caught before the tick trades", async () => {
++  // Someone writes a pod's budget below what it handed to its agents.
++  const spy = new Spy();
++  await assert.rejects(
++    runBook(market, spiedSwarm(spy), defaultCenterBookPolicy(), {
++      onTick: (t, tree) => {
++        if (t === 40) tree.requireNode(`macro.${FUND}`).mandate.budget = 0n;
++      },
++    }),
++    (e: unknown) =>
++      e instanceof BookInvariantError &&
++      e.t === 40 &&
++      e.at === "start" &&
++      e.violations.some((v) => v.startsWith(`OVER_COMMITTED macro.${FUND}`)),
++  );
++  assert.equal(spy.lastDecided, 39, "no agent was asked to trade on the broken tree");
++
++  // A sub-mandate is revoked without being closed: its budget would sit dead in the agent.
++  const spy2 = new Spy();
++  await assert.rejects(
++    runBook(market, spiedSwarm(spy2), defaultCenterBookPolicy(), {
++      onTick: (t, tree) => {
++        if (t === 40) tree.revoke(`exec.${DOOMED}`);
++      },
++    }),
++    (e: unknown) =>
++      e instanceof BookInvariantError && e.t === 40 && e.at === "start" && e.violations.some((v) => v.startsWith(`NOT_CLOSED exec.${DOOMED}`)),
++  );
++  assert.equal(spy2.lastDecided, 39);
++
++  // Closing it instead is sound: the book keeps running.
++  const ok = await runBook(market, subSwarm(), defaultCenterBookPolicy(), {
++    onTick: (t, tree) => {
++      if (t === 40) tree.close(`exec.${DOOMED}`);
++    },
++  });
++  assert.equal(ok.nav.length, T);
++});
++
++test("a break made during a tick (an agent's sub-mandate revoked mid-tick) is caught at that tick's end", async () => {
++  const spy = new Spy((t, tree) => {
++    if (t === 40) tree.revoke(`exec.${DOOMED}`);
++  });
++  await assert.rejects(
++    runBook(market, spiedSwarm(spy), defaultNaivePolicy(), {
++      onTick: (t, tree) => {
++        spy.tree = tree;
++      },
++    }),
++    (e: unknown) =>
++      e instanceof BookInvariantError && e.t === 40 && e.at === "end" && e.violations.some((v) => v.startsWith(`NOT_CLOSED exec.${DOOMED}`)),
++  );
++  assert.equal(spy.lastDecided, 40, "the break happened inside tick 40, and tick 41 never started");
++});
++
++test("bookViolations names every broken guarantee, and nothing on a sound tree", () => {
++  const build = () => {
++    const tree = new DelegationTree();
++    tree.fundRoot({ principal: "p", rootName: FUND, mandate: { budget: 1_000n, expiry: 10_000 } });
++    tree.delegate(FUND, "pod", { budget: 600n, expiry: 10_000 });
++    tree.delegate(`pod.${FUND}`, "a", { budget: 300n, expiry: 10_000 });
++    tree.delegate(`pod.${FUND}`, "b", { budget: 200n, expiry: 10_000 });
++    tree.delegate(`a.pod.${FUND}`, "exec", { budget: 100n, expiry: 10_000 });
++    return tree;
++  };
++  const root = { name: FUND, budget: 1_000n };
++  const A = `a.pod.${FUND}`;
++  const B = `b.pod.${FUND}`;
++  const agents = (a: LadderState, b: LadderState) => [
++    { name: A, ladder: a },
++    { name: B, ladder: b },
++  ];
++  const kinds = (v: string[]) => v.map((x) => x.split(":")[0]);
++
++  const sound = build();
++  assert.deepEqual(bookViolations(sound, root, agents("active", "cut")), []);
++  sound.close(A);
++  assert.deepEqual(bookViolations(sound, root, agents("stopped", "active")), [], "a closed, stopped agent is sound");
++
++  // (R) the root's authority changed.
++  const grown = build();
++  grown.requireNode(FUND).mandate.budget = 2_000n;
++  assert.deepEqual(kinds(bookViolations(grown, root, agents("active", "active"))), [`ROOT_CHANGED ${FUND}`]);
++
++  // (R) over-commitment, via the core audit.
++  const over = build();
++  over.requireNode(`pod.${FUND}`).mandate.budget = 400n;
++  assert.deepEqual(kinds(bookViolations(over, root, agents("active", "active"))), [`OVER_COMMITTED pod.${FUND}`]);
++
++  // (C) a bare revoke strands the authority left under the node.
++  const stranded = build();
++  stranded.revoke(A);
++  assert.deepEqual(kinds(bookViolations(stranded, root, agents("stopped", "active"))), [`NOT_CLOSED ${A}`]);
++
++  // (C) the ladder says stopped but the mandate is live.
++  const notRevoked = build();
++  assert.deepEqual(kinds(bookViolations(notRevoked, root, agents("stopped", "active"))), [`STOP_NOT_REVOKED ${A}`]);
++
++  // (C) a live agent under a closed node.
++  const deadPod = build();
++  deadPod.close(`pod.${FUND}`);
++  assert.deepEqual(kinds(bookViolations(deadPod, root, agents("stopped", "active"))), [`LIVE_BUT_REVOKED ${B}`]);
++});
++
++test("(R) a desk that spent its whole slice pins its agent at what was spent; the book keeps running on a sound tree", async () => {
++  // Every agent hands 95% of its budget to an execution desk that spends
++  // everything it is given, every tick. Spent authority cannot be taken back,
++  // so reallocations and crowding cuts meet floors they must not cross.
++  const spec = subSwarm();
++  for (const a of spec.agents) a.subMandates = [{ label: "exec", share: 0.95 }];
++  const w = await watch(defaultCenterBookPolicy(), spec, (_sub, available) => available);
++  assert.equal(w.book.nav.length, T, "the book ran to the end");
++  assert.equal(
++    w.book.tree.events.filter((e) => e.result === "ATTENUATION_REJECTED").length,
++    w.probesRejected,
++    "no move of the book's was refused",
++  );
++  assert.ok(w.slicesBounded > 0, "agents were held at their floors");
++  assert.ok(w.slicesExact > 0);
++});
++
++test("(R) a grow never reserves authority its parent does not hold: it is clipped, and the desks are cut from what the agent got", async () => {
++  const tree = new DelegationTree();
++  const E = 10_000;
++  tree.fundRoot({ principal: "p", rootName: FUND, mandate: { budget: 1_000n, expiry: E } });
++  const P1 = `p1.${FUND}`;
++  const P2 = `p2.${FUND}`;
++  const A = `a.${P1}`;
++  const B = `b.${P1}`;
++  const C = `c.${P2}`;
++  tree.delegate(FUND, "p1", { budget: 600n, expiry: E });
++  tree.delegate(FUND, "p2", { budget: 390n, expiry: E });
++  tree.delegate(P1, "a", { budget: 300n, expiry: E });
++  tree.delegate(P1, "b", { budget: 300n, expiry: E });
++  tree.delegate(P2, "c", { budget: 390n, expiry: E });
++  tree.delegate(A, "exec", { budget: 150n, expiry: E });
++  tree.delegate(B, "exec", { budget: 150n, expiry: E });
++  // a's desk spends its whole slice: that authority is gone for good.
++  assert.equal((await pay(tree, { node: `exec.${A}`, merchant: "m", amount: 150n }, allowAll, { now: 1 })).outcome, "SETTLED");
++  const budget = (n: string) => tree.requireNode(n).mandate.budget;
++  const podOf = new Map([
++    [A, P1],
++    [B, P1],
++    [C, P2],
++  ]);
++  const subsOf = new Map([
++    [A, [{ name: `exec.${A}`, ppm: 500_000n }]],
++    [B, [{ name: `exec.${B}`, ppm: 500_000n }]],
++  ]);
++
++  // The allocator asks for 100 / 600 / 390. a cannot go below the 150 its desk
++  // spent, so only 1000 − 150 − 390 = 460 is left in the fund for b.
++  applyTargets(tree, podOf, subsOf, new Map([[A, 100n], [B, 600n], [C, 390n]]));
++  assert.deepEqual(tree.events.filter((e) => e.result === "ATTENUATION_REJECTED"), [], "nothing was refused");
++  assert.deepEqual(tree.audit(), []);
++  assert.equal(tree.available(FUND), 0n, "the fund's whole authority is reserved or spent");
++  assert.deepEqual([budget(A), budget(`exec.${A}`)], [150n, 150n], "a is held at what its desk spent");
++  assert.equal(budget(B), 460n, "b got what was left, not its 600 target");
++  assert.equal(budget(`exec.${B}`), 230n, "b's desk is half of what b got, not half of its target");
++  assert.equal(budget(P1), 610n);
++  assert.equal(budget(C), 390n);
++});
+diff --git a/packages/swarm/src/index.ts b/packages/swarm/src/index.ts
+index 235547f..3fd0f97 100644
+--- a/packages/swarm/src/index.ts
++++ b/packages/swarm/src/index.ts
+@@ -5,7 +5,7 @@
+  *  - strategies.ts  the agents (Strategy interface + reference agents)
+  *  - gate.ts        per-agent pre-trade gate, read from the mandate tree
+  *  - allocator.ts   pure allocation math: scores, drawdown ladder, crowding
+- *  - book.ts        runs a swarm under a policy; resize = reallocate, revoke = stop-out
++ *  - book.ts        runs a swarm under a policy; resize = reallocate, close = stop-out
+  *  - swarm.ts       the default three-pod, eleven-agent swarm
+  *  - trackrecord.ts per-agent attributable track records
+  *  - evaluate.ts    center book vs. per-agent guardrails, single seed and sweeps
+diff --git a/services/orchestrator/src/agenthire-demo.ts b/services/orchestrator/src/agenthire-demo.ts
+index 47568ac..ccc5303 100644
+--- a/services/orchestrator/src/agenthire-demo.ts
++++ b/services/orchestrator/src/agenthire-demo.ts
+@@ -599,8 +599,14 @@ async function main(): Promise<void> {
+     ddStopMax: policy.ddStopMax,
+   });
+   line(`PM return path: the Tiger overlay (packages/lab) on ${panel.primary} in synthetic arena world #${arenaSeed}, ${run.ret.length} days.`);
+-  line(`This is a SIMULATED path, not market data. Ladder (swarm nextLadderState) on the PM mandate's own fixed stop-loss: cut at ${thresholds.ddCut * 100}% drawdown,`);
+-  line(`restore below ${thresholds.ddRecover * 100}%, stop out at ${thresholds.ddStop * 100}%. (The center book's risk-scaled default would widen these ×${scaled.scale.toFixed(2)}`);
++  line(
++    `This is a SIMULATED path, not market data. Ladder (swarm nextLadderState) on the PM mandate's own fixed stop-loss: ` +
++      (thresholds.ddCut === undefined ? "no cut rung," : `cut at ${thresholds.ddCut * 100}% drawdown,`),
++  );
++  line(
++    (thresholds.ddCut === undefined ? "" : `restore below ${(thresholds.ddRecover ?? 0) * 100}%, `) +
++      `stop out at ${thresholds.ddStop * 100}%. (The center book's risk-scaled default would widen these ×${scaled.scale.toFixed(2)}`,
++  );
+   const capped = scaled.ddStop >= policy.ddStopMax - 1e-12;
+   // Replay the same path under the center book's own rungs, for the record.
+   let centerState: LadderState = "active";
+@@ -616,7 +622,7 @@ async function main(): Promise<void> {
+     `${capped ? " (its ceiling)" : ` (ceiling ${policy.ddStopMax * 100}%)`}; the fixed rungs are its floor. Under those rungs this path ends ${centerState.toUpperCase()}.)`);
+   let state: LadderState = "active";
+   const transitions: Array<{ day: number; date: string; from: LadderState; to: LadderState; drawdown: number; pmBudget: string }> = [];
+-  const cutBudget = (PM_CAPITAL * BigInt(Math.round(policy.cutFactor * 1000))) / 1000n;
++  const cutBudget = (PM_CAPITAL * BigInt(Math.round((policy.cutFactor ?? 1) * 1000))) / 1000n;
+   let freed = 0n;
+   let rootBefore = 0n;
+   let rootAfter = 0n;

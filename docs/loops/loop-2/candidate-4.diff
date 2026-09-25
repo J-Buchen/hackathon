@@ -1,0 +1,632 @@
+diff --git a/apps/web/src/swarm/CenterBook.tsx b/apps/web/src/swarm/CenterBook.tsx
+index 990a1f4..f94315c 100644
+--- a/apps/web/src/swarm/CenterBook.tsx
++++ b/apps/web/src/swarm/CenterBook.tsx
+@@ -27,7 +27,7 @@ const compact = (x: number) => {
+   return `${x < 0 ? "−" : ""}${s}`;
+ };
+ 
+-const SHOWN: ReadonlySet<Decision["kind"]> = new Set(["CROWDING_CUT", "STOP_OUT", "CUT", "GATE_CLIP"]);
++const SHOWN: ReadonlySet<Decision["kind"]> = new Set(["CROWDING_CUT", "OPERATOR_CUT", "STOP_OUT", "CUT", "GATE_CLIP"]);
+ const KIND_LABEL: Record<Decision["kind"], string> = {
+   ALLOCATE: "Allocate",
+   REALLOCATE: "Reallocate",
+@@ -35,6 +35,8 @@ const KIND_LABEL: Record<Decision["kind"], string> = {
+   RESTORE: "Restore",
+   STOP_OUT: "Stop-out · revoked",
+   CROWDING_CUT: "Crowding cut",
++  OPERATOR_CUT: "Operator cut",
++  OPERATOR_RESTORE: "Operator restore",
+   GATE_CLIP: "Gate clip",
+ };
+ 
+diff --git a/apps/web/src/swarm/types.ts b/apps/web/src/swarm/types.ts
+index 366be27..88474c4 100644
+--- a/apps/web/src/swarm/types.ts
++++ b/apps/web/src/swarm/types.ts
+@@ -44,7 +44,16 @@ export interface SwarmAgentView {
+ 
+ export interface Decision {
+   t: number;
+-  kind: "ALLOCATE" | "REALLOCATE" | "CUT" | "RESTORE" | "STOP_OUT" | "CROWDING_CUT" | "GATE_CLIP";
++  kind:
++    | "ALLOCATE"
++    | "REALLOCATE"
++    | "CUT"
++    | "RESTORE"
++    | "STOP_OUT"
++    | "CROWDING_CUT"
++    | "OPERATOR_CUT"
++    | "OPERATOR_RESTORE"
++    | "GATE_CLIP";
+   node: string;
+   detail: string;
+ }
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index 983ef1e..d2d6869 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -113,6 +113,13 @@ Around them sit agents that give the allocator something to allocate between:
+     20% of NAV, however many different-looking strategies it is spread across.
+   - A crowding cut stays in force until the agent's book stops resembling the
+     crowded book. The cap is not lifted just because its twin got stopped out.
++- **Counterparties** (`AgentSpec.operator`, a World ID-verified human in
++  production). One operator is one counterparty however many names it runs, so
++  a stop-out of one of its names is a credit event for all of them: its other
++  live names are cut to 50% in the same plan and stay capped until each makes a
++  new high on its own record. The cap never touches a ladder: every name is
++  stopped by its own record alone, on exactly the tick it would be with no
++  operator information at all.
+ 
+ The baseline ("per-agent guardrails") is what agent-trading products ship today.
+ It uses the same agents, the same pre-trade gate and the same leverage, with
+diff --git a/packages/lab/package.json b/packages/lab/package.json
+index fd88a55..aa3fcd2 100644
+--- a/packages/lab/package.json
++++ b/packages/lab/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts",
++    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena.test.ts",
+     "lab": "tsx src/cli.ts"
+   },
+   "dependencies": {
+diff --git a/packages/lab/src/arena.test.ts b/packages/lab/src/arena.test.ts
+new file mode 100644
+index 0000000..805d41f
+--- /dev/null
++++ b/packages/lab/src/arena.test.ts
+@@ -0,0 +1,44 @@
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { defaultCenterBookPolicy, runBook, type BookResult } from "@allowance/swarm";
++import { makeWorld } from "./arena";
++
++// Research seeds only (< ARENA_EVAL_FLOOR).
++const SEEDS = Array.from({ length: 40 }, (_, i) => i + 1);
++
++const stopOuts = (b: BookResult) => b.decisions.filter((d) => d.kind === "STOP_OUT").map((d) => [d.t, d.node]);
++
++test("arena: operators are one counterparty, and no agent's own stop-out is ever delayed or advanced by it", async () => {
++  let worlds = 0;
++  let groupCuts = 0;
++  for (const seed of SEEDS) {
++    const world = makeWorld(seed);
++    if (world.meta.sharedOperators === 0) continue;
++    worlds++;
++    const spec = world.swarm();
++    const labelled = await runBook(world.market, spec, defaultCenterBookPolicy());
++    const unlabelled = world.swarm();
++    const blind = await runBook(
++      world.market,
++      { ...unlabelled, agents: unlabelled.agents.map((a) => ({ ...a, operator: undefined })) },
++      defaultCenterBookPolicy(),
++    );
++    assert.deepEqual(stopOuts(labelled), stopOuts(blind), `seed ${seed}: stop-outs move with operator labels`);
++
++    const operatorOf = new Map(labelled.agents.map((a, i) => [a.name, spec.agents[i]!.operator]));
++    const stoppedAt = new Map(stopOuts(labelled).map(([t, n]) => [n as string, t as number]));
++    for (const cut of labelled.decisions.filter((d) => d.kind === "OPERATOR_CUT")) {
++      groupCuts++;
++      // A cut follows a stop-out of ANOTHER name of the same operator on the same tick…
++      const cause = [...stoppedAt].find(([n, t]) => t === cut.t && n !== cut.node && operatorOf.get(n) === operatorOf.get(cut.node));
++      assert.ok(cause, `seed ${seed}: ${cut.node} cut at ${cut.t} without a stopped sibling`);
++      // …and never revokes the name it cuts: only its own record can.
++      const own = stoppedAt.get(cut.node);
++      assert.ok(own === undefined || own > cut.t, `seed ${seed}: ${cut.node} stopped by its operator, not its record`);
++    }
++    for (const n of labelled.tree.listNodes()) assert.ok(labelled.tree.available(n.name) >= 0n);
++    assert.ok(!labelled.tree.events.some((e) => e.result === "ATTENUATION_REJECTED"));
++  }
++  assert.ok(worlds >= 20, `enough worlds with shared operators (${worlds})`);
++  assert.ok(groupCuts > 0, "the group cut is exercised");
++});
+diff --git a/packages/swarm/src/allocator.test.ts b/packages/swarm/src/allocator.test.ts
+index 029fec6..5f82879 100644
+--- a/packages/swarm/src/allocator.test.ts
++++ b/packages/swarm/src/allocator.test.ts
+@@ -5,12 +5,23 @@ import {
+   allocate,
+   capShares,
+   defaultCenterBookPolicy,
++  nextCounterpartyCaps,
+   nextLadderState,
+   scaleLadder,
+   scanCrowding,
++  type CounterpartyAgent,
+ } from "./allocator";
+ import { preTradeCheck } from "./gate";
+-import { annualVol, correlation, cosineSimilarity, currentDrawdown, maxDrawdown, sharpe, volAtHighWater } from "./stats";
++import {
++  annualVol,
++  correlation,
++  cosineSimilarity,
++  currentDrawdown,
++  isNewHigh,
++  maxDrawdown,
++  sharpe,
++  volAtHighWater,
++} from "./stats";
+ import { gaussian, mulberry32 } from "./rng";
+ 
+ const noise = (seed: number, n: number, drift = 0) => {
+@@ -214,3 +225,54 @@ test("gate: off-mandate dropped, gross clipped, revoked trades nothing", () => {
+   assert.deepEqual(r.weights, {});
+   assert.deepEqual(r.clipped, { A: 0.5 }, "track record keeps accruing on the clipped book");
+ });
++
++/* ------------------------------------------------------------------ */
++/* Counterparties: one operator, one credit event                      */
++/* ------------------------------------------------------------------ */
++
++test("isNewHigh: only a strict new high-water mark just earned", () => {
++  assert.equal(isNewHigh([]), false);
++  assert.equal(isNewHigh([0.01]), true);
++  assert.equal(isNewHigh([-0.01]), false);
++  assert.equal(isNewHigh([0.1, -0.05, 0.02]), false, "still below the old peak");
++  assert.equal(isNewHigh([0.1, -0.05, 0.06]), true);
++  assert.equal(isNewHigh([0.1, 0]), false, "flat at the old peak has not earned anything");
++});
++
++test("counterparty caps: a stop-out caps the operator's other live names, never stops them, and lifts on a new high", () => {
++  const rec = (...r: number[]) => r;
++  const agents = (over: Partial<Record<string, Partial<CounterpartyAgent>>> = {}): CounterpartyAgent[] =>
++    [
++      { name: "x1", operator: "X", ladder: "stopped" as const, unitReturns: rec(0.01, -0.3) },
++      { name: "x2", operator: "X", ladder: "active" as const, unitReturns: rec(0.02, -0.01) },
++      { name: "x3", operator: "X", ladder: "cut" as const, unitReturns: rec(-0.15) },
++      { name: "x0", operator: "X", ladder: "stopped" as const, unitReturns: rec(-0.4) },
++      { name: "y", operator: "Y", ladder: "active" as const, unitReturns: rec(0.01) },
++      { name: "z", ladder: "active" as const, unitReturns: rec(0.01) },
++    ].map((a) => ({ ...a, ...over[a.name] }));
++
++  // x1 is stopped out at t = 10 (x0 was stopped long ago).
++  const first = nextCounterpartyCaps(new Map(), agents(), ["x1"], 10);
++  assert.deepEqual(first.capped, [
++    { name: "x2", after: "x1" },
++    { name: "x3", after: "x1" },
++  ]);
++  assert.deepEqual([...first.caps.keys()], ["x2", "x3"], "other operators and unlabeled names are untouched");
++  assert.deepEqual(first.lifted, []);
++
++  // The cap never lifts on the tick it was set, nor without a strict new high.
++  const same = nextCounterpartyCaps(first.caps, agents({ x2: { unitReturns: rec(0.02, -0.01, 0.5) } }), [], 10);
++  assert.deepEqual([...same.caps.keys()], ["x2", "x3"]);
++  const flat = nextCounterpartyCaps(first.caps, agents({ x2: { unitReturns: rec(0.02, -0.01, 0.005) } }), [], 11);
++  assert.deepEqual(flat.lifted, [], "a partial recovery has not re-earned the capital");
++  // x2 makes a new high: its cap lifts; x3 stays capped.
++  const high = nextCounterpartyCaps(first.caps, agents({ x2: { unitReturns: rec(0.02, -0.01, 0.02) } }), [], 11);
++  assert.deepEqual(high.lifted, ["x2"]);
++  assert.deepEqual([...high.caps.keys()], ["x3"]);
++  // A capped name that is stopped by its OWN ladder simply leaves the caps.
++  const own = nextCounterpartyCaps(first.caps, agents({ x3: { ladder: "stopped" } }), ["x3"], 12);
++  assert.ok(!own.caps.has("x3"));
++  assert.deepEqual(own.capped, [], "x2 is already capped: caps never compound");
++  // An unlabeled name's stop-out caps no one.
++  assert.equal(nextCounterpartyCaps(new Map(), agents({ z: { ladder: "stopped" } }), ["z"], 5).caps.size, 0);
++});
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index 4b1f5a7..d63bc6b 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -3,7 +3,7 @@
+  * allocation decision is reproducible and unit-testable. `book.ts` turns these
+  * decisions into mandate-tree writes (resize = reallocate, revoke = stop-out).
+  *
+- * Three things a pod shop does that per-agent guardrails cannot:
++ * Four things a pod shop does that per-agent guardrails cannot:
+  *
+  *  1. ALLOCATE BY RISK-ADJUSTED, ATTRIBUTABLE RETURNS, CORRELATION-AWARE.
+  *     score = shrunk Sharpe (short track records are pulled toward zero) ÷ vol,
+@@ -22,6 +22,13 @@
+  *     member contributing to it is scaled down until it doesn't. The whole
+  *     book's net exposure to any one instrument is capped too (`bookMaxShare`).
+  *     No single agent ever breached a limit — that is the point.
++ *  4. COUNTERPARTIES. An operator (`AgentSpec.operator`, a verified human in
++ *     production) is one counterparty however many names it runs: a stop-out
++ *     of one of its names is a credit event for all of them. Its other live
++ *     names are cut to `cutFactor` together and stay capped until each
++ *     re-earns its capital with a new high on its own record. The cap only
++ *     ever shrinks capital: every name keeps its own ladder, and no name's own
++ *     stop-out is ever delayed or brought forward.
+  */
+ 
+ import {
+@@ -29,6 +36,7 @@ import {
+   correlationMatrix,
+   cosineSimilarity,
+   currentDrawdown,
++  isNewHigh,
+   sharpe,
+   volAtHighWater,
+ } from "./stats";
+@@ -477,3 +485,71 @@ export function scanCrowding(
+ 
+   return { clusters, breaches };
+ }
++
++/* ------------------------------------------------------------------ */
++/* 4. Counterparties                                                  */
++/* ------------------------------------------------------------------ */
++
++export interface CounterpartyAgent {
++  name: string;
++  /** Who runs the agent; absent = a counterparty of its own. */
++  operator?: string;
++  ladder: LadderState;
++  /** The agent's own attributable record, oldest first. */
++  unitReturns: readonly number[];
++}
++
++/** An operator cap on one name: sized at `cutFactor` since tick `since`. */
++export interface CounterpartyCap {
++  /** The name of the same operator whose stop-out triggered the cap. */
++  after: string;
++  since: number;
++}
++
++export interface CounterpartyUpdate {
++  /** Caps in force after this tick. */
++  caps: Map<string, CounterpartyCap>;
++  /** Names capped this tick, each with the stopped name that caused it. */
++  capped: { name: string; after: string }[];
++  /** Names whose cap lifted this tick (a new high on their own record). */
++  lifted: string[];
++}
++
++/**
++ * One operator, one counterparty, one credit event. When a name is stopped
++ * out (`stoppedNow`, by its OWN ladder), every other live name of the same
++ * operator is capped: sized at `cutFactor`, like a drawdown cut. It is never
++ * stopped by it — each keeps its own ladder, and revocation only ever comes
++ * from its own record. A cap lifts at the first tick after it was set on
++ * which the capped name's own record makes a strict new high: it has
++ * re-earned its capital. Stopped names drop out (revocation is final anyway).
++ *
++ * Pure bookkeeping on names and records: capital is never an input, and the
++ * ladder states are only read, so this cannot change when any name is stopped.
++ */
++export function nextCounterpartyCaps(
++  caps: ReadonlyMap<string, CounterpartyCap>,
++  agents: readonly CounterpartyAgent[],
++  stoppedNow: readonly string[],
++  t: number,
++): CounterpartyUpdate {
++  const next = new Map<string, CounterpartyCap>();
++  const lifted: string[] = [];
++  for (const a of agents) {
++    const cap = caps.get(a.name);
++    if (!cap || a.ladder === "stopped") continue;
++    if (t > cap.since && isNewHigh(a.unitReturns)) lifted.push(a.name);
++    else next.set(a.name, cap);
++  }
++  const capped: { name: string; after: string }[] = [];
++  for (const stopped of stoppedNow) {
++    const op = agents.find((a) => a.name === stopped)?.operator;
++    if (op === undefined) continue;
++    for (const a of agents) {
++      if (a.name === stopped || a.operator !== op || a.ladder === "stopped" || next.has(a.name)) continue;
++      next.set(a.name, { after: stopped, since: t });
++      capped.push({ name: a.name, after: stopped });
++    }
++  }
++  return { caps: next, capped, lifted };
++}
+diff --git a/packages/swarm/src/book.test.ts b/packages/swarm/src/book.test.ts
+index 226afc2..b2015a8 100644
+--- a/packages/swarm/src/book.test.ts
++++ b/packages/swarm/src/book.test.ts
+@@ -1,11 +1,11 @@
+ import { test } from "node:test";
+ import assert from "node:assert/strict";
+-import { defaultCenterBookPolicy, defaultNaivePolicy } from "./allocator";
+-import { runBook, type SwarmSpec } from "./book";
++import { defaultCenterBookPolicy, defaultNaivePolicy, nextLadderState, scaleLadder, type LadderState } from "./allocator";
++import { runBook, type BookResult, type SwarmSpec } from "./book";
+ import { generateMarket, genericMarketConfig } from "./market";
+ import { summarize } from "./evaluate";
+-import { currentDrawdown } from "./stats";
+-import { HerdStrategy, NoiseStrategy, RogueStrategy, TrendStrategy, MeanReversionStrategy } from "./strategies";
++import { currentDrawdown, isNewHigh } from "./stats";
++import { CarryStrategy, HerdStrategy, NoiseStrategy, RogueStrategy, TrendStrategy, MeanReversionStrategy } from "./strategies";
+ 
+ // A thesis-free swarm on the generic market: three herd agents in three pods
+ // that follow a viral signal into MEME, plus ordinary agents around them.
+@@ -118,3 +118,152 @@ test("risk-scaled stops: the center book never revokes an agent sooner than its
+     naive.decisions.filter((d) => d.kind === "STOP_OUT").map((d) => [d.t, d.node]),
+   );
+ });
++
++/* ------------------------------------------------------------------ */
++/* Counterparties                                                     */
++/* ------------------------------------------------------------------ */
++
++// Operator "mallory" runs three names: a fast trend book that loses (its own
++// record stops it out), and a slow trend book and a noise book that are both
++// up at the time (the loop-1 "second name shield" case). The other operators
++// run one name each; one agent has no operator at all.
++function operatorSwarm(labelled: boolean): SwarmSpec {
++  const all = ["ETH", "BTC", "SOL", "GOLD", "UST10Y", "EURUSD", "MEME"];
++  const op = (o: string) => (labelled ? o : undefined);
++  return {
++    principal: "alice",
++    fund: "fund.eth",
++    aum: 10_000_000,
++    pods: [
++      { label: "systematic", instruments: all },
++      { label: "macro", instruments: all },
++    ],
++    agents: [
++      { label: "trend", pod: "systematic", operator: op("mallory"), instruments: all, strategy: new TrendStrategy(30) },
++      { label: "trend-b", pod: "macro", operator: op("mallory"), instruments: all, strategy: new TrendStrategy(10) },
++      { label: "noise", pod: "systematic", operator: op("mallory"), instruments: all, strategy: new NoiseStrategy(5) },
++      { label: "meanrev", pod: "macro", operator: op("op-q"), instruments: all, strategy: new MeanReversionStrategy(3) },
++      { label: "carry", pod: "macro", operator: op("op-c"), instruments: all, strategy: new CarryStrategy() },
++      { label: "noise-b", pod: "macro", instruments: all, strategy: new NoiseStrategy(9) },
++      { label: "herd", pod: "systematic", operator: op("op-h"), instruments: all, strategy: new HerdStrategy(20) },
++    ],
++  };
++}
++
++/** Each agent's ladder state after every tick, replayed from its OWN record alone (no book, no capital, no siblings). */
++function ownLadders(book: BookResult): Map<string, LadderState[]> {
++  const policy = defaultCenterBookPolicy();
++  const out = new Map<string, LadderState[]>();
++  for (const a of book.agents) {
++    let state: LadderState = "active";
++    const states: LadderState[] = [];
++    for (let t = 0; t < a.unitReturns.length; t++) {
++      const record = a.unitReturns.slice(0, t + 1);
++      const rungs = scaleLadder(record, {
++        ddStop: policy.ddStop,
++        ddCut: policy.ddCut,
++        ddRecover: policy.ddRecover,
++        ddStopVol: policy.ddStopVol,
++        volWindow: policy.window,
++      });
++      state = nextLadderState(state, record, rungs);
++      states.push(state);
++    }
++    out.set(a.name, states);
++  }
++  return out;
++}
++
++const stopOuts = (b: BookResult) => b.decisions.filter((d) => d.kind === "STOP_OUT").map((d) => [d.t, d.node] as const);
++
++test("one operator, one counterparty: a stop-out cuts the operator's other names as a group; no name's own stop-out moves", async () => {
++  const policy = defaultCenterBookPolicy();
++  const labelled = await runBook(market, operatorSwarm(true), policy);
++  const blind = await runBook(market, operatorSwarm(false), policy);
++  const agent = (b: BookResult, label: string) => b.agents.find((a) => a.label === label)!;
++
++  // (1) No stop is delayed or brought forward: every stop-out is at the same
++  // tick with and without operators, and it is exactly the first tick on which
++  // the agent's own record, replayed alone, breaches its own stop.
++  assert.deepEqual(stopOuts(labelled), stopOuts(blind));
++  labelled.agents.forEach((a, i) => {
++    assert.deepEqual(a.unitReturns, blind.agents[i]!.unitReturns, "records never depend on capital");
++    assert.equal(a.ladder, blind.agents[i]!.ladder, `${a.label}: same final ladder state`);
++  });
++  const own = ownLadders(labelled);
++  const ownStops = new Map([...own].flatMap(([n, s]) => (s.includes("stopped") ? [[n, s.indexOf("stopped")] as const] : [])));
++  assert.deepEqual(new Map(stopOuts(labelled).map(([t, n]) => [n, t])), ownStops);
++  // The losing name is stopped on its own record although its operator's other names are up.
++  const loser = agent(labelled, "trend-b");
++  const tStop = ownStops.get(loser.name)!;
++  assert.ok(tStop !== undefined && currentDrawdown(loser.unitReturns.slice(0, tStop + 1)) >= policy.ddStop);
++  const siblings = [agent(labelled, "trend"), agent(labelled, "noise")];
++  for (const s of siblings) assert.ok(s.unitReturns.slice(0, tStop + 1).reduce((x, r) => x * (1 + r), 1) > 1, `${s.label} is up`);
++
++  // (2) The group cut: on the stop tick, and only then, every other live name
++  // of the operator is cut to cutFactor, all in ONE plan: the tree's next
++  // writes after the stopped name's REVOKE are exactly those cuts, then pods.
++  const cuts = labelled.decisions.filter((d) => d.kind === "OPERATOR_CUT");
++  assert.deepEqual(
++    cuts.map((d) => [d.t, d.node]),
++    siblings.map((s) => [tStop, s.name]),
++    "herd and carry are stopped alone: their operators run no other name; noise-b has no operator",
++  );
++  const events = labelled.tree.events;
++  const revoke = events.findIndex((e) => e.type === "REVOKE" && e.node === loser.name);
++  const plan = events.slice(revoke + 1, revoke + 1 + siblings.length);
++  assert.deepEqual(
++    plan.map((e) => [e.type, e.result, e.node]),
++    siblings.map((s) => ["RESIZE", "OK", s.name]),
++  );
++  siblings.forEach((s, k) => {
++    assert.ok(s.capital[tStop]! > 0, `${s.label} held capital when its operator's other name was stopped`);
++    assert.ok(Math.abs(Number(plan[k]!.amount) / 1e6 - policy.cutFactor * s.capital[tStop]!) < 1e-6);
++  });
++  const next = events[revoke + 1 + siblings.length]!;
++  assert.ok(next.type === "RESIZE" && labelled.tree.requireNode(next.node).parent === "fund.eth", "then the pods");
++
++  // (3) Capped, never stopped: each keeps its own ladder, and its cap lifts only
++  // when ITS OWN record makes a new high, independently of the other's.
++  const restoredAt = new Map<string, number>();
++  for (const s of siblings) {
++    assert.equal(labelled.tree.requireNode(s.name).mandate.revoked, false);
++    assert.notEqual(s.ladder, "stopped");
++    const restore = labelled.decisions.find((d) => d.kind === "OPERATOR_RESTORE" && d.node === s.name);
++    assert.ok(restore, `${s.label}: the cap lifts`);
++    restoredAt.set(s.label, restore!.t);
++    assert.ok(isNewHigh(s.unitReturns.slice(0, restore!.t + 1)), `${s.label}: on a new high`);
++    for (let t = tStop + 1; t < restore!.t; t++) {
++      assert.ok(!isNewHigh(s.unitReturns.slice(0, t + 1)), `${s.label}: no earlier new high (t=${t})`);
++    }
++    // Until the stop the two books are the same book; the tick after it the
++    // name runs exactly cutFactor of what it runs without operator labels, and
++    // wherever its own ladder has it at full size (so no ladder cut binds) it
++    // runs about half (crowding cuts bind in absolute terms, so they bite a
++    // little less on the smaller book).
++    const blindCapital = agent(blind, s.label).capital;
++    assert.deepEqual(s.capital.slice(0, tStop + 1), blindCapital.slice(0, tStop + 1));
++    assert.ok(Math.abs(s.capital[tStop + 1]! - policy.cutFactor * blindCapital[tStop + 1]!) < 1e-6);
++    const states = own.get(s.name)!;
++    let checked = 0;
++    for (let t = tStop + 1; t <= restore!.t; t++) {
++      const clean = Array.from({ length: policy.rebalanceEvery + 1 }, (_, k) => states[t - 1 - k]).every((x) => x === "active");
++      if (!clean || blindCapital[t]! === 0) continue;
++      checked++;
++      assert.ok(s.capital[t]! <= 0.7 * blindCapital[t]!, `${s.label} capped at t=${t}: ${s.capital[t]} vs ${blindCapital[t]}`);
++    }
++    assert.ok(checked > 0, `${s.label}: the cap is seen binding`);
++  }
++  assert.deepEqual(labelled.nav.slice(0, tStop + 1), blind.nav.slice(0, tStop + 1), "dormant until the credit event");
++  assert.ok(restoredAt.get("noise")! < restoredAt.get("trend")!, "each name re-earns on its own record");
++
++  // (4) The tree stays valid through every group cut.
++  const tree = labelled.tree;
++  assert.ok(!tree.events.some((e) => e.result === "ATTENUATION_REJECTED"));
++  for (const n of tree.listNodes()) assert.ok(tree.available(n.name) >= 0n, `${n.name} over-committed`);
++  for (const a of labelled.agents) {
++    const node = tree.requireNode(a.name);
++    assert.equal(node.mandate.revoked, a.ladder === "stopped", `${a.label}: revoked iff stopped by its own ladder`);
++    if (a.ladder === "stopped") assert.equal(node.mandate.budget, 0n);
++  }
++});
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index c1cc962..98d1e02 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -14,6 +14,9 @@
+  *   - allowed instruments = the node's allowlist   (attenuated fund → pod → agent)
+  *   - stop-out            = resize to 0 + revoke   (tree.revoke); drawdown
+  *                           rungs are risk-scaled in the center book
++ *   - counterparty        = AgentSpec.operator: one name's stop-out cuts the
++ *                           operator's other names as a group (one applyTargets
++ *                           plan) until each re-earns; nobody else's ladder moves
+  * so every allocator action lands in the same audited event log as payments.
+  *
+  * Money and authority are kept separate on purpose: PnL accrues to the fund's
+@@ -24,9 +27,11 @@ import { DelegationTree, formatAmount, parseAmount } from "@allowance/core";
+ import {
+   allocate,
+   ladderStep,
++  nextCounterpartyCaps,
+   scanCrowding,
+   type AllocationPolicy,
+   type CenterBookPolicy,
++  type CounterpartyCap,
+   type LadderState,
+ } from "./allocator";
+ import { preTradeCheck, type GateViolation } from "./gate";
+@@ -81,6 +86,8 @@ export type DecisionKind =
+   | "RESTORE"
+   | "STOP_OUT"
+   | "CROWDING_CUT"
++  | "OPERATOR_CUT"
++  | "OPERATOR_RESTORE"
+   | "GATE_CLIP";
+ 
+ export interface Decision {
+@@ -250,6 +257,8 @@ export async function runBook(
+   // crowded book — NOT merely until the crowd shrinks to one member, or the last
+   // clone standing would be re-sized straight back into the same trade.
+   const crowdCaps = new Map<string, { cap: number; book: Weights }>();
++  // Names capped because another name of the same operator was stopped out.
++  let operatorCaps: ReadonlyMap<string, CounterpartyCap> = new Map();
+   const history: Observation["history"][number][] = [];
+   const nav: number[] = [];
+   const bookReturns: number[] = [];
+@@ -257,6 +266,50 @@ export async function runBook(
+   let currentNav = spec.aum;
+   const capitalOf = (a: AgentResult) => toUsdc(tree.requireNode(a.name).mandate.budget);
+ 
++  /**
++   * One operator is one counterparty: when one of its names was stopped out
++   * this tick, cut every other live name it runs to `cutFactor` in ONE plan
++   * (shrinks before grows, pods resized with them), and keep them sized at
++   * `cutFactor` at every reallocation until each makes a new high on its own
++   * record. A name already cut by its own ladder is not cut again, and at a
++   * reallocation the two never compound (cutFactor once, whichever applies).
++   * The ladder code is untouched, so a capped name that then hits its own cut
++   * rung is halved by the ladder as usual, until the next reallocation.
++   */
++  const cutCounterparties = (t: number, center: CenterBookPolicy): void => {
++    const stoppedNow = decisions.filter((d) => d.t === t && d.kind === "STOP_OUT").map((d) => d.node);
++    const update = nextCounterpartyCaps(
++      operatorCaps,
++      agents.map((a, i) => ({ name: a.name, operator: spec.agents[i]!.operator, ladder: a.ladder, unitReturns: a.unitReturns })),
++      stoppedNow,
++      t,
++    );
++    for (const name of update.lifted) {
++      decisions.push({
++        t,
++        kind: "OPERATOR_RESTORE",
++        node: name,
++        detail: "new high on its own record since its operator's stop-out; full sizing at next reallocation",
++      });
++    }
++    const cuts = new Map<string, bigint>();
++    for (const { name, after } of update.capped) {
++      const a = agents.find((x) => x.name === name)!;
++      const capital = capitalOf(a);
++      if (a.ladder !== "cut") cuts.set(name, toUnits(capital * center.cutFactor));
++      decisions.push({
++        t,
++        kind: "OPERATOR_CUT",
++        node: name,
++        detail:
++          `same operator as ${after}, stopped out → capital ×${center.cutFactor} ` +
++          `(${capital.toFixed(0)} USDC before) until a new high on its own record; its own ladder is unchanged`,
++      });
++    }
++    applyTargets(tree, podOf, cuts);
++    operatorCaps = update.caps;
++  };
++
+   for (let t = 0; t < T; t++) {
+     const tick = market.ticks[t]!;
+     const now = tickToUnix(t);
+@@ -269,7 +322,7 @@ export async function runBook(
+           name: a.name,
+           unitReturns: a.unitReturns,
+           stopped: a.ladder === "stopped",
+-          ladderMultiplier: a.ladder === "cut" ? center.cutFactor : 1,
++          ladderMultiplier: a.ladder === "cut" || operatorCaps.has(a.name) ? center.cutFactor : 1,
+           crowdCap: crowdCaps.get(a.name)?.cap,
+         })),
+         deployable,
+@@ -430,6 +483,11 @@ export async function runBook(
+       }
+       a.ladder = next;
+     }
++
++    /* 7) Counterparties (center book only). -------------------------- */
++    // Runs after every name's own ladder has moved, and only ever shrinks
++    // capital: it can neither delay nor bring forward any stop-out.
++    if (center) cutCounterparties(t, center);
+   }
+ 
+   return { policy, tree, startNav: spec.aum, nav, returns: bookReturns, crowdExposure, agents, decisions };
+diff --git a/packages/swarm/src/stats.ts b/packages/swarm/src/stats.ts
+index ff17cdf..d290edb 100644
+--- a/packages/swarm/src/stats.ts
++++ b/packages/swarm/src/stats.ts
+@@ -70,6 +70,22 @@ export function currentDrawdown(returns: readonly number[]): number {
+   return 1 - e / peak;
+ }
+ 
++/**
++ * True when the LAST return lifts the equity curve strictly above every
++ * earlier point, the starting value of 1 included: the series is at a new
++ * high-water mark it has just earned. A flat tick at an old peak is not one.
++ */
++export function isNewHigh(returns: readonly number[]): boolean {
++  if (returns.length === 0) return false;
++  let e = 1;
++  let peak = 1;
++  for (let i = 0; i < returns.length - 1; i++) {
++    e *= 1 + returns[i]!;
++    if (e > peak) peak = e;
++  }
++  return e * (1 + returns[returns.length - 1]!) > peak;
++}
++
+ /**
+  * Annualized volatility of the last `window` returns up to and including the
+  * series' most recent high-water mark: the risk it was running when its record

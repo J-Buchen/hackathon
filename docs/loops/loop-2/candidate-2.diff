@@ -1,0 +1,500 @@
+diff --git a/README.md b/README.md
+index ed1a19d..ad42e89 100644
+--- a/README.md
++++ b/README.md
+@@ -267,9 +267,9 @@ You can also run any layer in isolation:
+ | `@allowance/adapters` — shadow audit | `packages/adapters/src/agenthire-audit.test.ts` | On a recorded AgentHire capture: A2A hires link to their primary job, direct and orphan hires are excluded, cycles and shared children get one alias node per parent, the headline comes from the replay-decided Hard Spend Cap scenario while `strict` is the by-definition total, `--organic-only` drops demo-cascade jobs, and AgentHire operator screening plugs into the replay. |
+ | `@allowance/core` — close | `packages/core/src/tree.test.ts` | `close` shrinks a subtree to what it spent, revokes it, and returns exactly what the parent's `available` rises by; never shrinks a parent below what its subtree really spent (even after an unserialized overspend); idempotent; reclaims budget under individually revoked descendants. |
+ | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
+-| `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
++| `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit, measured beyond the lead counterparty (one operator's names are one counterparty and never buy more room than one full-size agent); the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+ | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
+-| `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are revoked with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book. |
++| `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are revoked with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book; one operator's two names are one counterparty in the crowding check, while two operators running the same book are cut as a group on day one. |
+ | `@allowance/swarm` — example | `packages/swarm/src/example.test.ts` | The coffee thesis is well-formed (scores 1–5, sourced trend claims, parseable catalyst dates); the three Tiger Cubs converge on one long; the center book flags it on day one and loses less in the unwind. |
+ | `@allowance/orchestrator` | `services/orchestrator/src/flow.test.ts` | `executePayment` reaches every `PaymentOutcome`; in each, the off-chain result **agrees** with the `SpendCapHook` cap decision (hook agreement), the emitted event matches the record, and a settled payment moves the node's ENS `spentDirect` record in lock-step. |
+ | `allowance-web` — snapshot | `apps/web/src/snapshot.test.ts` | Runtime validation of `demo-snapshot.json` against the frozen schema: well-formed input round-trips unchanged; malformed/stale input throws a precise, path-tagged `SnapshotParseError`. |
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index 983ef1e..04e27ca 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -111,6 +111,14 @@ Around them sit agents that give the allocator something to allocate between:
+     trade in …").
+   - **Book:** the whole book's net exposure to any one instrument is capped at
+     20% of NAV, however many different-looking strategies it is spread across.
++  - **Beyond the lead.** Both caps measure the exposure *stacked on top of the
++    largest counterparty's own position*, not the total. One counterparty's
++    conviction is not a crowd: its own record carries that risk and the
++    allocator sized it. Agents with the same operator are one counterparty, and
++    its exemption is at most what one of its agents could hold at full size, so
++    running one trade under more names buys no extra room. When a cap is
++    breached, every contributor, the lead included, is cut by the same factor.
++    A crowd of many small holders is held close to the plain cap.
+   - A crowding cut stays in force until the agent's book stops resembling the
+     crowded book. The cap is not lifted just because its twin got stopped out.
+ 
+diff --git a/packages/swarm/src/allocator.test.ts b/packages/swarm/src/allocator.test.ts
+index 029fec6..6a57f65 100644
+--- a/packages/swarm/src/allocator.test.ts
++++ b/packages/swarm/src/allocator.test.ts
+@@ -5,9 +5,11 @@ import {
+   allocate,
+   capShares,
+   defaultCenterBookPolicy,
++  leadCounterparty,
+   nextLadderState,
+   scaleLadder,
+   scanCrowding,
++  type CrowdInput,
+ } from "./allocator";
+ import { preTradeCheck } from "./gate";
+ import { annualVol, correlation, cosineSimilarity, currentDrawdown, maxDrawdown, sharpe, volAtHighWater } from "./stats";
+@@ -198,6 +200,136 @@ test("crowding: book-level limit catches concentration spread across different-l
+   assert.ok(Math.abs(b.scale - 0.5) < 1e-9);
+ });
+ 
++/* Crowding measured beyond the lead counterparty (`crowdBeyondLead`). */
++
++const NAV = 10_000_000;
++const LEAD = { crowdSimilarity: 0.8, crowdMaxShare: 0.1, bookMaxShare: 0.2, crowdBeyondLead: true };
++/** A group's exposure to `k` stacked beyond its lead counterparty's exemption. */
++const beyondLead = (group: readonly CrowdInput[], k: string, lev = 2) => {
++  const e = group.reduce((s, m) => s + m.capital * lev * (m.weights[k] ?? 0), 0);
++  return Math.abs(e) - (leadCounterparty(group, k, Math.sign(e), lev)?.exempt ?? 0);
++};
++const scaled = (group: readonly CrowdInput[], b: { contributors: string[]; scale: number }) =>
++  group.map((m) => (b.contributors.includes(m.name) ? { ...m, capital: m.capital * b.scale } : m));
++
++test("crowding beyond the lead: one counterparty is not a crowd, whatever names it trades under", () => {
++  // One agent all-in: 60% of NAV in one name. The plain book limit cuts it;
++  // beyond its own position there is nothing stacked, so no crowd.
++  const alone: CrowdInput[] = [{ name: "a", capital: 3_000_000, weights: { COFFEE: 1 } }];
++  assert.equal(scanCrowding(alone, NAV, 2, { ...LEAD, crowdBeyondLead: false }).breaches[0]?.kind, "BOOK");
++  assert.deepEqual(scanCrowding(alone, NAV, 2, LEAD).breaches, []);
++
++  // One operator splitting one trade across two names (each at half size):
++  // still named as one trade, still one counterparty, so no cut.
++  const split: CrowdInput[] = [
++    { name: "picker.pod1", operator: "op-7", capital: 2_000_000, weights: { COFFEE: 0.5, TEA: -0.5 } },
++    { name: "desk.pod2", operator: "op-7", capital: 2_000_000, weights: { COFFEE: 0.5, TEA: -0.5 } },
++  ];
++  const s = scanCrowding(split, NAV, 2, LEAD);
++  assert.deepEqual(s.clusters, [["picker.pod1", "desk.pod2"]]);
++  assert.deepEqual(s.breaches, []);
++
++  // The operator is what makes them one: the same two books under two
++  // independent operators are a crowd, cut as a group back to the limit.
++  const anon: CrowdInput[] = split.map((m, i) => ({ ...m, operator: `op-${i}` }));
++  const c = scanCrowding(anon, NAV, 2, LEAD);
++  assert.equal(c.breaches.length, 1);
++  const b = c.breaches[0]!;
++  assert.equal(b.kind, "CLONES");
++  assert.equal(b.instrument, "COFFEE");
++  assert.deepEqual(b.contributors, ["picker.pod1", "desk.pod2"], "the lead is cut with the group");
++  assert.ok(Math.abs(b.crowdShare - 0.2) < 1e-12 && Math.abs(b.share - 0.4) < 1e-12);
++  assert.ok(Math.abs(b.scale - 0.5) < 1e-12);
++  assert.ok(Math.abs(beyondLead(scaled(anon, b), "COFFEE") - 0.1 * NAV) < 1e-6);
++});
++
++test("crowding beyond the lead: running one trade at full size under more names buys no room", () => {
++  // Two names of one operator, each all-in: the exemption is what ONE of them
++  // could hold at full size, so the second name's 4M is a crowd of one operator.
++  const clones: CrowdInput[] = [
++    { name: "x1", operator: "op-1", capital: 2_000_000, weights: { COFFEE: 1 } },
++    { name: "x2", operator: "op-1", capital: 2_000_000, weights: { COFFEE: 1 } },
++  ];
++  assert.deepEqual(leadCounterparty(clones, "COFFEE", 1, 2), { counterparty: "op-1", exempt: 4_000_000 });
++  const b = scanCrowding(clones, NAV, 2, LEAD).breaches[0]!;
++  assert.equal(b.kind, "CLONES");
++  assert.deepEqual(b.lead, { counterparty: "op-1", exempt: 4_000_000 });
++  assert.ok(Math.abs(b.crowdShare - 0.4) < 1e-12);
++  assert.ok(Math.abs(b.scale - 0.25) < 1e-12);
++  assert.ok(Math.abs(beyondLead(scaled(clones, b), "COFFEE") - 0.1 * NAV) < 1e-6);
++  // A third name buys nothing either: the stack beyond one full-size agent grows.
++  const three = [...clones, { name: "x3", operator: "op-1", capital: 2_000_000, weights: { COFFEE: 1 } }];
++  assert.ok(Math.abs(scanCrowding(three, NAV, 2, LEAD).breaches[0]!.crowdShare - 0.8) < 1e-12);
++});
++
++test("crowding beyond the lead: independent books piling into one name are cut back exactly, net of shorts", () => {
++  // Different-looking books (no clone cluster) from four operators. COFFEE is
++  // 4.6M net (a short offsets 1M); the lead holds 2M, so 2.6M = 26% is stacked.
++  const book: CrowdInput[] = [
++    { name: "a", operator: "op-1", capital: 2_000_000, weights: { COFFEE: 0.5, GOLD: 0.5 } },
++    { name: "b", operator: "op-2", capital: 2_000_000, weights: { COFFEE: 0.5, UST: -0.5 } },
++    { name: "c", operator: "op-3", capital: 2_000_000, weights: { COFFEE: 0.4, BTC: 0.6 } },
++    { name: "d", operator: "op-4", capital: 1_000_000, weights: { COFFEE: -0.5, ETH: 0.5 } },
++  ];
++  const scan = scanCrowding(book, NAV, 2, LEAD);
++  assert.equal(scan.clusters.length, 0);
++  assert.equal(scan.breaches.length, 1);
++  const b = scan.breaches[0]!;
++  assert.equal(b.kind, "BOOK");
++  assert.equal(b.instrument, "COFFEE");
++  assert.ok(Math.abs(b.crowdShare - 0.26) < 1e-12);
++  assert.deepEqual(b.contributors, ["a", "b", "c"], "the short is not cut for the longs' crowd");
++  assert.ok(Math.abs(b.scale - 3 / 3.6) < 1e-12);
++  assert.ok(Math.abs(beyondLead(scaled(book, b), "COFFEE") - 0.2 * NAV) < 1e-6, "back to the limit exactly");
++
++  // A crowd of many small holders is held close to the plain limit: ten
++  // independent 3% positions (30% of NAV) come back to 20% + one holder's share.
++  const dispersed: CrowdInput[] = Array.from({ length: 10 }, (_, i) => ({
++    name: `s${i}`,
++    operator: `op-${i}`,
++    capital: 300_000,
++    weights: { COFFEE: 0.5, [`OTHER${i}`]: 0.5 },
++  }));
++  const d = scanCrowding(dispersed, NAV, 2, LEAD).breaches[0]!;
++  const total = dispersed.reduce((s, m) => s + m.capital * 2 * 0.5 * d.scale, 0);
++  assert.ok(total / NAV < 0.2 * (10 / 9) + 1e-9, `held to ${(total / NAV).toFixed(4)} of NAV`);
++});
++
++test("crowding beyond the lead: every breach is solved exactly, and a split position never trips it", () => {
++  const u = mulberry32(2024);
++  const names = ["A", "B", "C", "D"];
++  const seen = { CLONES: 0, BOOK: 0, cut: 0 };
++  for (let trial = 0; trial < 300; trial++) {
++    const n = 2 + Math.floor(u() * 7);
++    const agents: CrowdInput[] = Array.from({ length: n }, (_, i) => {
++      const w: Record<string, number> = {};
++      if (u() < 0.3) w[names[Math.floor(u() * 4)]!] = u() < 0.8 ? 1 : -1; // all-in
++      else for (const k of names) if (u() < 0.6) w[k] = u() - 0.4;
++      const g = Object.values(w).reduce((s, x) => s + Math.abs(x), 0);
++      for (const k of Object.keys(w)) w[k] = w[k]! / Math.max(1, g);
++      return { name: `ag${i}`, operator: `op-${Math.floor(u() * 3)}`, capital: 200_000 + u() * 2_800_000, weights: w };
++    });
++    const scan = scanCrowding(agents, NAV, 2, LEAD);
++    let post = agents;
++    for (const b of scan.breaches) {
++      seen[b.kind]++;
++      if (b.scale > 0 && b.scale < 1) seen.cut++;
++      assert.ok(b.scale >= 0 && b.scale <= 1);
++      const limit = b.kind === "CLONES" ? 0.1 : 0.2;
++      assert.ok(b.crowdShare > limit * 1.05, "only a real breach is reported");
++      // The group the breach was solved on: its cluster, or the whole book after the clone cuts.
++      const group = b.kind === "CLONES" ? agents.filter((a) => b.members.includes(a.name)) : post.filter((a) => b.members.includes(a.name));
++      assert.ok(Math.abs(beyondLead(group, b.instrument) - b.crowdShare * NAV) < 1e-6);
++      if (b.scale > 0) assert.ok(Math.abs(beyondLead(scaled(group, b), b.instrument) - limit * NAV) < 1e-6);
++      if (b.kind === "CLONES") post = scaled(post, b);
++    }
++    // One operator whose names together hold no more than one of them could at full size is never cut.
++    const op = agents.map((a) => ({ ...a, operator: "solo", weights: { A: 0.5 / n } }));
++    assert.deepEqual(scanCrowding(op, NAV, 2, LEAD).breaches, []);
++  }
++  assert.ok(seen.CLONES > 50 && seen.BOOK > 10 && seen.cut > 60, `exercised ${JSON.stringify(seen)}`);
++});
++
+ test("gate: off-mandate dropped, gross clipped, revoked trades nothing", () => {
+   const tree = new DelegationTree();
+   const FAR = 4_000_000_000;
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index 4b1f5a7..ba51f83 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -21,7 +21,10 @@
+  *     exposure to any one instrument exceeds `crowdMaxShare` of NAV, every
+  *     member contributing to it is scaled down until it doesn't. The whole
+  *     book's net exposure to any one instrument is capped too (`bookMaxShare`).
+- *     No single agent ever breached a limit — that is the point.
++ *     No single agent ever breached a limit — that is the point. So the limits
++ *     count what no single record shows (`crowdBeyondLead`): exposure stacked
++ *     on top of the lead counterparty's own position, where one operator's
++ *     names are one counterparty.
+  */
+ 
+ import {
+@@ -84,6 +87,19 @@ export interface CenterBookPolicy {
+   crowdMaxShare: number;
+   /** Max net exposure of the WHOLE book to one instrument, as a share of NAV. */
+   bookMaxShare: number;
++  /**
++   * Measure crowding BEYOND THE LEAD COUNTERPARTY. A crowd is independent
++   * counterparties converging on one instrument; one counterparty's conviction
++   * is not a crowd — its record already carries that risk, and the allocator
++   * sized it on that record. So the crowd and book limits cap the exposure
++   * stacked on top of the largest counterparty's, not the total. Agents run by
++   * one operator (`CrowdInput.operator`) are one counterparty, and its
++   * exemption is never more than one of its agents could hold at full size:
++   * running a trade under more names never buys more room. When a limit is
++   * breached every contributor, lead included, is cut by one factor.
++   * false = cap total exposure, whoever holds it.
++   */
++  crowdBeyondLead: boolean;
+ }
+ 
+ /**
+@@ -122,6 +138,7 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
+     crowdSimilarity: 0.8,
+     crowdMaxShare: 0.1,
+     bookMaxShare: 0.2,
++    crowdBeyondLead: true,
+   };
+ }
+ 
+@@ -335,6 +352,11 @@ export function nextLadderState(
+ 
+ export interface CrowdInput {
+   name: string;
++  /**
++   * Who runs the agent (`AgentSpec.operator`). Agents with the same operator
++   * are ONE counterparty however they are named. Absent = its own name.
++   */
++  operator?: string;
+   capital: number;
+   /** Tradeable weights this tick (post-gate). */
+   weights: Weights;
+@@ -353,6 +375,14 @@ export interface CrowdBreach {
+   exposure: number;
+   /** |exposure| / NAV. */
+   share: number;
++  /**
++   * The lead counterparty (see `CenterBookPolicy.crowdBeyondLead`): the one
++   * whose own position is exempt, and how much of it (notional). Absent when
++   * the limit caps total exposure.
++   */
++  lead?: { counterparty: string; exempt: number };
++  /** Exposure stacked beyond the lead's exemption, / NAV: what the limit caps. */
++  crowdShare: number;
+   /** The limit that was breached, as a share of NAV. */
+   limit: number;
+   /** Multiplier applied to each contributing member's capital. */
+@@ -368,9 +398,41 @@ export interface CrowdScan {
+ }
+ 
+ /**
+- * If `members`' combined exposure to their largest instrument exceeds
+- * `limitShare` of NAV, return the uniform capital scale on the same-direction
+- * contributors that brings it back to the limit.
++ * The lead counterparty in `instrument` (direction `dir`) and its exemption:
++ * the most any one counterparty holds, where a counterparty is every agent of
++ * one operator and its exemption is capped at what the largest of those agents
++ * could hold alone at full size (capital × leverage: the gate caps gross at 1)
++ * — spreading one trade across more names never enlarges it.
++ */
++export function leadCounterparty(
++  members: readonly CrowdInput[],
++  instrument: string,
++  dir: number,
++  leverage: number,
++): { counterparty: string; exempt: number } | null {
++  const by = new Map<string, { held: number; fullSize: number }>();
++  for (const m of members) {
++    const w = m.weights[instrument] ?? 0;
++    if (w === 0 || Math.sign(w) !== dir) continue;
++    const who = m.operator ?? m.name;
++    const c = by.get(who) ?? { held: 0, fullSize: 0 };
++    c.held += m.capital * leverage * Math.abs(w);
++    c.fullSize = Math.max(c.fullSize, m.capital * leverage);
++    by.set(who, c);
++  }
++  let lead: { counterparty: string; exempt: number } | null = null;
++  for (const [who, c] of by) {
++    const exempt = Math.min(c.held, c.fullSize);
++    if (lead === null || exempt > lead.exempt) lead = { counterparty: who, exempt };
++  }
++  return lead;
++}
++
++/**
++ * If `members`' exposure to their most crowded instrument exceeds `limitShare`
++ * of NAV — total exposure, or with `beyondLead` the part stacked beyond the
++ * lead counterparty's exemption — return the uniform capital scale on the
++ * same-direction contributors that brings it back to the limit.
+  */
+ function concentrationBreach(
+   kind: CrowdBreach["kind"],
+@@ -378,6 +440,7 @@ function concentrationBreach(
+   nav: number,
+   leverage: number,
+   limitShare: number,
++  beyondLead: boolean,
+ ): CrowdBreach | null {
+   if (nav <= 0) return null;
+   const exposure = new Map<string, number>();
+@@ -386,31 +449,38 @@ function concentrationBreach(
+       exposure.set(k, (exposure.get(k) ?? 0) + m.capital * leverage * w);
+     }
+   }
+-  let worst: [string, number] | null = null;
++  let worst: { instrument: string; e: number; lead: CrowdBreach["lead"]; crowd: number } | null = null;
+   for (const [k, e] of exposure) {
+-    if (worst === null || Math.abs(e) > Math.abs(worst[1])) worst = [k, e];
++    const lead = beyondLead ? (leadCounterparty(members, k, Math.sign(e), leverage) ?? undefined) : undefined;
++    const crowd = Math.abs(e) - (lead?.exempt ?? 0);
++    if (worst === null || crowd > worst.crowd) worst = { instrument: k, e, lead, crowd };
+   }
+   const limit = limitShare * nav;
+   // Small tolerance so a group sitting exactly at the limit (e.g. right after a
+   // cut, or drifting a few percent with prices) doesn't churn the tree.
+-  if (worst === null || Math.abs(worst[1]) <= limit * 1.05) return null;
++  if (worst === null || worst.crowd <= limit * 1.05) return null;
+ 
+-  const [instrument, e] = worst;
++  const { instrument, e, lead } = worst;
+   const dir = Math.sign(e);
+   const contributors = members.filter((m) => Math.sign(m.weights[instrument] ?? 0) === dir);
+-  // Only the contributors shrink, so solve for the scale on THEIR share.
++  // Only the contributors shrink — all of them by one factor, the lead's names
++  // included, so the group is cut as a group. The lead's exemption shrinks
++  // with its capital, so solve on the part beyond it:
++  //   crowd(scale) = scale × (|contributed| − exempt) − |others|.
+   const contributed = contributors.reduce(
+     (s, m) => s + m.capital * leverage * (m.weights[instrument] ?? 0),
+     0,
+   );
+   const others = e - contributed;
+-  const scale = Math.max(0, Math.min(1, (dir * limit - others) / contributed));
++  const scale = Math.max(0, Math.min(1, (limit - dir * others) / (Math.abs(contributed) - (lead?.exempt ?? 0))));
+   return {
+     kind,
+     members: members.map((m) => m.name),
+     instrument,
+     exposure: e,
+     share: Math.abs(e) / nav,
++    ...(lead ? { lead } : {}),
++    crowdShare: worst.crowd / nav,
+     limit: limitShare,
+     scale,
+     contributors: contributors.map((m) => m.name),
+@@ -427,13 +497,23 @@ function concentrationBreach(
+  *  - BOOK: cap the whole book's net exposure to any single instrument at
+  *    `bookMaxShare`, however many different-looking strategies it is spread
+  *    across (a trend agent riding the crowd's run-up is crowding too).
++ *
++ * With `crowdBeyondLead` both caps apply to the exposure stacked beyond the
++ * lead counterparty (see `CenterBookPolicy.crowdBeyondLead`): one operator's
++ * position — up to what one of its agents could hold at full size — never
++ * trips them on its own, while independent counterparties converging on the
++ * instrument do. A crowd of many small holders is held close to the plain
++ * limit (the lead is a small part of it); a single holder is left to the
++ * allocator, which sized it on its record.
+  */
+ export function scanCrowding(
+   agents: readonly CrowdInput[],
+   nav: number,
+   leverage: number,
+-  policy: Pick<CenterBookPolicy, "crowdSimilarity" | "crowdMaxShare" | "bookMaxShare">,
++  policy: Pick<CenterBookPolicy, "crowdSimilarity" | "crowdMaxShare" | "bookMaxShare"> &
++    Partial<Pick<CenterBookPolicy, "crowdBeyondLead">>,
+ ): CrowdScan {
++  const beyondLead = policy.crowdBeyondLead ?? false;
+   const active = agents.filter((a) => a.capital > 0 && Object.keys(a.weights).length > 0);
+   const parent = active.map((_, i) => i);
+   const find = (i: number): number => {
+@@ -463,7 +543,7 @@ export function scanCrowding(
+   for (const members of groups.values()) {
+     if (members.length < 2) continue;
+     clusters.push(members.map((m) => m.name));
+-    const b = concentrationBreach("CLONES", members, nav, leverage, policy.crowdMaxShare);
++    const b = concentrationBreach("CLONES", members, nav, leverage, policy.crowdMaxShare, beyondLead);
+     if (b) breaches.push(b);
+   }
+ 
+@@ -472,7 +552,7 @@ export function scanCrowding(
+   const scaled = new Map<string, number>();
+   for (const b of breaches) for (const c of b.contributors) scaled.set(c, b.scale);
+   const post = active.map((a) => ({ ...a, capital: a.capital * (scaled.get(a.name) ?? 1) }));
+-  const book = concentrationBreach("BOOK", post, nav, leverage, policy.bookMaxShare);
++  const book = concentrationBreach("BOOK", post, nav, leverage, policy.bookMaxShare, beyondLead);
+   if (book) breaches.push(book);
+ 
+   return { clusters, breaches };
+diff --git a/packages/swarm/src/book.test.ts b/packages/swarm/src/book.test.ts
+index 226afc2..f6060df 100644
+--- a/packages/swarm/src/book.test.ts
++++ b/packages/swarm/src/book.test.ts
+@@ -5,7 +5,7 @@ import { runBook, type SwarmSpec } from "./book";
+ import { generateMarket, genericMarketConfig } from "./market";
+ import { summarize } from "./evaluate";
+ import { currentDrawdown } from "./stats";
+-import { HerdStrategy, NoiseStrategy, RogueStrategy, TrendStrategy, MeanReversionStrategy } from "./strategies";
++import { HerdStrategy, NoiseStrategy, RogueStrategy, TrendStrategy, MeanReversionStrategy, type Strategy, type Weights } from "./strategies";
+ 
+ // A thesis-free swarm on the generic market: three herd agents in three pods
+ // that follow a viral signal into MEME, plus ordinary agents around them.
+@@ -88,6 +88,47 @@ test("clones across pods are caught as a crowd; per-agent guardrails never see t
+   assert.ok(c.crashWindowReturn > n.crashWindowReturn, `unwind: center ${c.crashWindowReturn} vs naive ${n.crashWindowReturn}`);
+ });
+ 
++test("crowding in the book: one operator's two names are one counterparty; two operators are a crowd, cut as a group", async () => {
++  // Fixed books so the only thing that differs between runs is who runs them.
++  const fixed = (w: Weights): Strategy => ({ style: "fixed", decide: () => w });
++  const all = [...market.instruments];
++  const swarm = (ops: [string, string]): SwarmSpec => ({
++    principal: "alice",
++    fund: "fund.eth",
++    aum: 10_000_000,
++    pods: [
++      { label: "p1", instruments: all },
++      { label: "p2", instruments: all },
++    ],
++    agents: [
++      // One long/short trade at half size in each name: together, one full-size book.
++      { label: "picker", pod: "p1", operator: ops[0], instruments: all, strategy: fixed({ BTC: 0.5, GOLD: -0.5 }) },
++      { label: "desk", pod: "p2", operator: ops[1], instruments: all, strategy: fixed({ BTC: 0.5, GOLD: -0.5 }) },
++      { label: "macro", pod: "p1", operator: "op-m", instruments: all, strategy: fixed({ ETH: 0.25, SOL: 0.25, UST10Y: 0.25, EURUSD: -0.25 }) },
++    ],
++  });
++  const cuts = (b: Awaited<ReturnType<typeof runBook>>) => b.decisions.filter((d) => d.kind === "CROWDING_CUT");
++
++  // Same operator: over a quarter of NAV per name in BTC is still one counterparty's position, never a crowd.
++  const one = await runBook(market, swarm(["op-7", "op-7"]), defaultCenterBookPolicy());
++  assert.deepEqual(cuts(one), []);
++  // The plain total measure would have cut that position on day one.
++  const plain = await runBook(market, swarm(["op-7", "op-7"]), { ...defaultCenterBookPolicy(), crowdBeyondLead: false });
++  assert.equal(cuts(plain)[0]?.t, 0);
++
++  // Two independent operators running the same book ARE a crowd: caught on day
++  // one, every contributor (the lead too) cut by one factor, back to the limit.
++  const two = await runBook(market, swarm(["op-7", "op-8"]), defaultCenterBookPolicy());
++  const first = cuts(two)[0]!;
++  assert.equal(first.t, 0);
++  assert.equal(first.node, "picker.p1.fund.eth, desk.p2.fund.eth");
++  assert.match(first.detail, /2 agents across 2 pods running one trade in (BTC|GOLD): 26\.7% of NAV stacked beyond lead op-7 \(53\.3% in all\) > 10% limit/);
++  const [p, d] = [two.agents[0]!, two.agents[1]!];
++  assert.equal(p.capital[0], d.capital[0], "one factor for the group");
++  // Beyond the lead: one name's exposure (capital × 2 × 0.5) is 10% of NAV.
++  assert.ok(Math.abs(d.capital[0]! * 2 * 0.5 - 0.1 * two.startNav) < 1);
++});
++
+ test("risk-scaled stops: the center book never revokes an agent sooner than its own stop-loss would", async () => {
+   const policy = defaultCenterBookPolicy();
+   const naive = await runBook(market, genericSwarm(), defaultNaivePolicy());
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index c1cc962..d015a36 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -327,7 +327,12 @@ export async function runBook(
+     /* 4) Book-level crowding check on the proposed books (center only). */
+     if (center) {
+       const scan = scanCrowding(
+-        agents.map((a, i) => ({ name: a.name, capital: capitalOf(a), weights: gated[i]!.weights })),
++        agents.map((a, i) => ({
++          name: a.name,
++          operator: spec.agents[i]!.operator,
++          capital: capitalOf(a),
++          weights: gated[i]!.weights,
++        })),
+         currentNav,
+         center.leverage,
+         center,
+@@ -353,6 +358,7 @@ export async function runBook(
+         applyTargets(tree, podOf, targets);
+         const podCount = (names: string[]) => new Set(names.map((m) => podOf.get(m))).size;
+         const plural = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
++        const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+         decisions.push({
+           t,
+           kind: "CROWDING_CUT",
+@@ -361,8 +367,10 @@ export async function runBook(
+             (b.kind === "CLONES"
+               ? `${plural(b.members.length, "agent")} across ${plural(podCount(b.members), "pod")} running one trade in ${b.instrument}`
+               : `book net ${b.instrument} exposure (${plural(b.contributors.length, "agent")} across ${plural(podCount(b.contributors), "pod")})`) +
+-            `: ${(b.share * 100).toFixed(1)}% of NAV > ${(b.limit * 100).toFixed(0)}% limit → ` +
+-            `contributors scaled ×${b.scale.toFixed(2)}`,
++            (b.lead
++              ? `: ${pct(b.crowdShare)} of NAV stacked beyond lead ${b.lead.counterparty} (${pct(b.share)} in all)`
++              : `: ${pct(b.share)} of NAV`) +
++            ` > ${(b.limit * 100).toFixed(0)}% limit → contributors scaled ×${b.scale.toFixed(2)}`,
+         });
+       }
+     }

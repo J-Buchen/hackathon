@@ -1,0 +1,548 @@
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index 983ef1e..e285ec0 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -90,8 +90,15 @@ Around them sit agents that give the allocator something to allocate between:
+ - **Correlation-aware.** Each score is divided by the agent's *multiplicity*: the
+   sum of its positive return correlations with the other scoring agents. Two
+   clones split one allocation.
+-- **Caps.** No agent gets more than 25% of deployable capital. Capital freed by
+-  caps and cuts **stays in cash** rather than being pushed onto whoever is left.
++- **Caps.** No agent gets more than 25% of deployable capital.
++- **Cash is a policy, not an accident.** The book keeps 80% of NAV at work
++  (a constant proportion, so profits are reinvested as well as losses taken
++  out), never more than the principal's mandate. At each reallocation, the
++  capital a drawdown cut or a crowding cap freed goes back to work, by score,
++  with the agents that can still grow; the cut agent or crowd keeps exactly its
++  reduced size. Only what no agent can take (everyone at a cap) stays in cash.
++  Every grow is fitted to what the tree can still reserve, so the allocator
++  can never ask for authority the fund does not have.
+ - **Drawdown ladder** on each agent's own attributable (per-unit-of-capital)
+   track record:
+   - cut to 50% capital at a 10% drawdown;
+diff --git a/packages/swarm/src/allocator.test.ts b/packages/swarm/src/allocator.test.ts
+index 029fec6..9ad4d68 100644
+--- a/packages/swarm/src/allocator.test.ts
++++ b/packages/swarm/src/allocator.test.ts
+@@ -6,6 +6,7 @@ import {
+   capShares,
+   defaultCenterBookPolicy,
+   nextLadderState,
++  redeploy,
+   scaleLadder,
+   scanCrowding,
+ } from "./allocator";
+@@ -82,6 +83,95 @@ test("allocate: equal weight during warmup; ladder and crowd caps shrink targets
+   assert.equal(t.y, 100);
+ });
+ 
++test("redeploy: what a cut and a crowding cap free goes back to work with the agent that can still grow; both cuts stand", () => {
++  const policy = { ...defaultCenterBookPolicy(), warmup: 50, maxAgentShare: 1 };
++  const r = noise(6, 20);
++  const inputs = [
++    { name: "x", unitReturns: r, stopped: false, ladderMultiplier: 0.5 },
++    { name: "y", unitReturns: r, stopped: false, ladderMultiplier: 1, crowdCap: 100 },
++    { name: "z", unitReturns: r, stopped: false, ladderMultiplier: 1 },
++  ];
++  const allocated = allocate(inputs, 900, policy);
++  const t = Object.fromEntries(redeploy(allocated, inputs, 900, policy).map((s) => [s.name, s]));
++  assert.ok(Math.abs(t.x!.target - 150) < 1e-9, "the cut agent keeps exactly its cut target");
++  assert.equal(t.y!.target, 100, "the crowd-capped agent stays at its cap");
++  assert.ok(Math.abs(t.z!.target - 650) < 1e-9, "the 350 the cuts freed goes to z");
++  assert.ok(Math.abs(t.z!.redeployed! - 350) < 1e-9);
++  // The per-agent cap still binds; only what nobody can take stays in cash.
++  const capped = { ...policy, maxAgentShare: 0.5 };
++  const c = Object.fromEntries(redeploy(allocate(inputs, 900, capped), inputs, 900, capped).map((s) => [s.name, s.target]));
++  assert.ok(Math.abs(c.z! - 450) < 1e-9, "z stops at 50% of deployable");
++  assert.ok(Math.abs(c.x! + c.y! + c.z! - 700) < 1e-9, "200 stays in cash: every grower is at its ceiling");
++});
++
++test("redeploy: water-fills by score, pins agents at their ceilings, never lifts stopped or zero-score agents", () => {
++  const policy = { maxAgentShare: 0.6 };
++  const mk = (name: string, share: number, target: number) => ({ name, sharpe: 1, shrunkSharpe: 1, vol: 0.2, multiplicity: 1, share, target });
++  const D = 1000;
++  const scores = [mk("a", 0.5, 100), mk("b", 0.3, 300), mk("c", 0.2, 200), mk("dead", 0, 0), mk("flat", 0, 0)];
++  const inputs = [
++    { name: "a", unitReturns: [], stopped: false, ladderMultiplier: 1, crowdCap: 100 },
++    { name: "b", unitReturns: [], stopped: false, ladderMultiplier: 1 },
++    { name: "c", unitReturns: [], stopped: false, ladderMultiplier: 1 },
++    { name: "dead", unitReturns: [], stopped: true, ladderMultiplier: 1 },
++    { name: "flat", unitReturns: [], stopped: false, ladderMultiplier: 1 },
++  ];
++  const t = Object.fromEntries(redeploy(scores, inputs, D, policy).map((s) => [s.name, s.target]));
++  // a's 400 freed goes to b and c in proportion to their shares, 3 : 2.
++  assert.ok(Math.abs(t.b! - 540) < 1e-9 && Math.abs(t.c! - 360) < 1e-9, JSON.stringify(t));
++  assert.equal(t.a, 100);
++  assert.equal(t.dead, 0);
++  assert.equal(t.flat, 0);
++  // With a 50% cap, b is pinned at 500 and c takes the rest.
++  const p = Object.fromEntries(redeploy(scores, inputs, D, { maxAgentShare: 0.5 }).map((s) => [s.name, s.target]));
++  assert.ok(Math.abs(p.b! - 500) < 1e-9 && Math.abs(p.c! - 400) < 1e-9, JSON.stringify(p));
++});
++
++test("redeploy: across random books, no target falls, every cut stands, no ceiling is crossed, and cash is left only when nobody can grow", () => {
++  const u = mulberry32(42);
++  for (let trial = 0; trial < 500; trial++) {
++    const n = 1 + Math.floor(u() * 12);
++    const D = 1_000_000 * (0.1 + u());
++    const maxAgentShare = 0.1 + 0.9 * u();
++    const raw = Array.from({ length: n }, () => (u() < 0.3 ? 0 : u()));
++    const shares = capShares(raw, maxAgentShare);
++    const inputs = shares.map((_, i) => ({
++      name: `a${i}`,
++      unitReturns: [],
++      stopped: u() < 0.1,
++      ladderMultiplier: u() < 0.25 ? 0.5 : 1,
++      crowdCap: u() < 0.3 ? u() * 0.3 * D : undefined,
++    }));
++    const scores = shares.map((share, i) => {
++      const a = inputs[i]!;
++      let target = a.stopped ? 0 : share * D * a.ladderMultiplier;
++      if (a.crowdCap !== undefined) target = Math.min(target, a.crowdCap);
++      return { name: a.name, sharpe: 0, shrunkSharpe: 0, vol: 0, multiplicity: 1, share: a.stopped ? 0 : share, target };
++    });
++    const out = redeploy(scores, inputs, D, { maxAgentShare });
++    const eps = 1e-6 * D;
++    let growersFull = true;
++    out.forEach((s, i) => {
++      const before = scores[i]!;
++      const a = inputs[i]!;
++      assert.ok(s.target >= before.target - eps, "no target falls");
++      if (a.stopped || a.ladderMultiplier < 1 || before.share === 0) {
++        assert.equal(s.target, before.target, "stopped, cut and zero-score agents never grow");
++      }
++      const ceiling = Math.max(before.target, Math.min(maxAgentShare * D, a.crowdCap ?? Infinity));
++      assert.ok(s.target <= ceiling + eps, "no ceiling is crossed");
++      const grower = !a.stopped && a.ladderMultiplier === 1 && before.share > 0;
++      if (grower && s.target < ceiling - eps) growersFull = false;
++    });
++    const total = out.reduce((x, s) => x + s.target, 0);
++    assert.ok(total <= D + eps, "never more than deployable");
++    if (!growersFull) assert.ok(Math.abs(total - D) < eps, "cash is left only when every grower is at its ceiling");
++    // Idempotent: a second pass has nothing left to hand out.
++    const again = redeploy(out, inputs, D, { maxAgentShare });
++    again.forEach((s, i) => assert.ok(Math.abs(s.target - out[i]!.target) < eps));
++  }
++});
++
+ test("drawdown ladder: cut → restore → stop, and stop is final", () => {
+   const th = { ddCut: 0.1, ddRecover: 0.05, ddStop: 0.2 };
+   assert.equal(nextLadderState("active", [-0.12], th), "cut");
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index 4b1f5a7..5058aa3 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -22,6 +22,11 @@
+  *     member contributing to it is scaled down until it doesn't. The whole
+  *     book's net exposure to any one instrument is capped too (`bookMaxShare`).
+  *     No single agent ever breached a limit — that is the point.
++ *
++ * Cash is a policy, not an accident: the book keeps `deploy` × NAV at work
++ * (capped by the principal's mandate), and what a cut or crowding cap frees at
++ * a reallocation goes back to work, by score, with the agents that can still
++ * grow (`redeploy`). Every cut still stands; only the capital it freed moves.
+  */
+ 
+ import {
+@@ -38,7 +43,12 @@ export interface CenterBookPolicy {
+   kind: "center";
+   /** Gross leverage each agent trades at (notional = capital × leverage × weight). */
+   leverage: number;
+-  /** Fraction of deployable NAV handed to agents; the rest is held as cash. */
++  /**
++   * Fraction of NAV handed to agents; the rest is held as cash. The capital
++   * budget is `deploy × NAV`, never more than the principal's mandate (the
++   * root budget): a constant proportion of the fund, so profits are put to
++   * work as well as losses are taken out.
++   */
+   deploy: number;
+   /** Ticks between scheduled reallocations. */
+   rebalanceEvery: number;
+@@ -52,6 +62,14 @@ export interface CenterBookPolicy {
+   maxAgentShare: number;
+   /** Relative change below which a reallocation is skipped (avoids churn). */
+   rebalanceBand: number;
++  /**
++   * What happens to capital a cut or a crowding cap takes away at a scheduled
++   * reallocation. false: it waits in cash. true: it goes back to work, by
++   * score, with the agents that can still grow (see `redeploy`). The cut
++   * itself is unchanged either way: the cut agent or crowd keeps exactly its
++   * reduced target.
++   */
++  redeploy: boolean;
+   /** Drawdown (from the agent's own high-water mark) that triggers a cut. */
+   ddCut: number;
+   /** Capital multiplier while cut. */
+@@ -110,6 +128,7 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
+     shrinkageObs: 60,
+     maxAgentShare: 0.25,
+     rebalanceBand: 0.1,
++    redeploy: true,
+     ddCut: 0.1,
+     cutFactor: 0.5,
+     ddRecover: 0.05,
+@@ -156,12 +175,15 @@ export interface AgentScore {
+   share: number;
+   /** Final capital target. */
+   target: number;
++  /** Capital `redeploy` added on top of `allocate`'s target (0 or absent: none). */
++  redeployed?: number;
+ }
+ 
+ /**
+- * Compute capital targets for every agent. Capital freed by caps, cuts and
+- * crowding stays in cash rather than being pushed onto whoever is left —
+- * cutting risk should reduce risk, not relocate it.
++ * Compute capital targets for every agent. The cuts are applied here: a cut
++ * agent gets `ladderMultiplier` × its share, a crowd-capped one at most its
++ * cap. The capital they free is left undeployed; whether it then waits in
++ * cash or goes back to work is the book's cash policy (`redeploy`).
+  */
+ export function allocate(
+   agents: readonly AgentScoreInput[],
+@@ -243,6 +265,61 @@ export function capShares(raw: readonly number[], cap: number): number[] {
+   return shares;
+ }
+ 
++/**
++ * Put capital that cuts and crowding caps took away back to work, by score.
++ *
++ * A drawdown cut or a crowding cap is aimed at ONE agent or ONE crowded
++ * trade; holding what it frees in cash also shrinks every other position the
++ * fund holds, so the fund pays for fixing one concentration with its whole
++ * diversified book. Here the freed capital goes to the agents that can still
++ * grow, in proportion to their `allocate` shares (water-filling: an agent
++ * that reaches its ceiling is pinned there and the rest is shared among the
++ * others), until the targets add up to `deployable` or every grower is at
++ * its ceiling; only then does the remainder stay in cash.
++ *
++ *   - Cut agents (`ladderMultiplier` < 1), crowd-capped agents at their cap,
++ *     stopped agents and agents with no share never grow: every cut stands.
++ *   - No agent grows past `maxAgentShare` × `deployable` or its crowding cap.
++ *   - No target ever falls, and targets never sum above `deployable`
++ *     (up to float rounding).
++ */
++export function redeploy(
++  scores: readonly AgentScore[],
++  inputs: readonly AgentScoreInput[],
++  deployable: number,
++  policy: Pick<CenterBookPolicy, "maxAgentShare">,
++): AgentScore[] {
++  const input = new Map(inputs.map((a) => [a.name, a]));
++  const cur = scores.map((s) => s.target);
++  const ceiling = scores.map((s, i) => {
++    const a = input.get(s.name);
++    if (!a || a.stopped || s.share <= 0 || a.ladderMultiplier < 1) return cur[i]!;
++    return Math.max(cur[i]!, Math.min(policy.maxAgentShare * deployable, a.crowdCap ?? Infinity));
++  });
++  let room = deployable - cur.reduce((x, y) => x + y, 0);
++  const free = new Set<number>();
++  scores.forEach((s, i) => {
++    if (ceiling[i]! > cur[i]!) free.add(i);
++  });
++  // Each pass either hands out all the room or pins at least one agent.
++  while (room > 1e-9 * Math.max(1, deployable) && free.size > 0) {
++    let weight = 0;
++    for (const i of free) weight += scores[i]!.share;
++    const pinned = [...free].filter((i) => cur[i]! + (room * scores[i]!.share) / weight >= ceiling[i]!);
++    if (pinned.length === 0) {
++      for (const i of free) cur[i] = cur[i]! + (room * scores[i]!.share) / weight;
++      room = 0;
++      break;
++    }
++    for (const i of pinned) {
++      room -= ceiling[i]! - cur[i]!;
++      cur[i] = ceiling[i]!;
++      free.delete(i);
++    }
++  }
++  return scores.map((s, i) => ({ ...s, target: cur[i]!, redeployed: cur[i]! - s.target }));
++}
++
+ /* ------------------------------------------------------------------ */
+ /* 2. Drawdown ladder                                                 */
+ /* ------------------------------------------------------------------ */
+diff --git a/packages/swarm/src/book.test.ts b/packages/swarm/src/book.test.ts
+index 226afc2..3a4bc16 100644
+--- a/packages/swarm/src/book.test.ts
++++ b/packages/swarm/src/book.test.ts
+@@ -1,6 +1,6 @@
+ import { test } from "node:test";
+ import assert from "node:assert/strict";
+-import { defaultCenterBookPolicy, defaultNaivePolicy } from "./allocator";
++import { defaultCenterBookPolicy, defaultNaivePolicy, type AllocationPolicy } from "./allocator";
+ import { runBook, type SwarmSpec } from "./book";
+ import { generateMarket, genericMarketConfig } from "./market";
+ import { summarize } from "./evaluate";
+@@ -118,3 +118,84 @@ test("risk-scaled stops: the center book never revokes an agent sooner than its
+     naive.decisions.filter((d) => d.kind === "STOP_OUT").map((d) => [d.t, d.node]),
+   );
+ });
++
++// Thirteen agents in three pods: 1/13 of the fund does not round to whole units.
++function thirteen(seed: number): SwarmSpec {
++  const all = ["ETH", "BTC", "SOL", "GOLD", "UST10Y", "EURUSD", "MEME"];
++  const make = (i: number) =>
++    [new TrendStrategy(10 + 5 * (i % 4)), new MeanReversionStrategy(2 + (i % 3)), new HerdStrategy(15 + i), new NoiseStrategy(seed * 100 + i)][i % 4]!;
++  return {
++    principal: "alice",
++    fund: "fund.eth",
++    aum: 10_000_000,
++    pods: ["a", "b", "c"].map((label) => ({ label, instruments: all })),
++    agents: Array.from({ length: 13 }, (_, i) => ({ label: `pm${i}`, pod: ["a", "b", "c"][i % 3]!, instruments: all, strategy: make(i) })),
++  };
++}
++
++test("reservation: the allocator never asks the tree for authority the fund does not have — audited every tick, even fully deployed", async () => {
++  let fitted = 0;
++  for (let seed = 1; seed <= 8; seed++) {
++    const m = generateMarket(genericMarketConfig(seed));
++    const runs: [SwarmSpec, AllocationPolicy][] = [
++      [thirteen(seed), { ...defaultCenterBookPolicy(), deploy: 1 }],
++      [genericSwarm(), { ...defaultCenterBookPolicy(), deploy: 1 }],
++      [thirteen(seed), { ...defaultNaivePolicy(), deploy: 1 }],
++    ];
++    for (const [swarm, policy] of runs) {
++      const root = BigInt(swarm.aum) * 1_000_000n;
++      const book = await runBook(m, swarm, policy, {
++        onTick: (t, tree) => {
++          for (const n of tree.listNodes()) assert.ok(tree.available(n.name) >= 0n, `t=${t}: ${n.name} over-committed`);
++          assert.equal(tree.requireNode(swarm.fund).mandate.budget, root, "root authority never grows");
++          const agents = tree.listNodes().filter((n) => tree.ancestors(n.name).length === 2);
++          assert.equal(agents.length, swarm.agents.length);
++          assert.ok(agents.reduce((s, n) => s + n.mandate.budget, 0n) <= root);
++        },
++      });
++      assert.ok(!book.tree.events.some((e) => e.result === "ATTENUATION_REJECTED"), "no move is ever rejected");
++      for (const d of book.decisions.filter((x) => x.kind === "REALLOCATE" && x.detail.includes("fitted"))) {
++        fitted++;
++        // The log says what the agent really got: less than it was allocated, never more.
++        const match = /→ (\d+) USDC .*fitted to (\d+)/.exec(d.detail)!;
++        assert.ok(Number(match[2]) < Number(match[1]), d.detail);
++      }
++    }
++  }
++  assert.ok(fitted > 0, "the test reaches the case where the allocator's asks exceed what the fund can reserve");
++});
++
++test("constant proportion: every reallocation puts deploy × NAV to work, capped by the principal's mandate — profits included", async () => {
++  // Isolate the budget: no crowding caps, no per-agent cap, no band, no cut
++  // multiplier, and no stop-outs (with the 40% stop ceiling every agent in this
++  // fixture is stopped by t=190, and a book with no live agent deploys nothing).
++  const policy = { ...defaultCenterBookPolicy(), crowdMaxShare: 1e9, bookMaxShare: 1e9, maxAgentShare: 1, rebalanceBand: 0, cutFactor: 1, ddStop: 0.9, ddStopMax: 0.95 };
++  const book = await runBook(market, genericSwarm(), policy);
++  const aum = 10_000_000;
++  let reinvested = 0;
++  for (let t = policy.warmup; t < book.returns.length; t += policy.rebalanceEvery) {
++    const nav = book.nav[t - 1]!;
++    const deployed = book.agents.reduce((s, a) => s + a.capital[t]!, 0);
++    const budget = Math.min(policy.deploy * nav, aum);
++    assert.ok(Math.abs(deployed - budget) < 0.01, `t=${t}: deployed ${deployed.toFixed(2)} vs budget ${budget.toFixed(2)}`);
++    if (nav > aum && deployed > policy.deploy * aum + 1) reinvested++;
++  }
++  assert.ok(reinvested > 0, "while NAV is above AUM the book runs more than deploy × AUM (the old rule held it there)");
++});
++
++test("redeploy: at the first reallocation where it changes anything, it only adds — no agent holds less and the book holds more", async () => {
++  const on = await runBook(market, genericSwarm(), defaultCenterBookPolicy());
++  const off = await runBook(market, genericSwarm(), { ...defaultCenterBookPolicy(), redeploy: false });
++  const t = on.returns.findIndex((_, k) => on.agents.some((a, i) => Math.abs(a.capital[k]! - off.agents[i]!.capital[k]!) > 1e-6));
++  assert.ok(t >= 0, "redeploy changes the book");
++  const held = (b: typeof on) => b.agents.reduce((s, a) => s + a.capital[t]!, 0);
++  assert.ok(held(on) > held(off) + 1);
++  on.agents.forEach((a, i) => {
++    const more = a.capital[t]! - off.agents[i]!.capital[t]!;
++    assert.ok(more > -1e-6, `${a.label} holds less with redeploy`);
++    if (more > 1e-6) {
++      const d = on.decisions.find((x) => x.t === t && x.kind === "REALLOCATE" && x.node === a.name);
++      assert.match(d!.detail, /redeployed from cuts/);
++    }
++  });
++});
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index c1cc962..b684cf7 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -24,6 +24,7 @@ import { DelegationTree, formatAmount, parseAmount } from "@allowance/core";
+ import {
+   allocate,
+   ladderStep,
++  redeploy,
+   scanCrowding,
+   type AllocationPolicy,
+   type CenterBookPolicy,
+@@ -155,10 +156,39 @@ function describeViolation(v: GateViolation): string {
+   }
+ }
+ 
++/**
++ * Grow children of one parent toward their asked budgets, never past what the
++ * parent can reserve: when the asks add up to more than the parent's
++ * `available()`, each child gets the same fraction of its ask (rounded down,
++ * so the grows can never over-commit the parent).
++ */
++function growWithin(tree: DelegationTree, asks: ReadonlyMap<string, bigint>): void {
++  const byParent = new Map<string, [string, bigint][]>();
++  for (const [name, ask] of asks) {
++    const node = tree.requireNode(name);
++    if (node.parent === null || tree.isRevokedInChain(name) || ask <= node.mandate.budget) continue;
++    const list = byParent.get(node.parent);
++    if (list) list.push([name, ask]);
++    else byParent.set(node.parent, [[name, ask]]);
++  }
++  for (const [parent, list] of byParent) {
++    const growth = list.reduce((s, [n, ask]) => s + (ask - tree.requireNode(n).mandate.budget), 0n);
++    const room = tree.available(parent);
++    for (const [name, ask] of list) {
++      const old = tree.requireNode(name).mandate.budget;
++      const next = growth <= room ? ask : old + ((ask - old) * room) / growth;
++      if (next > old) tree.resize(name, next);
++    }
++  }
++}
++
+ /**
+  * Set every agent's budget to its target, keeping the tree valid at every step:
+  * shrink agents → shrink pods → grow pods → grow agents. Shrinks free parent
+- * budget before any grow draws on it, so attenuation never rejects a move.
++ * budget before any grow draws on it, and every grow is fitted to what its
++ * parent can still reserve (`growWithin`), so the allocator can never ask the
++ * tree for authority the fund does not have: attenuation never rejects a move,
++ * whatever the targets. An agent may therefore end BELOW its target, never above.
+  */
+ function applyTargets(
+   tree: DelegationTree,
+@@ -179,39 +209,50 @@ function applyTargets(
+   for (const [pod, total] of podTotals) {
+     if (live(pod) && total < budget(pod)) tree.resize(pod, total);
+   }
+-  for (const [pod, total] of podTotals) {
+-    if (live(pod) && total > budget(pod)) tree.resize(pod, total);
+-  }
+-  for (const [agent, target] of targets) {
+-    if (live(agent) && target > budget(agent)) tree.resize(agent, target);
+-  }
++  growWithin(tree, podTotals);
++  growWithin(tree, targets);
+ }
+ 
+ /* ------------------------------------------------------------------ */
+ /* Run                                                                */
+ /* ------------------------------------------------------------------ */
+ 
++export interface RunBookOptions {
++  /**
++   * Called at the end of every tick, after marking to market and the drawdown
++   * ladder, with the live tree (read it, don't write it) and the NAV. For
++   * auditors and tests that check invariants tick by tick.
++   */
++  onTick?: (t: number, tree: DelegationTree, nav: number) => void;
++}
++
+ export async function runBook(
+   market: Market,
+   spec: SwarmSpec,
+   policy: AllocationPolicy,
++  options: RunBookOptions = {},
+ ): Promise<BookResult> {
+   const T = market.ticks.length;
+   const expiry = tickToUnix(T + 30);
+   const tree = new DelegationTree();
++  const rootBudget = toUnits(spec.aum);
+   tree.fundRoot({
+     principal: spec.principal,
+     rootName: spec.fund,
+-    mandate: { budget: toUnits(spec.aum), allowedMerchants: [...market.instruments], expiry },
++    mandate: { budget: rootBudget, allowedMerchants: [...market.instruments], expiry },
+   });
+ 
+   // Start with equal allocations — the only defensible prior with no track record.
+   const perAgent = (spec.aum * policy.deploy) / spec.agents.length;
++  // Rounded to units, n equal slices can add up to a few units more than the
++  // root holds when deploy = 1; never hand out more than the root can reserve.
++  const evenSlice = rootBudget / BigInt(Math.max(1, spec.agents.length));
++  const perAgentUnits = toUnits(perAgent) < evenSlice ? toUnits(perAgent) : evenSlice;
+   const podOf = new Map<string, string>();
+   for (const pod of spec.pods) {
+     const n = spec.agents.filter((a) => a.pod === pod.label).length;
+     tree.delegate(spec.fund, pod.label, {
+-      budget: toUnits(perAgent) * BigInt(n),
++      budget: perAgentUnits * BigInt(n),
+       allowedMerchants: [...pod.instruments],
+       expiry,
+     });
+@@ -219,7 +260,7 @@ export async function runBook(
+   const agents: AgentResult[] = spec.agents.map((a) => {
+     const podName = `${a.pod}.${spec.fund}`;
+     const node = tree.delegate(podName, a.label, {
+-      budget: toUnits(perAgent),
++      budget: perAgentUnits,
+       allowedMerchants: [...a.instruments],
+       expiry,
+     });
+@@ -263,19 +304,19 @@ export async function runBook(
+ 
+     /* 1) Scheduled reallocation (center book only). ---------------- */
+     if (center && t >= center.warmup && (t - center.warmup) % center.rebalanceEvery === 0) {
+-      const deployable = center.deploy * Math.min(currentNav, spec.aum);
+-      const scores = allocate(
+-        agents.map((a) => ({
+-          name: a.name,
+-          unitReturns: a.unitReturns,
+-          stopped: a.ladder === "stopped",
+-          ladderMultiplier: a.ladder === "cut" ? center.cutFactor : 1,
+-          crowdCap: crowdCaps.get(a.name)?.cap,
+-        })),
+-        deployable,
+-        center,
+-      );
++      // A constant proportion of NAV, bounded by the principal's mandate.
++      const deployable = Math.min(center.deploy * currentNav, toUsdc(tree.requireNode(spec.fund).mandate.budget));
++      const inputs = agents.map((a) => ({
++        name: a.name,
++        unitReturns: a.unitReturns,
++        stopped: a.ladder === "stopped",
++        ladderMultiplier: a.ladder === "cut" ? center.cutFactor : 1,
++        crowdCap: crowdCaps.get(a.name)?.cap,
++      }));
++      const allocated = allocate(inputs, deployable, center);
++      const scores = center.redeploy ? redeploy(allocated, inputs, deployable, center) : allocated;
+       const targets = new Map<string, bigint>();
++      const moves: { s: (typeof scores)[number]; agent: AgentResult; current: number }[] = [];
+       for (const s of scores) {
+         const agent = agents.find((a) => a.name === s.name)!;
+         if (agent.ladder === "stopped") continue;
+@@ -283,6 +324,13 @@ export async function runBook(
+         const moved = current === 0 ? (s.target > 0 ? Infinity : 0) : Math.abs(s.target - current) / current;
+         if (moved < center.rebalanceBand) continue;
+         targets.set(s.name, toUnits(s.target));
++        moves.push({ s, agent, current });
++      }
++      applyTargets(tree, podOf, targets);
++      for (const { s, agent, current } of moves) {
++        const held = capitalOf(agent);
++        const fitted = held < s.target - 1 ? `; fitted to ${held.toFixed(0)}, all the fund could reserve` : "";
++        const extra = (s.redeployed ?? 0) >= 1 ? `, ${s.redeployed!.toFixed(0)} redeployed from cuts` : "";
+         decisions.push({
+           t,
+           kind: "REALLOCATE",
+@@ -290,10 +338,9 @@ export async function runBook(
+           detail:
+             `${current.toFixed(0)} → ${s.target.toFixed(0)} USDC ` +
+             `(sharpe ${s.sharpe.toFixed(2)}, shrunk ${s.shrunkSharpe.toFixed(2)}, ` +
+-            `same-bet ×${s.multiplicity.toFixed(2)})`,
++            `same-bet ×${s.multiplicity.toFixed(2)}${extra}${fitted})`,
+         });
+       }
+-      applyTargets(tree, podOf, targets);
+     }
+ 
+     /* 2) The swarm decides — every agent concurrently. -------------- */
+@@ -430,6 +477,7 @@ export async function runBook(
+       }
+       a.ladder = next;
+     }
++    options.onTick?.(t, tree, currentNav);
+   }
+ 
+   return { policy, tree, startNav: spec.aum, nav, returns: bookReturns, crowdExposure, agents, decisions };
