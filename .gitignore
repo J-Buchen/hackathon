@@ -49,3 +49,6 @@ apps/web/dist/
 
 # Luckin lab: raw vendor data is fetched locally, never committed
 data/lab/
+
+# Agent worktrees (workflow sandboxes) are never part of the repo
+.claude/worktrees/
