@@ -21,7 +21,7 @@ import { performance } from "./metrics";
 import { defaultSpace, evaluateHoldout, expandGrid, makeSplit, study } from "./research";
 import { alignPanel, mapEvents, parseEventsCsv, parseFredCsv, parsePriceCsv, DataError, type Bar, type Panel, type PanelEvent } from "./series";
 import { BUY_AND_HOLD, DEFAULT_PARAMS, runTiger, type TigerParams } from "./strategy";
-import { defaultScenarios, kellySize, sensitivityToPitchProbability, valueScenarios } from "./valuation";
+import { defaultScenarios, kellySize, scenarioKelly, sensitivityToPitchProbability, valueScenarios } from "./valuation";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const DATA = process.env.LAB_DATA ?? join(ROOT, "data/lab");
@@ -39,6 +39,36 @@ function arg(name: string): string | undefined {
   return i >= 0 ? process.argv[i + 1] : undefined;
 }
 
+/**
+ * Refuse to research on prices that were not cross-checked against a second
+ * source (see fetch.ts). Hand-supplied CSVs need LAB_ALLOW_UNVERIFIED=1.
+ */
+async function requireVerifiedPrices(symbols: string[]): Promise<void> {
+  if (process.env.LAB_ALLOW_UNVERIFIED === "1") {
+    console.log("  ⚠ LAB_ALLOW_UNVERIFIED=1: price cross-checks skipped");
+    return;
+  }
+  const path = join(DATA, "provenance.json");
+  if (!existsSync(path)) throw new DataError(`no provenance.json in ${DATA}: prices were not cross-checked. Run "npm run lab -- fetch", or set LAB_ALLOW_UNVERIFIED=1 to use your own CSVs.`);
+  const prov = JSON.parse(await readFile(path, "utf8")) as { crossChecks?: { symbol: string; agreement: number; coverage?: number; levelDrift?: number }[] };
+  for (const s of symbols) {
+    const c = prov.crossChecks?.find((x) => x.symbol === s);
+    if (!c) throw new DataError(`${s}: no second-source cross-check in provenance.json (set LAB_ALLOW_UNVERIFIED=1 to override)`);
+    if (c.agreement < 0.98 || (c.coverage ?? 1) < 0.95) {
+      throw new DataError(`${s}: sources agree on ${(c.agreement * 100).toFixed(1)}% of days, coverage ${((c.coverage ?? 1) * 100).toFixed(1)}% — below 98%/95%; inspect provenance.json`);
+    }
+  }
+}
+
+/** Largest daily moves inside [from, to] only — never peeks at the holdout. */
+function largestMoves(panel: Panel, from: number, to: number): string[] {
+  return panel.symbols.map((s) => {
+    let best = { t: from, r: 0 };
+    for (let t = from; t <= to; t++) if (Math.abs(panel.ret[s]![t]!) > Math.abs(best.r)) best = { t, r: panel.ret[s]![t]! };
+    return `  largest move ${s}: ${(best.r * 100).toFixed(1)}% on ${panel.dates[best.t]}`;
+  });
+}
+
 async function loadPanel(): Promise<{ panel: Panel; events: PanelEvent[]; hedges: string[] }> {
   if (!existsSync(join(DATA, "prices", `${PRIMARY}.csv`))) {
     throw new DataError(`no data in ${DATA}. Run "npm run lab -- fetch" (needs network access to Yahoo, Stooq, SEC and FRED), or place Yahoo-format CSVs in ${join(DATA, "prices")}.`);
@@ -52,9 +82,9 @@ async function loadPanel(): Promise<{ panel: Panel; events: PanelEvent[]; hedges
   }
   const rfPath = join(DATA, "rates", "DTB3.csv");
   const riskFree = existsSync(rfPath) ? parseFredCsv(await readFile(rfPath, "utf8")) : [];
+  await requireVerifiedPrices([...Object.keys(series)]);
   const { panel, report } = alignPanel(series, PRIMARY, { from: START, riskFree });
   console.log(`panel: ${panel.dates.length} days ${report.firstDate} → ${report.lastDate}, symbols ${panel.symbols.join(", ")}, ${report.dropped} misaligned days dropped`);
-  for (const [s, w] of Object.entries(report.maxAbsReturn)) console.log(`  largest move ${s}: ${(w.ret * 100).toFixed(1)}% on ${w.date}`);
   if (riskFree.length === 0) console.log("  ⚠ no risk-free series: Sharpe is on raw returns");
   const evPath = join(DATA, "events", `${PRIMARY}.csv`);
   const events = existsSync(evPath) ? mapEvents(parseEventsCsv(await readFile(evPath, "utf8")), panel.dates) : [];
@@ -62,8 +92,20 @@ async function loadPanel(): Promise<{ panel: Panel; events: PanelEvent[]; hedges
   return { panel, events, hedges: panel.symbols.filter((s) => s !== PRIMARY) };
 }
 
+/** The last NY trading date whose close is final (today only after ~16:15 ET). */
+function lastCompletedSession(now = new Date()): string {
+  const ny = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }).formatToParts(now);
+  const get = (t: string) => ny.find((p) => p.type === t)!.value;
+  const date = `${get("year")}-${get("month")}-${get("day")}`;
+  const minutes = Number(get("hour")) * 60 + Number(get("minute"));
+  if (minutes >= 16 * 60 + 15) return date;
+  const d = new Date(`${date}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
 async function cmdFetch() {
-  const to = arg("to") ?? new Date().toISOString().slice(0, 10);
+  const to = arg("to") ?? lastCompletedSession();
   console.log(`fetching ${PRIMARY} + ${[...HEDGES, ...EXTRA].join(", ")} from ${START} to ${to} into ${DATA}`);
   const prov = await downloadAll(DATA, { primary: PRIMARY, hedges: [...HEDGES, ...EXTRA], from: START, to });
   if (prov.errors.length) console.log(`\n${prov.errors.length} problem(s):\n  ${prov.errors.join("\n  ")}`);
@@ -74,8 +116,10 @@ async function cmdFetch() {
 async function cmdStudy() {
   const { panel, events, hedges } = await loadPanel();
   const split = makeSplit(panel, { holdoutDays: HOLDOUT_DAYS, warmupDays: WARMUP_DAYS });
-  console.log(`development ${panel.dates[split.dev.from]} → ${panel.dates[split.dev.to]}; holdout ${split.holdout ? `${panel.dates[split.holdout.from]} → ${panel.dates[split.holdout.to]} (SEALED)` : "none"}`);
-  const grid = expandGrid(DEFAULT_PARAMS, defaultSpace(hedges));
+  console.log(`development ${panel.dates[split.dev.from]} → ${panel.dates[split.dev.to]}; holdout ${split.holdout ? `SEALED (${HOLDOUT_DAYS} trading days)` : "none"}`);
+  for (const l of largestMoves(panel, split.dev.from, split.dev.to)) console.log(l);
+  const grid = expandGrid(DEFAULT_PARAMS, defaultSpace(hedges), { hasEvents: events.length > 0 });
+  if (events.length === 0) console.log("  no earnings calendar: catalyst-timing variants excluded from the search");
   console.log(`searching ${grid.length} variants…`);
   const s = study(panel, events, grid, split.dev, { minTrain: 504, testLen: 126 });
   await mkdir(OUT, { recursive: true });
@@ -118,7 +162,7 @@ async function cmdForward(paramsFile: string) {
     .map((e) => e.t + 252 - last)
     .filter((d) => d >= 1 && d <= 252);
   const recent = panel.ret[PRIMARY]!.slice(-252);
-  const vol = performance(recent).annVol;
+  const vol = performance(recent.map((r) => Math.log(1 + r))).annVol; // log-return vol for Kelly
   const rf = (panel.rf[last] ?? 0) * 252;
   const mcapUsdMm = Number(arg("mcap") ?? NaN);
   const usdCny = Number(arg("usdcny") ?? 7.1);
@@ -131,6 +175,7 @@ async function cmdForward(paramsFile: string) {
     out.valuation = v;
     out.sensitivity = sensitivityToPitchProbability(inputs);
     out.kelly = kellySize(v.expectedReturn, vol, rf);
+    out.scenarioKelly = scenarioKelly(v, rf);
   } else {
     console.log("  (pass --mcap <USD millions> to value the scenarios and size with Kelly)");
   }

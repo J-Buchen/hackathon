@@ -77,19 +77,58 @@ export function defaultScenarios(): Scenario[] {
 }
 
 export interface KellySizing {
+  /** 1-year SIMPLE expected return used. */
   expectedReturn: number;
+  /** Annualized volatility of daily LOG returns. */
   annualVol: number;
+  /** 1-year simple risk-free rate. */
   riskFree: number;
+  /** Continuous Kelly: (ln(1+E[R]) − ln(1+r_f)) / σ². */
   fullKelly: number;
   halfKelly: number;
   /** Half Kelly clipped to [0, cap]. */
   recommended: number;
 }
 
-export function kellySize(expectedReturn: number, annualVol: number, riskFree: number, cap = 1): KellySizing {
-  const fullKelly = annualVol > 0 ? (expectedReturn - riskFree) / (annualVol * annualVol) : 0;
+/**
+ * Continuous-time Kelly for a lognormal asset. The 1-year SIMPLE expected
+ * return E[R] implies an arithmetic drift α = ln(1 + E[R]) (for GBM,
+ * E[S_T/S_0] = e^{αT}); the risk-free leg likewise uses ln(1 + r_f).
+ */
+export function kellySize(expectedReturn: number, annualLogVol: number, riskFree: number, cap = 1): KellySizing {
+  const alpha = Math.log(1 + expectedReturn);
+  const r = Math.log(1 + riskFree);
+  const v = annualLogVol * annualLogVol;
+  const fullKelly = v > 0 ? (alpha - r) / v : 0;
   const halfKelly = fullKelly / 2;
-  return { expectedReturn, annualVol, riskFree, fullKelly, halfKelly, recommended: Math.max(0, Math.min(cap, halfKelly)) };
+  return { expectedReturn, annualVol: annualLogVol, riskFree, fullKelly, halfKelly, recommended: Math.max(0, Math.min(cap, halfKelly)) };
+}
+
+/**
+ * Discrete Kelly on the scenario tree itself: the fraction f in [0, cap] that
+ * maximizes Σ p·ln(1 + r_f + f·(R − r_f)). No lognormal assumption.
+ */
+export function scenarioKelly(v: Valuation, riskFree: number, cap = 1): { full: number; half: number; recommended: number } {
+  let best = 0;
+  let bestG = -Infinity;
+  for (let i = 0; i <= 1000; i++) {
+    const f = (cap * i) / 1000;
+    let g = 0;
+    let ok = true;
+    for (const s of v.scenarios) {
+      const w = 1 + riskFree + f * (s.return - riskFree);
+      if (w <= 0) {
+        ok = false;
+        break;
+      }
+      g += s.prob * Math.log(w);
+    }
+    if (ok && g > bestG) {
+      bestG = g;
+      best = f;
+    }
+  }
+  return { full: best, half: best / 2, recommended: best / 2 };
 }
 
 /** Expected return as the pitch-case probability moves (the rest keeps its proportions). */

@@ -30,8 +30,8 @@ test("alignment keeps only common days, and a dropped day folds into the next re
 });
 
 test("FRED rates carry forward and convert percent-annual to daily", () => {
-  const pts = parseFredCsv("DATE,DTB3\n2024-01-02,5.04\n2024-01-03,.\n2024-01-05,4.8\n");
-  assert.equal(pts.length, 2);
+  const pts = parseFredCsv("DATE,DTB3\n2024-01-02,5.04\n2024-01-03,.\n2024-01-04,\n2024-01-05,4.8\n");
+  assert.equal(pts.length, 2, "'.' and empty values are missing, not 0%");
   const rf = alignRiskFree(["2024-01-01", "2024-01-02", "2024-01-04", "2024-01-05"], pts);
   assert.deepEqual(rf, [0, 5.04 / 100 / 252, 5.04 / 100 / 252, 4.8 / 100 / 252]);
 });
@@ -41,4 +41,29 @@ test("events map to the reaction day: BMO same day, AMC next trading day", () =>
   const dates = ["2024-01-02", "2024-01-03", "2024-01-04", "2024-01-08"];
   const m = mapEvents(ev, dates);
   assert.deepEqual(m.map((e) => e.t), [1, 2, 3]);
+});
+
+test("REVIEW FIX: results headlines in their common forms are recognized", async () => {
+  const { matchResultsHeadline } = await import("./fetch");
+  const ok = [
+    ["Luckin Coffee Inc. Announces Second Quarter 2025 Financial Results", "second", "2025"],
+    ["Luckin Coffee Inc. Announces Fourth Quarter and Full Year 2024 Financial Results", "fourth", "2024"],
+    ["Luckin Coffee Inc. Reports Fourth Quarter and Full-Year 2023 Unaudited Financial Results", "fourth", "2023"],
+    ["Luckin Coffee Inc. Announces Q1 2026 Financial Results", "first", "2026"],
+    ["Luckin Coffee Inc. Announces Unaudited Financial Results for the Third Quarter of 2021", "third", "2021"],
+    ["Luckin Coffee Inc. Announces Second Quarter 2025 Financial Results &amp; Business Update", "second", "2025"],
+  ] as const;
+  for (const [h, q, y] of ok) assert.deepEqual(matchResultsHeadline(h), { quarter: q, year: y }, h);
+  assert.equal(matchResultsHeadline("Luckin Coffee Inc. Announces Change of Auditor"), null);
+});
+
+test("REVIEW FIX: cross-check reports coverage and catches a single-source level spike", async () => {
+  const { crossCheck } = await import("./fetch");
+  const days = Array.from({ length: 50 }, (_, i) => `2024-03-${String(i + 1).padStart(2, "0")}`);
+  const a = days.map((date, i) => ({ date, close: 100 + i, volume: null }));
+  const b = a.filter((_, i) => i !== 20).map((x) => ({ ...x }));
+  const spiked = a.map((x, i) => (i === 30 ? { ...x, close: x.close * 3 } : x));
+  const cc = crossCheck("X", spiked, b);
+  assert.ok(cc.coverage < 1 && cc.primaryOnly.includes(days[20]!));
+  assert.ok(cc.levelDrift > 1, "a 3x bad tick shows up as level drift");
 });

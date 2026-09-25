@@ -46,7 +46,7 @@ import {
 } from "@allowance/swarm";
 import { performance, TRADING_DAYS } from "./metrics";
 import type { Panel, PanelEvent } from "./series";
-import { BUY_AND_HOLD, runTiger, type TigerParams } from "./strategy";
+import { BUY_AND_HOLD, RECOMMENDED_TIGER, runTiger, type TigerParams } from "./strategy";
 
 export const ARENA_EVAL_FLOOR = 10_000;
 export const RISK_AVERSION = 3;
@@ -271,18 +271,6 @@ export function tigerPanel(world: World): { panel: Panel; events: PanelEvent[] }
     events,
   };
 }
-
-/** The overlay's recommended settings — the thing the tiger track improves. */
-export const RECOMMENDED_TIGER: TigerParams = {
-  ...BUY_AND_HOLD,
-  volTarget: 0.35,
-  volLookback: 40,
-  ddCut: 0.15,
-  ddStop: 0.3,
-  reentryDays: 20,
-  hedgeSymbol: "VIDX",
-  hedgeRatio: 0.5,
-};
 
 export interface TigerScore {
   seed: number;

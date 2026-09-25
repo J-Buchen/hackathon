@@ -73,11 +73,12 @@ export async function fetchYahoo(symbol: string, from: string, to: string): Prom
   if (!res?.timestamp) throw new Error(`Yahoo ${symbol}: no data (${JSON.stringify(j.chart.error)})`);
   const q = res.indicators.quote[0]!;
   const adj = res.indicators.adjclose?.[0]?.adjclose;
+  if (!adj) throw new Error(`Yahoo ${symbol}: response has no adjclose block — refusing to mix adjusted and raw closes`);
   const rows = ["Date,Close,Adj Close,Volume"];
   res.timestamp.forEach((ts, i) => {
     const c = q.close[i];
-    const a = adj?.[i] ?? c;
-    if (c == null || a == null) return;
+    const a = adj[i];
+    if (c == null || a == null) return; // never substitute a raw close for a missing adjusted one
     rows.push(`${nyDate(ts)},${c},${a},${q.volume[i] ?? ""}`);
   });
   return { csv: rows.join("\n") + "\n", url };
@@ -94,6 +95,12 @@ export async function fetchStooq(symbol: string): Promise<{ csv: string; url: st
 export interface CrossCheck {
   symbol: string;
   overlapDays: number;
+  /** Share of the primary source's days that the second source also has. */
+  coverage: number;
+  /** Primary-only dates (unverified by the second source), first 20. */
+  primaryOnly: string[];
+  /** Largest |log(price ratio) − median log ratio| over common dates: catches level spikes. */
+  levelDrift: number;
   /** Share of overlapping days whose daily returns agree within `tolerance`. */
   agreement: number;
   tolerance: number;
@@ -111,9 +118,16 @@ export function crossCheck(symbol: string, a: Bar[], b: Bar[], tolerance = 0.01)
     diffs.push({ date: common[i]!.date, primary: ra, secondary: rb, d: Math.abs(ra - rb) });
   }
   const ok = diffs.filter((x) => x.d <= tolerance).length;
+  const primaryOnly = a.filter((x) => !mb.has(x.date)).map((x) => x.date);
+  const logRatios = common.map((x) => Math.log(x.close / mb.get(x.date)!)).sort((p, q) => p - q);
+  const med = logRatios.length ? logRatios[Math.floor(logRatios.length / 2)]! : 0;
+  const levelDrift = logRatios.reduce((m, x) => Math.max(m, Math.abs(x - med)), 0);
   return {
     symbol,
     overlapDays: diffs.length,
+    coverage: a.length ? common.length / a.length : 0,
+    primaryOnly: primaryOnly.slice(0, 20),
+    levelDrift,
     agreement: diffs.length ? ok / diffs.length : 0,
     tolerance,
     worst: diffs
@@ -139,7 +153,9 @@ export async function fetchFred(series = "DTB3"): Promise<{ csv: string; url: st
 /* ------------------------------------------------------------------ */
 
 export interface EarningsFiling {
+  /** US-Eastern date of the EDGAR acceptance (not filingDate, which rolls late filings forward). */
   date: string;
+  filingDate: string;
   timing: "BMO" | "AMC";
   label: string;
   accession: string;
@@ -165,47 +181,91 @@ export function timingFromAcceptance(acceptance: string): "BMO" | "AMC" {
   return minutes >= 16 * 60 ? "AMC" : "BMO";
 }
 
-const RESULTS_HEADLINE = /announces\s+(?:unaudited\s+)?(first|second|third|fourth)\s+quarter(?:\s+and\s+(?:full|fiscal)\s+year)?\s+(\d{4})\s+financial\s+results/i;
+/**
+ * Results-release headlines: "Announces Second Quarter 2025 Financial Results",
+ * "Reports Fourth Quarter and Full-Year 2024 …", "… Results for the Third
+ * Quarter of 2023", "Q1 2026 …". Matched on the decoded headline text.
+ */
+const QUARTER_WORD: Record<string, string> = { first: "first", second: "second", third: "third", fourth: "fourth", q1: "first", q2: "second", q3: "third", q4: "fourth" };
+export function matchResultsHeadline(text: string): { quarter: string; year: string } | null {
+  const t = text.replace(/&amp;/g, "&").replace(/&#8217;|&rsquo;/g, "'").replace(/&nbsp;|&#160;/g, " ").replace(/\s+/g, " ");
+  const patterns = [
+    /(?:announces|reports)[^.]{0,80}?\b(first|second|third|fourth|q[1-4])\s+quarter[^.]{0,60}?\b((?:19|20)\d{2})\b[^.]{0,40}?results/i,
+    /(?:announces|reports)[^.]{0,80}?\b(q[1-4])\s+((?:19|20)\d{2})\b[^.]{0,40}?results/i,
+    /results\s+for\s+the\s+(first|second|third|fourth)\s+quarter\s+(?:of\s+|ended\s+[^.]{0,30}?)?((?:19|20)\d{2})/i,
+  ];
+  for (const re of patterns) {
+    const m = re.exec(t);
+    if (m) return { quarter: QUARTER_WORD[m[1]!.toLowerCase()]!, year: m[2]! };
+  }
+  return null;
+}
 
-export async function fetchEarningsFilings(
-  cik = LUCKIN_CIK,
-  log: (m: string) => void = () => {},
-): Promise<{ filings: EarningsFiling[]; scanned: number; url: string }> {
+async function fetchWithRetry(url: string, headers: Record<string, string>, tries = 4): Promise<Fetched> {
+  let last: Fetched = { url, status: 0, body: "" };
+  for (let i = 0; i < tries; i++) {
+    last = await fetchText(url, headers);
+    if (last.status === 200) return last;
+    await sleep(500 * 2 ** i); // back off on throttling / transient errors
+  }
+  return last;
+}
+
+export interface EarningsScan {
+  filings: EarningsFiling[];
+  scanned: number;
+  failed: { accession: string; url: string; status: number }[];
+  /** Fiscal quarters with no results release found (after the first one found). */
+  missingQuarters: string[];
+  url: string;
+}
+
+export async function fetchEarningsFilings(cik = LUCKIN_CIK, log: (m: string) => void = () => {}): Promise<EarningsScan> {
   const padded = cik.padStart(10, "0");
   const url = `https://data.sec.gov/submissions/CIK${padded}.json`;
-  const r = await fetchText(url, secHeaders());
+  const r = await fetchWithRetry(url, secHeaders());
   if (r.status !== 200) throw new Error(`SEC submissions: HTTP ${r.status} — set SEC_USER_AGENT to "Name email@domain" if 403`);
   const j = JSON.parse(r.body) as {
     filings: { recent: { form: string[]; filingDate: string[]; acceptanceDateTime: string[]; accessionNumber: string[]; primaryDocument: string[] } };
   };
   const rec = j.filings.recent;
   const out: EarningsFiling[] = [];
+  const failed: EarningsScan["failed"] = [];
   let scanned = 0;
   for (let i = 0; i < rec.form.length; i++) {
     if (rec.form[i] !== "6-K") continue;
     const acc = rec.accessionNumber[i]!;
     const base = `https://www.sec.gov/Archives/edgar/data/${cik}/${acc.replace(/-/g, "")}`;
-    const idx = await fetchText(`${base}/index.json`, secHeaders());
+    const idx = await fetchWithRetry(`${base}/index.json`, secHeaders());
     await sleep(150); // SEC fair-access: ≤ 10 requests/second
-    if (idx.status !== 200) continue;
+    if (idx.status !== 200) {
+      failed.push({ accession: acc, url: `${base}/index.json`, status: idx.status });
+      continue;
+    }
     const items = (JSON.parse(idx.body) as { directory: { item: { name: string }[] } }).directory.item.map((x) => x.name);
     const docs = items.filter((n) => /\.htm$/i.test(n) && !/index/i.test(n));
     scanned++;
     for (const doc of docs.sort((a, b) => Number(/ex.?99/i.test(b)) - Number(/ex.?99/i.test(a)))) {
-      const d = await fetchText(`${base}/${doc}`, secHeaders());
+      const d = await fetchWithRetry(`${base}/${doc}`, secHeaders());
       await sleep(150);
-      const text = d.body.replace(/<[^>]+>/g, " ").replace(/&nbsp;|&#160;/g, " ").replace(/\s+/g, " ");
-      const m = RESULTS_HEADLINE.exec(text.slice(0, 20000));
+      if (d.status !== 200) {
+        failed.push({ accession: acc, url: `${base}/${doc}`, status: d.status });
+        continue;
+      }
+      const text = d.body.replace(/<[^>]+>/g, " ");
+      const m = matchResultsHeadline(text.slice(0, 20000));
       if (m) {
+        const acceptance = rec.acceptanceDateTime[i]!;
         out.push({
-          date: rec.filingDate[i]!,
-          timing: timingFromAcceptance(rec.acceptanceDateTime[i]!),
-          label: `${m[1]!.toLowerCase()} quarter ${m[2]} results`,
+          date: acceptance.slice(0, 10),
+          filingDate: rec.filingDate[i]!,
+          timing: timingFromAcceptance(acceptance),
+          label: `${m.quarter} quarter ${m.year} results`,
           accession: acc,
-          acceptance: rec.acceptanceDateTime[i]!,
+          acceptance,
           url: `${base}/${doc}`,
         });
-        log(`  6-K ${rec.filingDate[i]} — ${m[0]}`);
+        log(`  6-K accepted ${acceptance} — ${m.quarter} quarter ${m.year} results${acceptance.slice(0, 10) !== rec.filingDate[i] ? ` (filingDate ${rec.filingDate[i]} differs)` : ""}`);
         break;
       }
     }
@@ -215,7 +275,20 @@ export async function fetchEarningsFilings(
   const filings = out
     .sort((a, b) => a.date.localeCompare(b.date))
     .filter((f) => (seen.has(f.label) ? false : (seen.add(f.label), true)));
-  return { filings, scanned, url };
+  // Completeness: every fiscal quarter between the first and last release found.
+  const order = ["first", "second", "third", "fourth"];
+  const key = (f: EarningsFiling) => {
+    const [q, , y] = f.label.split(" ");
+    return Number(y) * 4 + order.indexOf(q!);
+  };
+  const have = new Set(filings.map(key));
+  const missingQuarters: string[] = [];
+  if (filings.length) {
+    const lo = Math.min(...have);
+    const hi = Math.max(...have);
+    for (let k = lo; k <= hi; k++) if (!have.has(k)) missingQuarters.push(`${order[k % 4]} quarter ${Math.floor(k / 4)}`);
+  }
+  return { filings, scanned, failed, missingQuarters, url };
 }
 
 /* ------------------------------------------------------------------ */
@@ -233,7 +306,7 @@ export interface ProvenanceEntry {
 export interface Provenance {
   files: ProvenanceEntry[];
   crossChecks: CrossCheck[];
-  earnings: { scanned6K: number; found: number };
+  earnings: { scanned6K: number; found: number; failed: EarningsScan["failed"]; missingQuarters: string[] };
   errors: string[];
 }
 
@@ -245,7 +318,7 @@ export async function downloadAll(
   await mkdir(join(dir, "prices"), { recursive: true });
   await mkdir(join(dir, "events"), { recursive: true });
   await mkdir(join(dir, "rates"), { recursive: true });
-  const prov: Provenance = { files: [], crossChecks: [], earnings: { scanned6K: 0, found: 0 }, errors: [] };
+  const prov: Provenance = { files: [], crossChecks: [], earnings: { scanned6K: 0, found: 0, failed: [], missingQuarters: [] }, errors: [] };
   const record = async (file: string, source: string, text: string, rows: number) => {
     await writeFile(join(dir, file), text, "utf8");
     prov.files.push({ file, source, fetchedAt: new Date().toISOString(), rows, sha256: sha256(text) });
@@ -263,7 +336,10 @@ export async function downloadAll(
         await record(`prices/${sym}.stooq.csv`, s.url, s.csv, sb.length);
         const cc = crossCheck(sym, bars, sb);
         prov.crossChecks.push(cc);
-        log(`  ${sym}: Stooq agrees on ${(cc.agreement * 100).toFixed(1)}% of ${cc.overlapDays} days (±${cc.tolerance * 100}% daily return)`);
+        log(
+          `  ${sym}: Stooq agrees on ${(cc.agreement * 100).toFixed(1)}% of ${cc.overlapDays} days (±${cc.tolerance * 100}% daily return), ` +
+            `covers ${(cc.coverage * 100).toFixed(1)}% of Yahoo's days, max level drift ${(cc.levelDrift * 100).toFixed(2)}%`,
+        );
       } catch (e) {
         prov.errors.push(`cross-check ${sym}: ${e instanceof Error ? e.message : e}`);
         log(`  ${sym}: no second source — ${e instanceof Error ? e.message : e}`);
@@ -284,11 +360,14 @@ export async function downloadAll(
 
   try {
     log("  scanning Luckin's SEC 6-K filings for results releases…");
-    const { filings, scanned } = await fetchEarningsFilings(LUCKIN_CIK, log);
-    const csv = ["date,timing,label,accession,acceptance,url", ...filings.map((f) => `${f.date},${f.timing},${f.label},${f.accession},${f.acceptance},${f.url}`)].join("\n") + "\n";
+    const { filings, scanned, failed, missingQuarters } = await fetchEarningsFilings(LUCKIN_CIK, log);
+    const csv =
+      ["date,timing,label,accession,acceptance,filingDate,url", ...filings.map((f) => `${f.date},${f.timing},${f.label},${f.accession},${f.acceptance},${f.filingDate},${f.url}`)].join("\n") + "\n";
     await record(`events/${opts.primary}.csv`, `https://data.sec.gov/submissions/CIK${LUCKIN_CIK.padStart(10, "0")}.json`, csv, filings.length);
-    prov.earnings = { scanned6K: scanned, found: filings.length };
+    prov.earnings = { scanned6K: scanned, found: filings.length, failed, missingQuarters };
     log(`  ${filings.length} results releases found in ${scanned} 6-Ks`);
+    if (failed.length) prov.errors.push(`earnings: ${failed.length} SEC document(s) could not be fetched after retries`);
+    if (missingQuarters.length) prov.errors.push(`earnings: no results release found for ${missingQuarters.join(", ")}`);
   } catch (e) {
     prov.errors.push(`earnings: ${e instanceof Error ? e.message : e}`);
   }

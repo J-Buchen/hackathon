@@ -28,7 +28,7 @@ import {
   type PboResult,
 } from "./metrics";
 import type { Panel, PanelEvent } from "./series";
-import { BUY_AND_HOLD, runTiger, type RunRange, type StrategyRun, type TigerParams } from "./strategy";
+import { BUY_AND_HOLD, FRESH_BOOK, runTiger, type BookState, type RunRange, type StrategyRun, type TigerParams } from "./strategy";
 
 /* ------------------------------------------------------------------ */
 /* Grid                                                               */
@@ -67,7 +67,16 @@ export function paramKey(p: TigerParams): string {
   return JSON.stringify(Object.keys(c).sort().map((k) => [k, c[k as keyof TigerParams]]));
 }
 
-export function expandGrid(base: TigerParams, space: ParamSpace): TigerParams[] {
+export function expandGrid(base: TigerParams, space: ParamSpace, opts: { hasEvents?: boolean } = {}): TigerParams[] {
+  // Without an earnings calendar, catalyst settings cannot change anything;
+  // counting them as separate trials would inflate N (and deflate unfairly).
+  if (opts.hasEvents === false) {
+    space = { ...space };
+    delete space.preEventDays;
+    delete space.preEventMult;
+    delete space.postEventDays;
+    delete space.postEventMult;
+  }
   let acc: TigerParams[] = [{ ...base }];
   for (const [k, values] of Object.entries(space) as [keyof TigerParams, unknown[]][]) {
     if (!values || values.length === 0) continue;
@@ -205,25 +214,40 @@ export function walkForward(
 ): WalkForward {
   const o = { ...DEFAULT_OBJECTIVE, ...opts };
   const steps: WalkStep[] = [];
-  const concat = (runs: StrategyRun[]): StrategyRun => ({
-    dates: runs.flatMap((r) => r.dates),
-    ret: runs.flatMap((r) => r.ret),
-    rf: runs.flatMap((r) => r.rf),
-    wLong: runs.flatMap((r) => r.wLong),
-    wHedge: runs.flatMap((r) => r.wHedge),
-    events: runs.flatMap((r) => r.events),
-    exposure: 0,
-    turnover: 0,
-    costs: runs.reduce((a, r) => a + r.costs, 0),
-  });
+  const concat = (runs: StrategyRun[]): StrategyRun => {
+    const days = runs.reduce((a, r) => a + r.ret.length, 0);
+    const wLong = runs.flatMap((r) => r.wLong);
+    const traded = runs.reduce((a, r) => a + r.traded, 0);
+    return {
+      dates: runs.flatMap((r) => r.dates),
+      ret: runs.flatMap((r) => r.ret),
+      rf: runs.flatMap((r) => r.rf),
+      wLong,
+      wHedge: runs.flatMap((r) => r.wHedge),
+      events: runs.flatMap((r) => r.events),
+      exposure: wLong.reduce((a, b) => a + b, 0) / Math.max(1, days),
+      // Turnover from the trades actually charged, including the first entry.
+      turnover: (traded / Math.max(1, days)) * 252,
+      costs: runs.reduce((a, r) => a + r.costs, 0),
+      traded,
+      state: runs.at(-1)?.state ?? FRESH_BOOK,
+    };
+  };
   const oosRuns: StrategyRun[] = [];
   const benchRuns: StrategyRun[] = [];
+  // ONE continuous book across test windows: the ladder, a stop-out's
+  // cooldown and the open position carry over even when the chosen
+  // parameters change. Same for the benchmark (one entry cost, not one per window).
+  let state: BookState = FRESH_BOOK;
+  let benchState: BookState = FRESH_BOOK;
   for (let testFrom = dev.from + opts.minTrain; testFrom <= dev.to; testFrom += opts.testLen) {
     const train = { from: dev.from, to: testFrom - 1 };
     const test = { from: testFrom, to: Math.min(dev.to, testFrom + opts.testLen - 1) };
     const { best } = searchRange(panel, events, grid, train, o);
-    const run = runTiger(panel, events, best.params, test);
-    const bench = runTiger(panel, events, BUY_AND_HOLD, test);
+    const run = runTiger(panel, events, best.params, test, state);
+    const bench = runTiger(panel, events, BUY_AND_HOLD, test, benchState);
+    state = run.state;
+    benchState = bench.state;
     oosRuns.push(run);
     benchRuns.push(bench);
     steps.push({
@@ -236,17 +260,7 @@ export function walkForward(
     });
   }
   if (steps.length === 0) throw new Error("walk-forward: development period shorter than minTrain");
-  const oos = concat(oosRuns);
-  const bench = concat(benchRuns);
-  const finish = (r: StrategyRun) => {
-    r.exposure = r.wLong.reduce((a, b) => a + b, 0) / r.wLong.length;
-    let t = 0;
-    for (let i = 1; i < r.wLong.length; i++) t += Math.abs(r.wLong[i]! - r.wLong[i - 1]!);
-    r.turnover = (t / r.wLong.length) * 252;
-  };
-  finish(oos);
-  finish(bench);
-  return { steps, oos, bench };
+  return { steps, oos: concat(oosRuns), bench: concat(benchRuns) };
 }
 
 /* ------------------------------------------------------------------ */
@@ -329,6 +343,11 @@ export interface HoldoutResult {
   events: StrategyRun["events"];
 }
 
+/**
+ * The holdout is a NEW deployment: the book starts fresh (full size, new
+ * high-water mark) on the first holdout day. That is deliberate — it is the
+ * record you would get by switching the strategy on at that date.
+ */
 export function evaluateHoldout(
   panel: Panel,
   events: readonly PanelEvent[],

@@ -11,9 +11,10 @@
  *  - Drift is a choice, not an accident. Luckin went up ~20× from its OTC lows;
  *    resampling that history as-is bakes the hindsight into every path.
  *      "historical"  keep it (optimistic; shown for reference only)
- *      "zero"        de-mean every series: pure risk, no edge
- *      { annual }    de-mean, then give the primary this expected return
- *                    (e.g. the valuation scenarios' probability-weighted return)
+ *      "zero"        every series earns the risk-free rate on average: pure risk, no edge
+ *      { annual }    the primary compounds to this 1-year SIMPLE return on average
+ *                    (e.g. the valuation scenarios' probability-weighted return);
+ *                    hedges earn the risk-free rate
  *
  * The strategy runs on each synthetic path through the same `runTiger`, after
  * a warm-up of real history so indicators start primed.
@@ -80,27 +81,32 @@ export function forwardMonteCarlo(
   if (normalRows.length < 100) throw new Error("forward MC: not enough history");
 
   // Drift adjustment per symbol, applied to every sampled row.
+  //  - "zero": risky assets earn the RISK-FREE rate on average (no premium),
+  //    so stepping into cash is neither rewarded nor punished by construction.
+  //  - { annual }: the primary's daily mean is set so it COMPOUNDS to the
+  //    scenario tree's 1-year simple return over the non-event days (event
+  //    rows are de-meaned to rf); hedges earn rf.
+  const meanOf = (rows: number[], xs: readonly number[]) => (rows.length ? rows.reduce((a, t) => a + xs[t]!, 0) / rows.length : 0);
+  const rfNormal = meanOf(normalRows, panel.rf);
+  const rfEvent = meanOf(eventRows, panel.rf);
+  const eventDaysAhead = cfg.forwardEvents.filter((d) => d >= 1 && d <= cfg.horizon).length;
   const shift: Record<string, number> = {};
-  for (const s of syms) {
-    if (cfg.drift === "historical") {
-      shift[s] = 0;
-      continue;
-    }
-    const r = panel.ret[s]!;
-    const mean = normalRows.reduce((a, t) => a + r[t]!, 0) / normalRows.length;
-    const target = typeof cfg.drift === "object" && s === panel.primary ? cfg.drift.annual / TRADING_DAYS : 0;
-    shift[s] = target - mean;
-  }
-  // Earnings rows are de-meaned against their own mean in non-historical modes,
-  // keeping their spread (the catalyst risk) but not their average.
   const evShift: Record<string, number> = {};
   for (const s of syms) {
-    if (cfg.drift === "historical" || eventRows.length === 0) {
+    const r = panel.ret[s]!;
+    if (cfg.drift === "historical") {
+      shift[s] = 0;
       evShift[s] = 0;
       continue;
     }
-    const r = panel.ret[s]!;
-    evShift[s] = -eventRows.reduce((a, t) => a + r[t]!, 0) / eventRows.length;
+    let target = rfNormal;
+    if (typeof cfg.drift === "object" && s === panel.primary) {
+      const normalDays = Math.max(1, cfg.horizon - eventDaysAhead);
+      // Excess over rf is what the thesis adds; compound the total to the target.
+      target = (1 + cfg.drift.annual) ** (1 / normalDays) - 1;
+    }
+    shift[s] = target - meanOf(normalRows, r);
+    evShift[s] = eventRows.length ? rfEvent - meanOf(eventRows, r) : 0;
   }
 
   const W = Math.min(cfg.warmup, N - 1);

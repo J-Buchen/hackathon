@@ -52,12 +52,43 @@ test("NO LOOK-AHEAD: changing the future never changes a past decision", () => {
   }
 });
 
-test("buy-and-hold earns the asset's return, net of one entry cost", () => {
+test("buy-and-hold earns the asset's return, net of one entry cost (plus tiny drift rebalancing)", () => {
   const p = syntheticPanel({ days: 300, seed: 3 });
   const r = runTiger(p, [], BUY_AND_HOLD, { from: 1, to: 299 });
   assert.ok(Math.abs(r.ret[0]! - (p.ret.LK![1]! - 20 / 1e4)) < 1e-12);
-  for (let i = 1; i < r.ret.length; i++) assert.ok(Math.abs(r.ret[i]! - p.ret.LK![i + 1]!) < 1e-12);
+  // After the entry fee the weight drifts a hair above 1; holding 1 costs a few µ-bps.
+  for (let i = 1; i < r.ret.length; i++) assert.ok(Math.abs(r.ret[i]! - p.ret.LK![i + 1]!) < 1e-5);
   assert.equal(r.exposure, 1);
+});
+
+test("REVIEW FIX: short-hedge proceeds earn the risk-free rate (borrow is the fee over it)", () => {
+  const p = syntheticPanel({ days: 300, seed: 12, rfAnnual: 0.05 });
+  const params = { ...BUY_AND_HOLD, hedgeSymbol: "HG", hedgeRatio: 1, betaLookback: 60, costBps: 0, hedgeCostBps: 0, borrowRate: 0 };
+  const r = runTiger(p, [], params, { from: 100, to: 299 });
+  const i = 150 - 100;
+  const wL = r.wLong[i]!;
+  const wH = r.wHedge[i]!;
+  const rf = 0.05 / 252;
+  const expected = wL * p.ret.LK![150]! + wH * p.ret.HG![150]! + Math.max(0, 1 - wL) * rf + Math.abs(wH) * rf; // result i ↔ return day from + i
+  assert.ok(wH < 0);
+  assert.ok(Math.abs(r.ret[i]! - expected) < 1e-9);
+});
+
+test("REVIEW FIX: a fractional book pays for rebalancing its drifted weight", () => {
+  const p = syntheticPanel({ days: 300, seed: 13 });
+  const half = runTiger(p, [], { ...BUY_AND_HOLD, baseWeight: 0.5 }, { from: 1, to: 299 });
+  assert.ok(half.costs > (0.5 * 20) / 1e4 + 1e-6, "more than the single entry trade");
+  assert.ok(half.traded > 0.5);
+});
+
+test("REVIEW FIX: state threads between runs — two halves equal one run", () => {
+  const p = syntheticPanel({ days: 600, seed: 14 });
+  const params = { ...EVERYTHING };
+  const whole = runTiger(p, quarterlyEvents(600), params, { from: 100, to: 599 });
+  const first = runTiger(p, quarterlyEvents(600), params, { from: 100, to: 349 });
+  const second = runTiger(p, quarterlyEvents(600), params, { from: 350, to: 599 }, first.state);
+  assert.deepEqual([...first.wLong, ...second.wLong], whole.wLong);
+  assert.deepEqual([...first.ret, ...second.ret], whole.ret);
 });
 
 test("cash earns the risk-free rate", () => {

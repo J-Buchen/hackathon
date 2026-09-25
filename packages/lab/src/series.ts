@@ -151,6 +151,7 @@ export function parseFredCsv(text: string): RatePoint[] {
   for (const line of lines.slice(1)) {
     const [d, v] = splitCsvLine(line);
     const date = normalizeDate(d ?? "");
+    if (v == null || v.trim() === "" || v.trim() === ".") continue; // missing, not 0%
     const pct = Number(v);
     if (date && Number.isFinite(pct)) out.push({ date, pct });
   }

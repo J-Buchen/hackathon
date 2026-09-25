@@ -1,9 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { canonical, evaluateHoldout, expandGrid, makeSplit, paramKey, study, walkForward } from "./research";
-import { BUY_AND_HOLD, DEFAULT_PARAMS } from "./strategy";
+import { BUY_AND_HOLD, DEFAULT_PARAMS, runTiger, type TigerParams } from "./strategy";
 import { forwardMonteCarlo } from "./montecarlo";
-import { defaultScenarios, kellySize, valueScenarios } from "./valuation";
+import { defaultScenarios, kellySize, scenarioKelly, valueScenarios } from "./valuation";
 import { quarterlyEvents, syntheticPanel } from "./testkit";
 
 const SMALL = {
@@ -68,7 +68,49 @@ test("valuation: scenario math, loss probability and half-Kelly", () => {
   assert.ok(Math.abs(street.impliedCapUsdMm - (6046 * 15) / 7.1) < 1e-6);
   assert.ok(Math.abs(v.expectedReturn - v.scenarios.reduce((a, s) => a + s.prob * s.return, 0)) < 1e-12);
   assert.throws(() => valueScenarios({ marketCapUsdMm: 1, usdCny: 7, scenarios: [{ ...defaultScenarios()[0]!, prob: 0.5 }] }));
+  // Continuous Kelly from a 1-year SIMPLE return: (ln 1.3 − ln 1.04) / 0.36.
   const k = kellySize(0.3, 0.6, 0.04, 1);
-  assert.ok(Math.abs(k.fullKelly - 0.26 / 0.36) < 1e-12);
+  assert.ok(Math.abs(k.fullKelly - (Math.log(1.3) - Math.log(1.04)) / 0.36) < 1e-12);
   assert.equal(k.recommended, k.halfKelly);
+  // Discrete scenario-tree Kelly: a sure +10% vs rf 4% → go to the cap; a coin flip ±50% at rf → 0.
+  const sure = scenarioKelly({ scenarios: [{ name: "x", prob: 1, netProfitRmbMm: 0, multiple: 0, note: "", impliedCapUsdMm: 0, return: 0.1 }], expectedReturn: 0.1, downside: 0, probLoss: 0 }, 0.04, 1);
+  assert.equal(sure.full, 1);
+  const flip = scenarioKelly({ scenarios: [
+    { name: "u", prob: 0.5, netProfitRmbMm: 0, multiple: 0, note: "", impliedCapUsdMm: 0, return: 0.5 },
+    { name: "d", prob: 0.5, netProfitRmbMm: 0, multiple: 0, note: "", impliedCapUsdMm: 0, return: -0.5 },
+  ], expectedReturn: 0, downside: -0.25, probLoss: 0.5 }, 0, 1);
+  assert.equal(flip.full, 0);
+});
+
+test("REVIEW FIX: walk-forward is one continuous book — a stop-out is not undone at a window boundary", () => {
+  // Crash just before the day-526 boundary; the book must stay flat until it re-underwrites.
+  const shocks: Record<number, number> = {};
+  for (let t = 518; t <= 522; t++) shocks[t] = -0.07;
+  for (let t = 526; t <= 545; t++) shocks[t] = -0.02;
+  const p = syntheticPanel({ days: 1000, seed: 3, drift: 0.001, vol: 0.02, shocks });
+  const params: TigerParams = { ...BUY_AND_HOLD, ddStop: 0.2, reentryDays: 40, trendLookback: 50, trendFloor: 1 };
+  const wf = walkForward(p, [], [params], { from: 100, to: 999 }, { minTrain: 300, testLen: 126 });
+  const continuous = runTiger(p, [], params, { from: 400, to: 999 });
+  assert.deepEqual(wf.oos.wLong, continuous.wLong, "stitched weights equal one continuous run");
+  assert.deepEqual(wf.oos.ret, continuous.ret);
+  assert.equal(wf.oos.events.filter((e) => e.kind === "STOP_OUT").length, continuous.events.filter((e) => e.kind === "STOP_OUT").length);
+  // Benchmark pays ONE entry cost, not one per window, and turnover counts it.
+  const benchCont = runTiger(p, [], BUY_AND_HOLD, { from: 400, to: 999 });
+  assert.ok(Math.abs(wf.bench.costs - benchCont.costs) < 1e-12);
+  assert.ok(wf.bench.turnover > 0);
+});
+
+test("REVIEW FIX: no earnings calendar → catalyst variants are not counted as trials", () => {
+  const withEvents = expandGrid(DEFAULT_PARAMS, SMALL, { hasEvents: true });
+  const without = expandGrid(DEFAULT_PARAMS, SMALL, { hasEvents: false });
+  assert.equal(without.length * 3, withEvents.length);
+});
+
+test("REVIEW FIX: forward MC 'zero' drift earns rf; thesis drift compounds to the 1-year simple target", () => {
+  const p = syntheticPanel({ days: 900, seed: 24, drift: 0.003, rfAnnual: 0.05 });
+  const cfg = { horizon: 252, paths: 600, meanBlock: 10, forwardEvents: [], seed: 2, warmup: 200 };
+  const zero = forwardMonteCarlo(p, [], { bh: BUY_AND_HOLD }, { ...cfg, drift: "zero" }).bh!;
+  const thesis = forwardMonteCarlo(p, [], { bh: BUY_AND_HOLD }, { ...cfg, drift: { annual: 0.3 } }).bh!;
+  assert.ok(Math.abs(zero.totalReturn.mean - 0.05) < 0.05, `zero-drift mean ${zero.totalReturn.mean} ≈ rf`);
+  assert.ok(Math.abs(thesis.totalReturn.mean - 0.3) < 0.08, `thesis mean ${thesis.totalReturn.mean} ≈ 0.30, not e^0.3−1`);
 });

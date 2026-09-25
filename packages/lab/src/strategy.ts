@@ -90,6 +90,22 @@ export const DEFAULT_PARAMS: TigerParams = {
 /** Buy-and-hold with the same cost model: the benchmark every variant must beat. */
 export const BUY_AND_HOLD: TigerParams = { ...DEFAULT_PARAMS };
 
+/**
+ * The overlay's recommended settings — what the arena's tiger track scores and
+ * the improvement loops tune. `hedgeSymbol` is a placeholder: callers point it
+ * at their own hedge instrument (the arena uses its virtual index "VIDX").
+ */
+export const RECOMMENDED_TIGER: TigerParams = {
+  ...BUY_AND_HOLD,
+  volTarget: 0.35,
+  volLookback: 40,
+  ddCut: 0.15,
+  ddStop: 0.3,
+  reentryDays: 20,
+  hedgeSymbol: "VIDX",
+  hedgeRatio: 0.5,
+};
+
 export type BookEventKind = "STOP_OUT" | "REUNDERWRITE" | "CUT" | "UNCUT";
 
 export interface BookEvent {
@@ -98,6 +114,25 @@ export interface BookEvent {
   kind: BookEventKind;
   detail: string;
 }
+
+/**
+ * The book's running state. Pass the final state of one run as the initial
+ * state of the next to trade one CONTINUOUS book across windows (the ladder,
+ * a stop-out's cooldown and the current position all carry over).
+ */
+export interface BookState {
+  nav: number;
+  hwm: number;
+  stopped: boolean;
+  /** Close index of the last stop-out (−1 if none). */
+  stopT: number;
+  cut: boolean;
+  /** Weights held after the last day's price move (pre-trade). */
+  prevL: number;
+  prevH: number;
+}
+
+export const FRESH_BOOK: BookState = { nav: 1, hwm: 1, stopped: false, stopT: -1, cut: false, prevL: 0, prevH: 0 };
 
 export interface StrategyRun {
   /** Return-day dates: dates[from..to]. */
@@ -116,6 +151,10 @@ export interface StrategyRun {
   turnover: number;
   /** Total costs paid (sum of daily cost drag). */
   costs: number;
+  /** Sum of |Δ long weight| actually traded (incl. the first entry). */
+  traded: number;
+  /** State at the end of the run — feed it to the next window to continue the book. */
+  state: BookState;
 }
 
 export interface RunRange {
@@ -223,6 +262,7 @@ export function runTiger(
   events: readonly PanelEvent[],
   p: TigerParams,
   range: RunRange,
+  initial: BookState = FRESH_BOOK,
 ): StrategyRun {
   const { from, to } = range;
   if (from < 1 || to >= panel.dates.length || from > to) {
@@ -243,14 +283,20 @@ export function runTiger(
   const until = cached(panel, `${evKey}:next`, () => eventDistances(n, events, p.announceLead).untilNext);
   const since = cached(panel, `${evKey}:last`, () => eventDistances(n, events, p.announceLead).sinceLast);
 
-  const out: StrategyRun = { dates: [], ret: [], rf: [], wLong: [], wHedge: [], events: [], exposure: 0, turnover: 0, costs: 0 };
-  let nav = 1;
-  let hwm = 1;
-  let stopped = false;
-  let stopT = -1;
-  let cut = false;
-  let prevL = 0;
-  let prevH = 0;
+  const out: StrategyRun = {
+    dates: [],
+    ret: [],
+    rf: [],
+    wLong: [],
+    wHedge: [],
+    events: [],
+    exposure: 0,
+    turnover: 0,
+    costs: 0,
+    traded: 0,
+    state: initial,
+  };
+  let { nav, hwm, stopped, stopT, cut, prevL, prevH } = initial;
   let turnover = 0;
 
   // Decide at close of t = from-1 … to-1; earn on t+1.
@@ -326,8 +372,10 @@ export function runTiger(
       (tradeL * p.costBps + tradeH * p.hedgeCostBps) / 1e4 +
       (Math.abs(wH) * p.borrowRate) / 252 +
       (Math.max(0, wL - 1) * p.financingRate) / 252;
-    // Uninvested capital earns the risk-free rate; the Sharpe is on excess returns.
-    const cash = Math.max(0, 1 - wL) * (panel.rf[d] ?? 0);
+    // Uninvested capital earns the risk-free rate, and so do the proceeds of
+    // the short hedge (borrowRate is the fee charged over that rebate).
+    const rfd = panel.rf[d] ?? 0;
+    const cash = Math.max(0, 1 - wL) * rfd + Math.abs(wH) * rfd;
     const r = wL * rL[d]! + (rH ? wH * rH[d]! : 0) + cash - cost;
     nav *= 1 + r;
     if (nav > hwm) hwm = nav;
@@ -338,12 +386,17 @@ export function runTiger(
     out.rf.push(panel.rf[d] ?? 0);
     out.wLong.push(wL);
     out.wHedge.push(wH);
-    prevL = wL;
-    prevH = wH;
+    // Weights drift with prices: tomorrow's trade is measured from here, so
+    // holding a constant target weight pays its real rebalancing cost.
+    const g = 1 + r;
+    prevL = g > 0 ? (wL * (1 + rL[d]!)) / g : 0;
+    prevH = g > 0 && rH ? (wH * (1 + rH[d]!)) / g : 0;
   }
 
   const days = out.ret.length;
   out.exposure = out.wLong.reduce((a, b) => a + b, 0) / days;
   out.turnover = (turnover / days) * 252;
+  out.traded = turnover;
+  out.state = { nav, hwm, stopped, stopT, cut, prevL, prevH };
   return out;
 }

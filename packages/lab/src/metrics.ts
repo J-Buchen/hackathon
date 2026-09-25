@@ -148,9 +148,11 @@ export function performance(ret: readonly number[], rf?: readonly number[]): Per
     mdd = Math.max(mdd, 1 - nav / peak);
     const x = ex[i]!;
     if (x < 0) downSq += x * x;
-    if (r !== 0) {
+    // Hit rate on EXCESS returns: a day in cash earns exactly rf, so it is
+    // neither a win nor a loss.
+    if (x !== 0) {
       active++;
-      if (r > 0) up++;
+      if (x > 0) up++;
     }
   }
   const years = ret.length / TRADING_DAYS;
@@ -342,14 +344,41 @@ export function stationaryBootstrapIndices(len: number, n: number, meanBlock: nu
 export interface DiffCI {
   /** Annualized Sharpe(strategy) − Sharpe(benchmark) on the actual sample. */
   diff: number;
+  /** Studentized (bootstrap-t) interval for the annualized difference. */
   lo: number;
   hi: number;
-  /** Bootstrap probability the difference is > 0. */
+  /** 1 − the one-sided bootstrap-t p-value for "difference ≤ 0". */
   pPositive: number;
+  /** Jobson–Korkie/Memmel standard error of the annualized difference. */
+  se: number;
   samples: number;
 }
 
-/** Paired stationary-bootstrap confidence interval for a Sharpe difference. */
+/**
+ * Jobson–Korkie variance of a per-period Sharpe difference with Memmel's (2003)
+ * correction: Var = [2 − 2ρ + ½(SRa² + SRb² − 2·SRa·SRb·ρ²)] / T.
+ */
+export function sharpeDiffSE(a: readonly number[], b: readonly number[]): { diff: number; se: number } {
+  const n = Math.min(a.length, b.length);
+  const ma = moments(a.slice(0, n));
+  const mb = moments(b.slice(0, n));
+  const sa = ma.sd === 0 ? 0 : ma.mean / ma.sd;
+  const sb = mb.sd === 0 ? 0 : mb.mean / mb.sd;
+  let cov = 0;
+  for (let i = 0; i < n; i++) cov += (a[i]! - ma.mean) * (b[i]! - mb.mean);
+  cov /= n - 1;
+  const rho = ma.sd === 0 || mb.sd === 0 ? 0 : cov / (ma.sd * mb.sd);
+  const v = (2 - 2 * rho + 0.5 * (sa * sa + sb * sb - 2 * sa * sb * rho * rho)) / n;
+  return { diff: sa - sb, se: Math.sqrt(Math.max(v, 1e-18)) };
+}
+
+/**
+ * Paired confidence interval for a Sharpe difference: stationary block
+ * bootstrap of the paired days, STUDENTIZED with the Memmel standard error
+ * (bootstrap-t, in the spirit of Ledoit & Wolf 2008). The plain percentile
+ * interval under-covers at holdout-sized samples; this one does not rely on
+ * the bootstrap distribution being centred.
+ */
 export function sharpeDifferenceCI(
   strat: readonly number[],
   bench: readonly number[],
@@ -359,9 +388,8 @@ export function sharpeDifferenceCI(
   const samples = opts.samples ?? 2000;
   const rand = mulberry32(opts.seed ?? 12345);
   const ann = Math.sqrt(TRADING_DAYS);
-  const sr = (r: readonly number[]) => periodSharpe(r) * ann;
-  const diff = sr(strat.slice(0, n)) - sr(bench.slice(0, n));
-  const ds: number[] = [];
+  const hat = sharpeDiffSE(strat.slice(0, n), bench.slice(0, n));
+  const ts: number[] = [];
   const a = new Array<number>(n);
   const b = new Array<number>(n);
   for (let s = 0; s < samples; s++) {
@@ -370,16 +398,21 @@ export function sharpeDifferenceCI(
       a[k] = strat[idx[k]!]!;
       b[k] = bench[idx[k]!]!;
     }
-    ds.push(sr(a) - sr(b));
+    const star = sharpeDiffSE(a, b);
+    ts.push((star.diff - hat.diff) / star.se);
   }
-  ds.sort((x, y) => x - y);
+  ts.sort((x, y) => x - y);
   const level = opts.level ?? 0.9;
-  const q = (p: number) => ds[Math.min(ds.length - 1, Math.max(0, Math.floor(p * ds.length)))]!;
+  const q = (p: number) => ts[Math.min(ts.length - 1, Math.max(0, Math.floor(p * ts.length)))]!;
+  const tObs = hat.diff / hat.se;
+  // One-sided p-value for H0: diff ≤ 0 is P(T* ≥ tObs) under the bootstrap law of T.
+  const pValue = ts.filter((t) => t >= tObs).length / ts.length;
   return {
-    diff,
-    lo: q((1 - level) / 2),
-    hi: q(1 - (1 - level) / 2),
-    pPositive: ds.filter((d) => d > 0).length / ds.length,
+    diff: hat.diff * ann,
+    lo: (hat.diff - q(1 - (1 - level) / 2) * hat.se) * ann,
+    hi: (hat.diff - q((1 - level) / 2) * hat.se) * ann,
+    pPositive: 1 - pValue,
+    se: hat.se * ann,
     samples,
   };
 }

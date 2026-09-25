@@ -68,3 +68,21 @@ test("paired bootstrap CI brackets the Sharpe difference and sees a real improve
   assert.ok(ci.lo <= ci.diff && ci.diff <= ci.hi);
   assert.ok(ci.pPositive > 0.9);
 });
+
+test("REVIEW FIX: days in cash are not counted as winning days", () => {
+  const rf = Array(10).fill(0.0002);
+  const ret = [0.0002, 0.0002, 0.0002, 0.01, -0.01, 0.0002, 0.0002, 0.0002, 0.0002, 0.0002];
+  assert.equal(performance(ret, rf).hitRate, 0.5);
+});
+
+test("REVIEW FIX: studentized CI covers a zero true difference about as often as it claims", () => {
+  let covered = 0;
+  const trials = 60;
+  for (let k = 0; k < trials; k++) {
+    const a = noise(500 + k, 252, 0.0004, 0.02);
+    const b = noise(900 + k, 252, 0.0004, 0.02);
+    const ci = sharpeDifferenceCI(a, b, { samples: 300, seed: k });
+    if (ci.lo <= 0 && 0 <= ci.hi) covered++;
+  }
+  assert.ok(covered / trials >= 0.8, `coverage ${covered}/${trials} for a nominal 90% interval`);
+});
