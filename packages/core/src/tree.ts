@@ -12,6 +12,7 @@ import {
   AttenuationError,
   checkAttenuation,
   type AttenuationDecision,
+  type AttenuationRejectionReason,
 } from "./attenuation";
 import type {
   AgentNode,
@@ -340,6 +341,71 @@ export class DelegationTree {
       detail: `mandate for "${name}" revoked; all descendants disabled`,
       result: "REVOKED",
       amount: null,
+      merchant: null,
+    });
+    return node;
+  }
+
+  /**
+   * Change a live node's budget in place — the allocator's lever.
+   *
+   * Shrinking is always attenuation-safe as long as the new budget still covers
+   * what the node has already committed (its own spend plus the budgets it has
+   * handed to its children); cutting below that would leave children holding
+   * authority their parent no longer has, so it is rejected (BELOW_COMMITTED).
+   * Growing takes the extra slice from the parent's *available* budget, exactly
+   * like a fresh delegation (BUDGET_EXCEEDS_AVAILABLE otherwise). The root has
+   * no parent to draw from, so it can only shrink. A revoked node (or one under
+   * a revoked ancestor) cannot be resized — revocation is final.
+   *
+   * Success records RESIZE / OK. Failure records RESIZE / ATTENUATION_REJECTED
+   * and throws `AttenuationError`, mirroring `delegate`.
+   */
+  resize(name: string, newBudget: bigint): AgentNode {
+    const node = this.requireNode(name);
+    const oldBudget = node.mandate.budget;
+    const reject = (reason: AttenuationRejectionReason, message: string): never => {
+      this.recordEvent({
+        type: "RESIZE",
+        node: name,
+        detail: `resize rejected (${reason}): ${message}`,
+        result: "ATTENUATION_REJECTED",
+        amount: newBudget,
+        merchant: null,
+      });
+      throw new AttenuationError(reason, message);
+    };
+
+    if (newBudget < 0n) reject("NEGATIVE_BUDGET", `budget must be >= 0, got ${newBudget}`);
+    if (this.isRevokedInChain(name)) {
+      reject("PARENT_REVOKED", `"${name}" or an ancestor is revoked; resize refused`);
+    }
+    const committed = node.mandate.spentDirect + this.reserved(name);
+    if (newBudget < committed) {
+      reject("BELOW_COMMITTED", `budget ${newBudget} is below committed ${committed} (spent + delegated)`);
+    }
+    if (newBudget > oldBudget) {
+      const growth = newBudget - oldBudget;
+      if (node.parent === null) {
+        reject("BUDGET_EXCEEDS_AVAILABLE", `root "${name}" has no parent to draw ${growth} from`);
+      } else {
+        const parentAvailable = this.available(node.parent);
+        if (growth > parentAvailable) {
+          reject(
+            "BUDGET_EXCEEDS_AVAILABLE",
+            `growth ${growth} exceeds parent "${node.parent}" available ${parentAvailable}`,
+          );
+        }
+      }
+    }
+
+    node.mandate.budget = newBudget;
+    this.recordEvent({
+      type: "RESIZE",
+      node: name,
+      detail: `budget of "${name}" resized ${oldBudget} -> ${newBudget}`,
+      result: "OK",
+      amount: newBudget,
       merchant: null,
     });
     return node;

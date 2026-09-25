@@ -4,6 +4,7 @@
   "references": [
     { "path": "packages/core" },
     { "path": "packages/adapters" },
+    { "path": "packages/swarm" },
     { "path": "services/orchestrator" }
   ]
 }

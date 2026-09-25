@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Allowance — an attenuating-delegation protocol for autonomous AI-agent payments. Give your AI agents an allowance, not your wallet.",
+  "description": "Allowance \u2014 an attenuating-delegation protocol for autonomous AI-agent payments. Give your AI agents an allowance, not your wallet.",
   "workspaces": [
     "packages/*",
     "services/*",
@@ -14,10 +14,12 @@
     "demo": "tsx services/orchestrator/src/demo.ts",
     "snapshot": "npm run demo",
     "typecheck": "tsc -b tsconfig.json",
-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts services/orchestrator/src/flow.test.ts",
+    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts services/orchestrator/src/flow.test.ts",
     "test:core": "npm -w @allowance/core run test",
     "dev:web": "npm -w allowance-web run dev",
-    "build:web": "npm -w allowance-web run build"
+    "build:web": "npm -w allowance-web run build",
+    "demo:swarm": "tsx services/orchestrator/src/swarm-demo.ts",
+    "test:swarm": "npm -w @allowance/swarm run test"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

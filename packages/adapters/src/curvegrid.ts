@@ -92,7 +92,7 @@ export interface DashboardViewModel {
 export interface ChainActivityEntry {
   seq: number;
   /** Contract event name the on-chain settlement/hook would have emitted. */
-  event: "Funded" | "Delegated" | "Settled" | "Blocked" | "Revoked";
+  event: "Funded" | "Delegated" | "Settled" | "Blocked" | "Revoked" | "Resized";
   node: string;
   merchant: string | null;
   amount: string | null;
@@ -221,6 +221,7 @@ export class MultiBaasDashboard {
       DELEGATE: "Delegated",
       PAYMENT: "Settled",
       REVOKE: "Revoked",
+      RESIZE: "Resized",
     };
     const baseBlock = 8_000_000;
     return snapshot.events.map((e, i) => {

@@ -112,7 +112,7 @@ export interface PaymentRecord {
 /* Event log                                                          */
 /* ------------------------------------------------------------------ */
 
-export type EventType = "FUND" | "DELEGATE" | "PAYMENT" | "REVOKE";
+export type EventType = "FUND" | "DELEGATE" | "PAYMENT" | "REVOKE" | "RESIZE";
 
 /** Result codes as they appear in the snapshot event log. */
 export type EventResult =

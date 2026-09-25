@@ -11,7 +11,7 @@
 
 export type IdentityStatus = "verified" | "expired" | "none";
 
-export type EventType = "FUND" | "DELEGATE" | "PAYMENT" | "REVOKE";
+export type EventType = "FUND" | "DELEGATE" | "PAYMENT" | "REVOKE" | "RESIZE";
 
 export type EventResult =
   | "OK"
