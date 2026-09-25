@@ -12,6 +12,7 @@ import Lenis from "lenis";
 import type { Snapshot } from "./types";
 import { parseSnapshot } from "./snapshot";
 import { DashboardSkeleton } from "./components/DashboardSkeleton";
+import { parseSwarmSnapshot, type SwarmSnapshot } from "./swarm/types";
 import "./styles.css";
 
 // Code-split the live dashboard: it renders only below the fold AND only after
@@ -19,6 +20,9 @@ import "./styles.css";
 // EventLog, buildTree, format helpers) is pulled out of the entry chunk and
 // loaded lazily — cutting time-to-interactive on the landing hero.
 const Dashboard = lazy(() => import("./Dashboard"));
+// The center-book section is its own lazy chunk with its own snapshot, so the
+// payment dashboard never waits on it (and vice versa).
+const CenterBook = lazy(() => import("./swarm/CenterBook"));
 
 const REPO_URL = "https://github.com/J-Buchen/hackathon";
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -175,10 +179,78 @@ export function App() {
         </div>
       </section>
 
+      <CenterBookSection />
+
       <Sponsors />
       </main>
       <SiteFooter />
     </LazyMotion>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Center book — the swarm allocator (packages/swarm)                          */
+/* -------------------------------------------------------------------------- */
+type SwarmLoad =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; snapshot: SwarmSnapshot };
+
+function CenterBookSection() {
+  const [state, setState] = useState<SwarmLoad>({ status: "loading" });
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/swarm-snapshot.json")
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} loading swarm-snapshot.json`);
+        return r.json() as Promise<unknown>;
+      })
+      .then((raw) => parseSwarmSnapshot(raw))
+      .then((snapshot) => {
+        if (!cancelled) setState({ status: "ready", snapshot });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled)
+          setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <section className="section section-alt" id="center-book">
+      <div className="container">
+        <Reveal className="dash-head">
+          <span className="overline">From one agent to a fund of them</span>
+          <h2 className="h2">
+            Tiger Cub agents, and the <span className="hl">center book</span> that stops them becoming
+            one trade.
+          </h2>
+          <p className="lede">
+            Every agent below is inside its own mandate. Guardrails on single agents are table stakes. What
+            no single agent can see is the crowding: several smart PMs landing on the same idea. The center
+            book allocates by risk-adjusted, attributable returns, cuts at one drawdown and revokes at a
+            second, and cuts pods that crowd into the same trade. Each of those moves is a <code>resize</code>{" "}
+            or <code>revoke</code> on the same mandate tree.
+          </p>
+        </Reveal>
+        {state.status === "loading" && <DashboardSkeleton />}
+        {state.status === "error" && (
+          <div className="notice notice-error">
+            Could not load <code>/swarm-snapshot.json</code>: {state.message}
+            <div className="notice-hint">
+              Run <code>npm run demo:swarm</code> at the repo root to generate it, then reload.
+            </div>
+          </div>
+        )}
+        {state.status === "ready" && (
+          <Suspense fallback={<DashboardSkeleton />}>
+            <CenterBook snapshot={state.snapshot} />
+          </Suspense>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -196,6 +268,7 @@ function Nav() {
         <a href="#problem" className="nav-hide-sm">The problem</a>
         <a href="#how" className="nav-hide-sm">How it works</a>
         <a href="#dashboard">Dashboard</a>
+        <a href="#center-book" className="nav-hide-sm">Center book</a>
         <span className="nav-pill">
           <span className="dot" /> live · x402
         </span>

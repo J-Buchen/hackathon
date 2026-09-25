@@ -1,0 +1,18 @@
+{
+  "name": "@allowance/swarm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "The center book: a pod-shop allocator for a swarm of trading agents, built on the Allowance mandate tree. Correlation-aware capital allocation, a drawdown cut/stop-out ladder (stop-out = revocation), cross-agent crowding detection, and per-agent attributable track records. Zero runtime dependencies beyond @allowance/core.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/example.test.ts"
+  },
+  "dependencies": {
+    "@allowance/core": "*"
+  }
+}

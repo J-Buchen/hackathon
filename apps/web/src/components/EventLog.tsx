@@ -47,6 +47,7 @@ const TYPE_ICON: Record<EventType, string> = {
   DELEGATE: "→",
   PAYMENT: "$",
   REVOKE: "⦸",
+  RESIZE: "⇅",
 };
 
 // The "loud" results are exactly the ones RESULT_CLASS paints as blocked/denied.

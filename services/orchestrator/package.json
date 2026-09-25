@@ -11,10 +11,12 @@
   "scripts": {
     "typecheck": "tsc -b",
     "test": "node --import tsx --test src/flow.test.ts",
-    "demo": "tsx src/demo.ts"
+    "demo": "tsx src/demo.ts",
+    "demo:swarm": "tsx src/swarm-demo.ts"
   },
   "dependencies": {
     "@allowance/core": "*",
-    "@allowance/adapters": "*"
+    "@allowance/adapters": "*",
+    "@allowance/swarm": "*"
   }
 }

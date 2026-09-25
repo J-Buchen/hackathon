@@ -27,7 +27,8 @@ export type AttenuationRejectionReason =
   | "MERCHANTS_NOT_SUBSET"
   | "PURPOSES_NOT_SUBSET"
   | "EXPIRY_EXCEEDS_PARENT"
-  | "NEGATIVE_BUDGET";
+  | "NEGATIVE_BUDGET"
+  | "BELOW_COMMITTED";
 
 /** Result of an attenuation check. */
 export type AttenuationDecision =

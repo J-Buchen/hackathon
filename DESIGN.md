@@ -183,7 +183,7 @@ interface PaymentRecord {
   screening?: ScreeningResult; settlement?: SettlementResult; at: number;
 }
 
-type EventType = "FUND" | "DELEGATE" | "PAYMENT" | "REVOKE";
+type EventType = "FUND" | "DELEGATE" | "PAYMENT" | "REVOKE" | "RESIZE";
 type EventResult =
   | "OK" | "SETTLED" | "BLOCKED_MANDATE" | "BLOCKED_SCREENING"
   | "DENIED_IDENTITY" | "REVOKED" | "ATTENUATION_REJECTED";
@@ -207,7 +207,8 @@ function formatAmount(value: bigint, decimals?: number): string;         // 1000
 ```ts
 type AttenuationRejectionReason =
   | "PARENT_REVOKED" | "BUDGET_EXCEEDS_AVAILABLE" | "MERCHANTS_NOT_SUBSET"
-  | "PURPOSES_NOT_SUBSET" | "EXPIRY_EXCEEDS_PARENT" | "NEGATIVE_BUDGET";
+  | "PURPOSES_NOT_SUBSET" | "EXPIRY_EXCEEDS_PARENT" | "NEGATIVE_BUDGET"
+  | "BELOW_COMMITTED";   // resize only: new budget < spentDirect + reserved
 
 type AttenuationDecision =
   | { ok: true }
@@ -258,6 +259,11 @@ class DelegationTree {
   // ^ success → DELEGATE / OK ; on attenuation failure records DELEGATE /
   //   ATTENUATION_REJECTED **then throws AttenuationError** (wrap in try/catch).
   revoke(name: string): AgentNode;                   // records REVOKE / REVOKED
+  resize(name: string, newBudget: bigint): AgentNode;
+  // ^ the allocator's lever (packages/swarm). Grow only from the parent's
+  //   available budget (root cannot grow); shrink only down to spentDirect +
+  //   reserved; revoked subtrees refused. Success → RESIZE / OK; failure records
+  //   RESIZE / ATTENUATION_REJECTED then throws AttenuationError.
   recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent; // custom events
 }
 ```

@@ -103,3 +103,55 @@ test("expiry-in-chain detection", () => {
   assert.equal(tree.isExpiredInChain("researcher.alice.eth", 1600), true); // child expired
   assert.equal(tree.isExpiredInChain("alice.eth", 2500), true); // root expired
 });
+
+/* ---------------------------------------------------------------- */
+/* resize — the allocator's lever                                   */
+/* ---------------------------------------------------------------- */
+
+test("resize shrink frees parent available and records RESIZE/OK", () => {
+  const tree = seed();
+  tree.delegate("alice.eth", "pod", { budget: 40_000000n, expiry: FAR });
+  tree.resize("pod.alice.eth", 10_000000n);
+  assert.equal(tree.requireNode("pod.alice.eth").mandate.budget, 10_000000n);
+  assert.equal(tree.available("alice.eth"), 90_000000n);
+  const last = tree.events.at(-1)!;
+  assert.equal(last.type, "RESIZE");
+  assert.equal(last.result, "OK");
+});
+
+test("resize grow draws from parent available, and is capped by it", () => {
+  const tree = seed();
+  tree.delegate("alice.eth", "pod", { budget: 40_000000n, expiry: FAR });
+  tree.resize("pod.alice.eth", 100_000000n); // +60 = exactly root's available
+  assert.equal(tree.available("alice.eth"), 0n);
+  assert.throws(
+    () => tree.resize("pod.alice.eth", 100_000001n),
+    (e: unknown) => e instanceof AttenuationError && e.reason === "BUDGET_EXCEEDS_AVAILABLE",
+  );
+  assert.equal(tree.events.at(-1)!.result, "ATTENUATION_REJECTED");
+});
+
+test("resize cannot cut below what a node already delegated or spent", () => {
+  const tree = seed();
+  tree.delegate("alice.eth", "pod", { budget: 40_000000n, expiry: FAR });
+  tree.delegate("pod.alice.eth", "agent", { budget: 25_000000n, expiry: FAR });
+  assert.throws(
+    () => tree.resize("pod.alice.eth", 24_000000n),
+    (e: unknown) => e instanceof AttenuationError && e.reason === "BELOW_COMMITTED",
+  );
+  tree.resize("pod.alice.eth", 25_000000n); // exactly committed is fine
+  assert.equal(tree.available("pod.alice.eth"), 0n);
+});
+
+test("resize: root can only shrink; revoked subtrees cannot be resized", () => {
+  const tree = seed();
+  assert.throws(() => tree.resize("alice.eth", 101_000000n), AttenuationError);
+  tree.resize("alice.eth", 50_000000n);
+  tree.delegate("alice.eth", "pod", { budget: 10_000000n, expiry: FAR });
+  tree.delegate("pod.alice.eth", "agent", { budget: 5_000000n, expiry: FAR });
+  tree.revoke("pod.alice.eth");
+  assert.throws(
+    () => tree.resize("agent.pod.alice.eth", 1_000000n),
+    (e: unknown) => e instanceof AttenuationError && e.reason === "PARENT_REVOKED",
+  );
+});

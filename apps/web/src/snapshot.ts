@@ -100,6 +100,7 @@ const EVENT_TYPES: Record<EventType, true> = {
   DELEGATE: true,
   PAYMENT: true,
   REVOKE: true,
+  RESIZE: true,
 };
 function isEventType(v: unknown): v is EventType {
   return typeof v === "string" && Object.prototype.hasOwnProperty.call(EVENT_TYPES, v);
@@ -152,7 +153,7 @@ function isSnapshotNode(v: unknown, path: string): SnapshotNode {
 function isSnapshotEvent(v: unknown, path: string): SnapshotEvent {
   const e = asObject(v, path);
   if (!isEventType(e.type)) {
-    fail(`${path}.type`, `'FUND' | 'DELEGATE' | 'PAYMENT' | 'REVOKE'`, e.type);
+    fail(`${path}.type`, `'FUND' | 'DELEGATE' | 'PAYMENT' | 'REVOKE' | 'RESIZE'`, e.type);
   }
   if (!isEventResult(e.result)) {
     fail(
