@@ -6,9 +6,13 @@
 // Protocol (all on SEALED arena seeds, never seen by researchers):
 //   1. Each proposal that passed code review is applied to a fresh git
 //      worktree at HEAD; package tests must pass.
-//   2. Selection: judged world-by-world vs HEAD on block A. A proposal is a
-//      winner if its target track's paired uplift has a 90% lower bound > 0 and
-//      the other track's mean change is > -0.1 percentage points.
+//   2. Selection: judged world-by-world vs HEAD on block A. A PERFORMANCE
+//      proposal (track allocator/tiger/both) wins if its target track's paired
+//      uplift has a 90% lower bound > 0 and the other track's mean change is
+//      > -0.1 percentage points. A STRUCTURE proposal (track "structure": new
+//      tested guarantees such as reservation or subtree close, not a return
+//      claim) wins if it does not hurt: both tracks' mean change > -0.05 pp
+//      and lower bound > -0.2 pp.
 //   3. Winners are combined (best first; any that no longer applies is dropped)
 //      and the combination must CONFIRM on a separate block B (target track
 //      lower bound > 0). Otherwise the best single winner is tried on B.
@@ -53,8 +57,9 @@ function judge(block, dirs) {
   const out = execFileSync("node", ["scripts/loop-judge.mjs", String(block.from), String(block.count), REPO, ...dirs], { cwd: REPO, maxBuffer: 1 << 27 }).toString();
   return JSON.parse(out);
 }
-const target = (p) => (p.track === "both" ? ["allocator", "tiger"] : [p.track]);
-const other = (p) => (p.track === "allocator" ? ["tiger"] : p.track === "tiger" ? ["allocator"] : []);
+const target = (p) => (p.track === "both" ? ["allocator", "tiger"] : p.track === "structure" ? [] : [p.track]);
+const other = (p) => (p.track === "allocator" ? ["tiger"] : p.track === "tiger" ? ["allocator"] : p.track === "structure" ? ["allocator", "tiger"] : []);
+const neutral = (c) => ["allocator", "tiger"].every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002);
 
 const report = { loop: L, blocks: { A, B }, candidates: [], merged: null };
 const live = [];
@@ -73,6 +78,10 @@ if (live.length) {
     const e = live[i].entry;
     e.blockA = { allocator: c.allocator, tiger: c.tiger };
     const p = live[i].p;
+    if (p.track === "structure") {
+      e.status = neutral(c) ? "winner-A" : "harms-A";
+      return;
+    }
     const up = target(p).every((t) => c[t].lo > 0);
     const safe = other(p).every((t) => c[t].mean > -0.001);
     e.status = up && safe ? "winner-A" : "no-uplift-A";
@@ -80,7 +89,10 @@ if (live.length) {
   report.baselineA = res.baseline;
 }
 const winners = live.filter((c) => c.entry.status === "winner-A")
-  .sort((x, y) => Math.max(...target(y.p).map((t) => y.entry.blockA[t].mean)) - Math.max(...target(x.p).map((t) => x.entry.blockA[t].mean)));
+  .sort((x, y) => {
+    const score = (c) => (target(c.p).length ? Math.max(...target(c.p).map((t) => c.entry.blockA[t].mean)) : -1);
+    return score(y) - score(x);
+  });
 const tryConfirm = (set, label) => {
   const wt = worktree(label, set.map((c) => c.p.diff));
   const kept = wt.applied.map((i) => set[i]);
@@ -88,7 +100,11 @@ const tryConfirm = (set, label) => {
   const res = judge(B, [wt.dir]);
   const c = res.candidates[0];
   const tracks = [...new Set(kept.flatMap((x) => target(x.p)))];
-  const ok = tracks.every((t) => c[t].lo > 0) && ["allocator", "tiger"].filter((t) => !tracks.includes(t)).every((t) => c[t].mean > -0.001);
+  // Performance tracks must confirm a gain; untargeted tracks (and pure
+  // structure changes) must confirm they are not harmed.
+  const ok =
+    tracks.every((t) => c[t].lo > 0) &&
+    ["allocator", "tiger"].filter((t) => !tracks.includes(t)).every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002);
   return { ok, kept: kept.map((x) => x.k), blockB: { allocator: c.allocator, tiger: c.tiger }, baselineB: res.baseline, dir: wt.dir };
 };
 if (winners.length) {
