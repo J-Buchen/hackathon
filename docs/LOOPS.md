@@ -1,6 +1,6 @@
 # Improvement loops: capital allocated across agents
 
-Improvement loops (two run so far; more to come) aimed at the most novel part of the project: **a delegation tree as the control layer of a
+Improvement loops (three run so far; more to come) aimed at the most novel part of the project: **a delegation tree as the control layer of a
 multi-manager fund whose PMs are AI agents**, where
 
 - **(R)** capital is *reserved* per agent when it is granted, not merely capped when spent;
@@ -160,4 +160,60 @@ code (`dc01ec0`); the judge ran at `370e0b8`, which adds only the risk guard and
 reporting. Independent verification (fresh clone of `69d0dcf`) reproduced block B and every
 block-A number bit for bit. Full numbers: [`docs/loops/loop-2.json`](loops/loop-2.json); diffs:
 [`docs/loops/loop-2/`](loops/loop-2/).
+
+## Loop 3
+
+**Merged: (G) an operator is one counterparty, and (R) every order is sized from the tree.** Both
+are structural guarantees, not return claims.
+
+- **(G) operator credit event.** When one of an operator's agents is stopped out, its other live
+  agents are capped together, in one `applyTargets` plan, at `cutFactor` of their full size (what
+  the allocator would give them uncut) until each makes a new high on its own record or its ladder
+  lifts a cut. The cap is a ceiling on capital, so it never compounds with a ladder cut or an
+  earlier cap (loop 2's version halved an already-halved name); it never revokes; and every
+  stop-out happens on exactly the tick the agent's own record, replayed alone, breaches its own
+  stop. Sealed block A: −0.02 pp [−0.06, +0.02], max drawdown 0.00 pp. Confirmed neutral on block B
+  (seeds 13500–13699): +0.01 pp [−0.03, +0.06], max drawdown −0.02 pp [−0.04, 0.00].
+- **(R) reservation binds.** Each agent's order is sized from its mandate's available authority in
+  the tree (budget − its own spend − what it handed down) × leverage, not from a number the book
+  keeps, and a trade audit checks every order against the tree before it is marked. Its review
+  found that before this change a slice handed to a desk was counted twice (as the desk's
+  authority and as trading capital). Bit-identical to the operator change alone on both sealed
+  blocks (every paired difference exactly 0).
+
+On block B the center book returns a certainty equivalent of 14.41% vs 8.63% for per-agent
+guardrails; its mean max drawdown is 6.63% vs 6.53% (**5.88% at the guardrails' volatility**).
+
+| candidate | review | sealed block A (vs current code) | outcome |
+|---|---|---|---|
+| (G) operator credit event | passed | −0.02 pp [−0.06, +0.02], max DD 0.00 pp | winner on A; confirmed neutral on B; **merged** |
+| (R) orders sized from the tree | passed | 0.00 pp (bit-identical) | winner on A; bit-identical on B; **merged** |
+| established-crowd limit (risk track) | passed | −0.06 pp [−0.16, +0.04], max DD −0.15 pp [−0.20, −0.09] | winner on A; **failed B in combination** |
+| drawdown (risk track) | — | no diff | null result |
+| wildcard | — | no diff | null result |
+
+**A driver defect, found and fixed.** The driver combines block-A winners by applying their diffs
+in turn. The reserve and crowd diffs did not apply on top of the operator diff (conflicting
+`package.json` test lists and `book.ts` lines) and were dropped without a record, so its block-B
+"combination" was the operator change alone. The orchestrator composed the three by hand with
+three-way merges (all 262 Node tests pass) and judged the true combination on block B: utility
+−0.13 pp [−0.25, −0.02] for max drawdown −0.13 pp [−0.18, −0.07]. That fails: the utility cost is
+over the 0.1 pp tolerance and it buys 0.98 pp of drawdown per pp given up, under the 1.3
+deleveraging bar. The established-crowd limit is therefore not merged. The protocol's fallback,
+the best single winner, is the operator change the driver had confirmed; the reserve change was
+added because it is bit-identical to it on both blocks. The driver now three-way-applies,
+records any diff it drops, and records every confirmation attempt.
+
+**What the null results found.** The drawdown researcher tested a fund-level ladder, a cap on each
+agent's share of book variance and no re-growing agents in drawdown: none beats uniform
+deleveraging. (a) The center book's higher raw drawdown is a scale effect: it runs more volatility
+than the guardrails, and per unit of volatility its drawdown is lower. The arena now reports this
+(the drawdown at the guardrails' volatility). (b) Drawdowns do not predict agents' forward
+returns, so cutting agents in drawdown gives up paid-for return. (c) About 44% of the loss in a
+world's worst drawdown comes from one agent, often one that won a full slot early on a short
+record. That is loop 4's lead. The same researcher showed the risk track could be won by trimming
+the deploy fraction, which led to the deleveraging bar, and that the allocator's `n/(n+60)`
+shrinkage cancels when every agent starts together; the docs now say so.
+
+Full numbers: [`docs/loops/loop-3.json`](loops/loop-3.json); diffs: [`docs/loops/loop-3/`](loops/loop-3/).
 

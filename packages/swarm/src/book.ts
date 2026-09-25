@@ -17,6 +17,14 @@
  *                           handed out shrink to what they spent and are revoked, in one
  *                           operation; the unspent authority is back in the pod); the
  *                           drawdown rungs are risk-scaled in the center book
+ *   - counterparty        = AgentSpec.operator     (a stop-out of one name caps the
+ *                           operator's other live names at cutFactor of their full size,
+ *                           as a group in one applyTargets plan, until each recovers on
+ *                           its own record; a ceiling on capital, so it never compounds
+ *                           with a ladder cut or an earlier cap, and it never revokes)
+ *   - trading size        = available × leverage   (available = the budget − what the node
+ *                           spent itself − what it handed down; sized by `sizeOrder` in the
+ *                           gate, never from a number the book keeps)
  * so every allocator action lands in the same audited event log as payments.
  *
  * The tree's invariants (`bookViolations`) are checked twice a tick: before the
@@ -24,9 +32,14 @@
  * has acted) and at its end. Children never exceed their parent, nothing is
  * over-committed, the root still holds the AUM, every revoked mandate is
  * closed (no authority stranded under a dead node), every stopped agent is
- * closed and every live one is not. A violation throws `BookInvariantError`:
- * no tick trades on a tree that failed the check, and a break made during a
- * tick is caught before the next one starts.
+ * closed and every live one is not. Between the two, every order the tick is
+ * about to mark is checked against the tree as it then stands
+ * (`tradeViolations`): no agent's gross notional exceeds its available
+ * authority × leverage, a closed agent trades nothing, and nothing off its
+ * allowlist is held. A violation throws `BookInvariantError`: no tick trades
+ * on a tree that failed the check, no order is marked that exceeds its
+ * reservation, and a break made during a tick is caught before the next one
+ * starts.
  *
  * Money and authority are kept separate on purpose: PnL accrues to the fund's
  * NAV ledger here, while the tree holds how much each agent is *allowed* to run.
@@ -35,13 +48,16 @@
 import { DelegationTree, formatAmount, parseAmount } from "@allowance/core";
 import {
   allocate,
+  cutToCeiling,
   ladderStep,
+  nextCounterpartyCaps,
   scanCrowding,
   type AllocationPolicy,
   type CenterBookPolicy,
+  type CounterpartyCap,
   type LadderState,
 } from "./allocator";
-import { preTradeCheck, type GateViolation } from "./gate";
+import { orderNotional, orderPnl, preTradeCheck, sizeOrder, type GateViolation, type SizedOrder } from "./gate";
 import { cosineSimilarity } from "./stats";
 import { SIM_START, type Market } from "./market";
 import type { Observation, Strategy, Weights } from "./strategies";
@@ -113,6 +129,8 @@ export type DecisionKind =
   | "RESTORE"
   | "STOP_OUT"
   | "CROWDING_CUT"
+  | "OPERATOR_CUT"
+  | "OPERATOR_RESTORE"
   | "GATE_CLIP";
 
 export interface Decision {
@@ -128,10 +146,22 @@ export interface AgentResult {
   name: string;
   pod: string;
   style: string;
+  /** Who runs the agent (`AgentSpec.operator`), if known. */
+  operator?: string;
   /** Attributable per-unit-of-capital returns (the strategy's own track record). */
   unitReturns: number[];
-  /** Capital (USDC) the agent ran each tick. */
+  /**
+   * Capital (USDC) the agent ran each tick: the authority its order was sized
+   * on, i.e. its mandate's available authority at the trade (0 once closed).
+   */
   capital: number[];
+  /**
+   * The agent's full size in force each tick (USDC): what the allocator gives
+   * it when nothing cuts or caps it (the equal initial allocation until the
+   * first reallocation, then its share of deployable capital at the latest
+   * one; 0 once its mandate is closed). An operator cap is a fraction of this.
+   */
+  fullSize: number[];
   /** Realized PnL (USDC) each tick. */
   pnl: number[];
   ladder: LadderState;
@@ -293,12 +323,14 @@ export function applyTargets(
 
 /**
  * Thrown by `runBook` when the tree breaks one of the book's invariants, at
- * tick `t`: at its `"start"` (before it trades) or at its `"end"`.
+ * tick `t`: at its `"start"` (before it trades), at the `"trade"` (an order
+ * about to be marked breaks its mandate, see `tradeViolations`) or at its
+ * `"end"`.
  */
 export class BookInvariantError extends Error {
   constructor(
     readonly t: number,
-    readonly at: "start" | "end",
+    readonly at: "start" | "trade" | "end",
     readonly violations: readonly string[],
   ) {
     super(`book invariant broken at the ${at} of tick ${t}: ${violations.join("; ")}`);
@@ -342,6 +374,67 @@ export function bookViolations(
   return out;
 }
 
+/**
+ * Relative slack on the notional bound in `tradeViolations`: the gate leaves
+ * Σ|w| unclipped up to 1 + 1e-9, and the sums are floating point. On $20M of
+ * notional that is 20 cents; nothing larger passes.
+ */
+export const TRADE_SLACK = 1e-8;
+
+/**
+ * (R) at the trade: the orders a tick is about to mark, checked against the
+ * tree as it stands at that moment (after every allocator and crowding write
+ * of the tick), as a list of violations (empty when sound). `runBook` checks
+ * it every tick, after sizing and before anything is marked:
+ *
+ *  - OVER_RESERVATION  an order's gross notional exceeds its mandate's
+ *                      available authority × `leverage` (the policy's gross
+ *                      leverage; the gate keeps Σ|w| ≤ 1). The reservation, not
+ *                      any number the book keeps, bounds what an agent trades.
+ *  - DEAD_TRADES       its mandate (or an ancestor) is revoked or expired and
+ *                      it still trades: a closed agent trades nothing.
+ *  - OFF_MANDATE       it holds an instrument outside its node's allowlist.
+ *  - NOT_FINITE        a non-finite authority, leverage or notional (NaN would
+ *                      pass every comparison above).
+ *  - UNKNOWN_NODE      the order names no node of the tree.
+ *
+ * The notional bound is checked up to `TRADE_SLACK`.
+ */
+export function tradeViolations(
+  tree: DelegationTree,
+  orders: readonly SizedOrder[],
+  opts: { leverage: number; now: number },
+): string[] {
+  const out: string[] = [];
+  for (const o of orders) {
+    if (!tree.getNode(o.node)) {
+      out.push(`UNKNOWN_NODE ${o.node}: no such mandate`);
+      continue;
+    }
+    const notional = Object.entries(orderNotional(o));
+    if (!Number.isFinite(o.authority) || !Number.isFinite(o.leverage) || notional.some(([, n]) => !Number.isFinite(n))) {
+      out.push(`NOT_FINITE ${o.node}: authority ${o.authority}, leverage ${o.leverage}`);
+      continue;
+    }
+    const gross = notional.reduce((s, [, n]) => s + Math.abs(n), 0);
+    if (tree.isRevokedInChain(o.node) || tree.isExpiredInChain(o.node, opts.now)) {
+      if (gross > 0) out.push(`DEAD_TRADES ${o.node}: its mandate is dead, yet it trades ${gross.toFixed(2)} USDC gross`);
+      continue;
+    }
+    const available = toUsdc(tree.available(o.node));
+    if (gross > available * opts.leverage * (1 + TRADE_SLACK)) {
+      out.push(
+        `OVER_RESERVATION ${o.node}: gross notional ${gross.toFixed(2)} > available ${available.toFixed(2)} × leverage ${opts.leverage}`,
+      );
+    }
+    const allowed = tree.requireNode(o.node).mandate.allowedMerchants;
+    for (const [k, n] of notional) {
+      if (n !== 0 && allowed !== undefined && !allowed.includes(k)) out.push(`OFF_MANDATE ${o.node}: holds ${k}`);
+    }
+  }
+  return out;
+}
+
 /* ------------------------------------------------------------------ */
 /* Run                                                                */
 /* ------------------------------------------------------------------ */
@@ -355,6 +448,17 @@ export interface RunBookOptions {
    * held to the book's invariants before the tick trades.
    */
   onTick?: (t: number, tree: DelegationTree) => void | Promise<void>;
+  /**
+   * Called every tick once the orders are sized from the tree (after the
+   * crowding check), just before they are audited and marked, with one order
+   * per agent in roster order: the seam through which an execution layer
+   * outside the book receives the orders, and through which a test can watch
+   * (or tamper with) them. Whatever it does to them is held to
+   * `tradeViolations`, against the tree as it then stands, before anything is
+   * marked; what is marked is exactly these orders. What it does to the tree
+   * is held to `bookViolations` at the tick's end, like any mid-tick change.
+   */
+  onTrade?: (t: number, tree: DelegationTree, orders: readonly SizedOrder[]) => void | Promise<void>;
 }
 
 export async function runBook(
@@ -424,8 +528,10 @@ export async function runBook(
       name: node.name,
       pod: a.pod,
       style: a.strategy.style,
+      ...(a.operator === undefined ? {} : { operator: a.operator }),
       unitReturns: [],
       capital: [],
+      fullSize: [],
       pnl: [],
       ladder: "active",
       gateViolations: 0,
@@ -445,18 +551,39 @@ export async function runBook(
   // crowded book — NOT merely until the crowd shrinks to one member, or the last
   // clone standing would be re-sized straight back into the same trade.
   const crowdCaps = new Map<string, { cap: number; book: Weights }>();
+  // Each agent's full size (see `AgentResult.fullSize`), and the names capped
+  // because another name of the same operator was stopped out. The cap is sized
+  // on capital (`cutToCeiling`), so it needs the full size it is a fraction of.
+  const fullSize = new Map<string, number>(agents.map((a) => [a.name, perAgent]));
+  let operatorCaps: ReadonlyMap<string, CounterpartyCap> = new Map();
+  // The operator cap is a cut to `cutFactor`: without a cut factor below 1 there is none.
+  const capFactor = center?.cutFactor !== undefined && center.cutFactor < 1 ? center.cutFactor : null;
   const history: Observation["history"][number][] = [];
   const nav: number[] = [];
   const bookReturns: number[] = [];
   const crowdExposure: number[] = [];
   let currentNav = spec.aum;
-  // A closed mandate runs no capital: what is left of its budget is only the
-  // record of what its subtree spent.
-  const capitalOf = (a: AgentResult) =>
+  // The allocator's lever: the agent's budget in the tree, 0 once its mandate
+  // is closed (what is left of the budget is then only the record of what its
+  // subtree spent). Reallocation bands, crowding cuts and the cut rung are
+  // decided on it. It never sizes a trade: every order is sized by the gate
+  // from the mandate's AVAILABLE authority and audited against the tree.
+  const budgetOf = (a: AgentResult) =>
     tree.isRevokedInChain(a.name) ? 0 : toUsdc(tree.requireNode(a.name).mandate.budget);
+  const size = (gated: readonly { weights: Weights }[], now: number): SizedOrder[] =>
+    agents.map((a, i) => sizeOrder(tree, a.name, gated[i]!.weights, { leverage: policy.leverage, now }));
   const audit = (t: number, at: "start" | "end") => {
     const violations = bookViolations(tree, root, agents);
     if (violations.length > 0) throw new BookInvariantError(t, at, violations);
+  };
+  const auditTrade = (t: number, orders: readonly SizedOrder[], now: number) => {
+    if (orders.length !== agents.length || agents.some((a, i) => orders[i]?.node !== a.name)) {
+      throw new BookInvariantError(t, "trade", [
+        `ORDERS_MISMATCH: ${orders.length} orders for ${agents.length} agents, or not one per agent in roster order`,
+      ]);
+    }
+    const violations = tradeViolations(tree, orders, { leverage: policy.leverage, now });
+    if (violations.length > 0) throw new BookInvariantError(t, "trade", violations);
   };
 
   for (let t = 0; t < T; t++) {
@@ -475,6 +602,8 @@ export async function runBook(
           unitReturns: a.unitReturns,
           stopped: a.ladder === "stopped",
           ladderMultiplier: a.ladder === "cut" ? (center.cutFactor ?? 1) : 1,
+          // A ceiling like the ladder's: `allocate` takes the smaller, never the product.
+          ...(capFactor !== null && operatorCaps.has(a.name) ? { counterpartyMultiplier: capFactor } : {}),
           crowdCap: crowdCaps.get(a.name)?.cap,
         })),
         deployable,
@@ -482,9 +611,10 @@ export async function runBook(
       );
       const targets = new Map<string, bigint>();
       for (const s of scores) {
+        fullSize.set(s.name, s.fullTarget);
         const agent = agents.find((a) => a.name === s.name)!;
         if (agent.ladder === "stopped") continue;
-        const current = capitalOf(agent);
+        const current = budgetOf(agent);
         const moved = current === 0 ? (s.target > 0 ? Infinity : 0) : Math.abs(s.target - current) / current;
         if (moved < center.rebalanceBand) continue;
         targets.set(s.name, toUnits(s.target));
@@ -531,8 +661,10 @@ export async function runBook(
 
     /* 4) Book-level crowding check on the proposed books (center only). */
     if (center) {
+      // Exposure is measured on what each agent would trade now: its gated
+      // weights sized from the tree as it stands before any cut.
       const scan = scanCrowding(
-        agents.map((a, i) => ({ name: a.name, capital: capitalOf(a), weights: gated[i]!.weights })),
+        size(gated, now).map((o) => ({ name: o.node, capital: o.authority, weights: o.weights })),
         currentNav,
         center.leverage,
         center,
@@ -550,7 +682,7 @@ export async function runBook(
           const i = agents.findIndex((a) => a.name === name);
           // Breaches apply in order and a BOOK breach is solved on capital after
           // the CLONES cuts, so scaling the live budget compounds correctly.
-          const cut = capitalOf(agents[i]!) * b.scale;
+          const cut = budgetOf(agents[i]!) * b.scale;
           const prior = crowdCaps.get(name);
           crowdCaps.set(name, { cap: prior ? Math.min(prior.cap, cut) : cut, book: gated[i]!.weights });
           targets.set(name, toUnits(cut));
@@ -572,21 +704,26 @@ export async function runBook(
       }
     }
 
-    /* 5) Mark to market. -------------------------------------------- */
+    /* 5) Size every order from the tree, audit it, mark it. --------- */
+    // Sized after the crowding cuts, from each mandate's available authority
+    // as it now stands. No order is marked before it passes the audit, and
+    // what is marked is exactly the audited order.
+    const orders = size(gated, now);
+    await options.onTrade?.(t, tree, orders);
+    auditTrade(t, orders, now);
     let tickPnl = 0;
     let crowdNotional = 0;
     const crowdName = market.config.crowd.instrument;
     agents.forEach((a, i) => {
       const g = gated[i]!;
+      const order = orders[i]!;
       let unit = 0;
       for (const [k, w] of Object.entries(g.clipped)) unit += policy.leverage * w * (tick.returns[k] ?? 0);
-      const capital = capitalOf(a);
-      let live = 0;
-      for (const [k, w] of Object.entries(g.weights)) live += policy.leverage * w * (tick.returns[k] ?? 0);
-      const pnl = capital * live;
-      crowdNotional += capital * policy.leverage * (g.weights[crowdName] ?? 0);
+      const pnl = orderPnl(order, tick.returns);
+      crowdNotional += order.authority * order.leverage * (order.weights[crowdName] ?? 0);
       a.unitReturns.push(unit);
-      a.capital.push(capital);
+      a.capital.push(order.authority);
+      a.fullSize.push(tree.isRevokedInChain(a.name) ? 0 : fullSize.get(a.name)!);
       a.pnl.push(pnl);
       tickPnl += pnl;
     });
@@ -598,6 +735,8 @@ export async function runBook(
     history.push(tick.returns);
 
     /* 6) Drawdown ladder. -------------------------------------------- */
+    const stoppedNow: string[] = [];
+    const restoredNow: string[] = [];
     for (const a of agents) {
       if (a.ladder === "stopped") continue;
       // The rungs in force for THIS record: the center book widens them to the
@@ -614,13 +753,14 @@ export async function runBook(
       if (next === a.ladder) continue;
       const pct = (x: number | undefined) => `${((x ?? 0) * 100).toFixed(0)}%`;
       const why = rungs.scale > 1 ? ` (rungs risk-scaled ×${rungs.scale.toFixed(2)}: the agent runs ${pct(rungs.vol)} vol)` : "";
-      const capital = capitalOf(a);
+      const capital = budgetOf(a);
       if (next === "stopped") {
         // Stop-out: ONE tree.close takes back the agent's capital and every
         // sub-mandate it handed out (each shrinks to what it spent, then the
         // subtree is revoked). The freed authority is available to the pod.
         const subs = tree.subtree(a.name).length - 1;
         const freed = toUsdc(tree.close(a.name));
+        stoppedNow.push(a.name);
         decisions.push({
           t,
           kind: "STOP_OUT",
@@ -632,12 +772,74 @@ export async function runBook(
             (freed > 0 ? `${freed.toFixed(0)} USDC handed back to the pod` : "no capital was at risk (already allocated zero)"),
         });
       } else if (next === "cut" && center) {
-        applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(capital * (center.cutFactor ?? 1))]]));
-        decisions.push({ t, kind: "CUT", node: a.name, detail: `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${center.cutFactor ?? 1}` });
+        const factor = center.cutFactor ?? 1;
+        if (capFactor !== null && operatorCaps.has(a.name)) {
+          // Its operator's cap already holds it at `cutFactor` of its full size,
+          // and the ladder's cut is the same ceiling: cut on capital, not again.
+          const to = cutToCeiling(capital, fullSize.get(a.name)!, factor);
+          if (to !== null) applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(to)]]));
+          decisions.push({
+            t,
+            kind: "CUT",
+            node: a.name,
+            detail:
+              `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${factor} of its full size ` +
+              (to === null ? "(its operator's cap already holds it there: not cut again)" : `(${capital.toFixed(0)} → ${to.toFixed(0)} USDC)`),
+          });
+        } else {
+          applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(capital * factor)]]));
+          decisions.push({ t, kind: "CUT", node: a.name, detail: `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${factor}` });
+        }
       } else if (next === "active" && center) {
+        restoredNow.push(a.name);
         decisions.push({ t, kind: "RESTORE", node: a.name, detail: `recovered to within ${pct(rungs.ddRecover)} of high-water mark; full sizing at next reallocation` });
       }
       a.ladder = next;
+    }
+
+    /* 6b) Counterparties (center book only). ------------------------- */
+    // After every name's own ladder has moved this tick: it reads the ladders
+    // and never writes one, and it only ever shrinks capital, so it can
+    // neither delay nor bring forward any stop-out.
+    if (capFactor !== null) {
+      const update = nextCounterpartyCaps(
+        operatorCaps,
+        agents.map((a) => ({ name: a.name, operator: a.operator, ladder: a.ladder, unitReturns: a.unitReturns })),
+        stoppedNow,
+        restoredNow,
+        t,
+      );
+      for (const name of update.lifted) {
+        decisions.push({
+          t,
+          kind: "OPERATOR_RESTORE",
+          node: name,
+          detail:
+            (restoredNow.includes(name) ? "its own ladder lifted its cut" : "new high on its own record") +
+            " since its operator's stop-out; full sizing at next reallocation",
+        });
+      }
+      // The whole group in ONE plan: shrinks, then the pods, in one applyTargets.
+      const cuts = new Map<string, bigint>();
+      for (const { name, after } of update.capped) {
+        const capital = budgetOf(agents.find((a) => a.name === name)!);
+        const full = fullSize.get(name)!;
+        const to = cutToCeiling(capital, full, capFactor);
+        if (to !== null) cuts.set(name, toUnits(to));
+        decisions.push({
+          t,
+          kind: "OPERATOR_CUT",
+          node: name,
+          detail:
+            `same operator as ${after}, stopped out → capped at ×${capFactor} of its full size ${full.toFixed(0)} USDC ` +
+            (to === null
+              ? `(it already holds ${capital.toFixed(0)}: not cut again)`
+              : `(${capital.toFixed(0)} → ${to.toFixed(0)} USDC)`) +
+            " until it recovers on its own record (a new high, or its ladder lifting a cut); its own ladder is unchanged",
+        });
+      }
+      if (cuts.size > 0) applyTargets(tree, podOf, subsOf, cuts);
+      operatorCaps = update.caps;
     }
 
     /* 7) Invariants: a break made during the tick is caught before the next. */

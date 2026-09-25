@@ -4,13 +4,26 @@ import { DelegationTree } from "@allowance/core";
 import {
   allocate,
   capShares,
+  CEILING_SLACK,
+  cutToCeiling,
   defaultCenterBookPolicy,
+  nextCounterpartyCaps,
   nextLadderState,
   scaleLadder,
   scanCrowding,
+  type CounterpartyAgent,
 } from "./allocator";
 import { preTradeCheck } from "./gate";
-import { annualVol, correlation, cosineSimilarity, currentDrawdown, maxDrawdown, sharpe, volAtHighWater } from "./stats";
+import {
+  annualVol,
+  correlation,
+  cosineSimilarity,
+  currentDrawdown,
+  isNewHigh,
+  maxDrawdown,
+  sharpe,
+  volAtHighWater,
+} from "./stats";
 import { gaussian, mulberry32 } from "./rng";
 
 const noise = (seed: number, n: number, drift = 0) => {
@@ -262,4 +275,98 @@ test("gate: off-mandate dropped, gross clipped, revoked trades nothing", () => {
   const r = preTradeCheck(tree, "pm.fund.eth", { A: 0.5 }, { maxGross: 1, now: 0 });
   assert.deepEqual(r.weights, {});
   assert.deepEqual(r.clipped, { A: 0.5 }, "track record keeps accruing on the clipped book");
+});
+
+/* ------------------------------------------------------------------ */
+/* Counterparties: one operator, one credit event                      */
+/* ------------------------------------------------------------------ */
+
+test("isNewHigh: only a strict new high-water mark, just earned", () => {
+  assert.equal(isNewHigh([]), false);
+  assert.equal(isNewHigh([0.01]), true);
+  assert.equal(isNewHigh([-0.01]), false);
+  assert.equal(isNewHigh([0.1, -0.05, 0.02]), false, "still below the old peak");
+  assert.equal(isNewHigh([0.1, -0.05, 0.06]), true);
+  assert.equal(isNewHigh([0.1, 0]), false, "flat at the old peak has not earned anything");
+});
+
+test("counterparty caps: a stop-out caps the operator's other live names; caps are not stacked, never stop anyone, and lift on a recovery", () => {
+  const agents = (over: Record<string, Partial<CounterpartyAgent>> = {}): CounterpartyAgent[] =>
+    [
+      { name: "x1", operator: "X", ladder: "stopped" as const, unitReturns: [0.01, -0.3] },
+      { name: "x2", operator: "X", ladder: "active" as const, unitReturns: [0.02, -0.01] },
+      { name: "x3", operator: "X", ladder: "cut" as const, unitReturns: [-0.15] },
+      { name: "x0", operator: "X", ladder: "stopped" as const, unitReturns: [-0.4] },
+      { name: "y", operator: "Y", ladder: "active" as const, unitReturns: [0.01] },
+      { name: "z", ladder: "active" as const, unitReturns: [0.01] },
+    ].map((a) => ({ ...a, ...over[a.name] }));
+
+  // x1 is stopped out at t = 10 (x0 was stopped long ago): every other LIVE X name is capped.
+  const first = nextCounterpartyCaps(new Map(), agents(), ["x1"], [], 10);
+  assert.deepEqual(first.capped, [
+    { name: "x2", after: "x1" },
+    { name: "x3", after: "x1" },
+  ]);
+  assert.deepEqual([...first.caps.keys()], ["x2", "x3"], "other operators and unlabelled names are untouched");
+
+  // A cap never lifts on the tick it was set, nor without a recovery.
+  const same = nextCounterpartyCaps(first.caps, agents({ x2: { unitReturns: [0.02, -0.01, 0.5] } }), [], ["x3"], 10);
+  assert.deepEqual([...same.caps.keys()], ["x2", "x3"]);
+  const partial = nextCounterpartyCaps(first.caps, agents({ x2: { unitReturns: [0.02, -0.01, 0.005] } }), [], [], 11);
+  assert.deepEqual(partial.lifted, [], "a partial recovery has not re-earned the capital");
+  // x2 makes a strict new high; x3's own ladder lifts its cut: each cap lifts on its own record.
+  const high = nextCounterpartyCaps(first.caps, agents({ x2: { unitReturns: [0.02, -0.01, 0.02] } }), [], [], 11);
+  assert.deepEqual(high.lifted, ["x2"]);
+  assert.deepEqual([...high.caps.keys()], ["x3"]);
+  const restored = nextCounterpartyCaps(first.caps, agents({ x3: { ladder: "active" } }), [], ["x3"], 11);
+  assert.deepEqual(restored.lifted, ["x3"]);
+
+  // A second stop-out of the same operator does not stack a cap on a capped name...
+  const again = nextCounterpartyCaps(first.caps, agents({ x3: { ladder: "stopped" } }), ["x3"], [], 12);
+  assert.deepEqual(again.capped, [], "x2 is already capped");
+  assert.deepEqual(again.caps.get("x2"), { after: "x1", since: 10 });
+  assert.ok(!again.caps.has("x3"), "a stopped name leaves the caps");
+  // ...but caps a name whose cap had lifted.
+  const recapped = nextCounterpartyCaps(high.caps, agents({ x3: { ladder: "stopped" } }), ["x3"], [], 12);
+  assert.deepEqual(recapped.capped, [{ name: "x2", after: "x3" }]);
+  // An unlabelled name's stop-out caps no one.
+  assert.equal(nextCounterpartyCaps(new Map(), agents({ z: { ladder: "stopped" } }), ["z"], [], 5).caps.size, 0);
+});
+
+test("cutToCeiling: a cut decided on capital — cutting twice never goes below cutFactor × full size", () => {
+  const full = 1_000_000;
+  assert.equal(cutToCeiling(full, full, 0.5), 500_000, "a name at full size is cut to the ceiling");
+  assert.equal(cutToCeiling(1.08 * full, full, 0.5), 500_000, "from above its full size too");
+  assert.equal(cutToCeiling(500_000, full, 0.5), null, "already at the ceiling (e.g. cut by its ladder): no write");
+  assert.equal(cutToCeiling(500_000 * (1 + CEILING_SLACK / 2), full, 0.5), null, "a rounding unit above is at it");
+  assert.equal(cutToCeiling(200_000, full, 0.5), null, "below it (crowding, a small allocation): left there");
+  assert.equal(cutToCeiling(0, 0, 0.5), null);
+  // In either order, a ladder cut (capital × cutFactor) and an operator cut end at the ceiling, not cutFactor².
+  const operatorFirst = cutToCeiling(full, full, 0.5)!;
+  assert.equal(cutToCeiling(operatorFirst, full, 0.5), null);
+  const ladderFirst = 0.5 * full;
+  assert.equal(cutToCeiling(ladderFirst, full, 0.5), null);
+});
+
+test("allocate: a ladder cut and an operator cap are one ceiling — the target takes the smaller multiplier, never the product", () => {
+  const policy = { ...defaultCenterBookPolicy(), warmup: 50, maxAgentShare: 1 };
+  const r = noise(6, 20);
+  const out = allocate(
+    [
+      { name: "both", unitReturns: r, stopped: false, ladderMultiplier: 0.5, counterpartyMultiplier: 0.5 },
+      { name: "ladder", unitReturns: r, stopped: false, ladderMultiplier: 0.5 },
+      { name: "operator", unitReturns: r, stopped: false, ladderMultiplier: 1, counterpartyMultiplier: 0.5 },
+      { name: "neither", unitReturns: r, stopped: false, ladderMultiplier: 1 },
+      { name: "gone", unitReturns: r, stopped: true, ladderMultiplier: 1 },
+    ],
+    1000,
+    policy,
+  );
+  const by = Object.fromEntries(out.map((s) => [s.name, s]));
+  for (const n of ["both", "ladder", "operator", "neither"]) assert.ok(Math.abs(by[n]!.fullTarget - 250) < 1e-9, `${n}: full size`);
+  assert.ok(Math.abs(by.both!.target - 125) < 1e-9, `both: ${by.both!.target}, not 62.5`);
+  assert.ok(Math.abs(by.ladder!.target - 125) < 1e-9);
+  assert.ok(Math.abs(by.operator!.target - 125) < 1e-9);
+  assert.ok(Math.abs(by.neither!.target - 250) < 1e-9);
+  assert.equal(by.gone!.fullTarget, 0);
 });

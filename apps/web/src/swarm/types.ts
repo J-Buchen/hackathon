@@ -44,7 +44,16 @@ export interface SwarmAgentView {
 
 export interface Decision {
   t: number;
-  kind: "ALLOCATE" | "REALLOCATE" | "CUT" | "RESTORE" | "STOP_OUT" | "CROWDING_CUT" | "GATE_CLIP";
+  kind:
+    | "ALLOCATE"
+    | "REALLOCATE"
+    | "CUT"
+    | "RESTORE"
+    | "STOP_OUT"
+    | "CROWDING_CUT"
+    | "OPERATOR_CUT"
+    | "OPERATOR_RESTORE"
+    | "GATE_CLIP";
   node: string;
   detail: string;
 }

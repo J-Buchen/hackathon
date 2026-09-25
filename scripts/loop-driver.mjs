@@ -59,7 +59,22 @@ function worktree(name, diffs) {
   for (const [i, d] of diffs.entries()) {
     const f = join(root, `${name}-${i}.diff`);
     writeFileSync(f, d.endsWith("\n") ? d : d + "\n");
-    try { sh(`git apply --whitespace=nowarn ${f}`, dir); applied.push(i); } catch (e) { /* dropped */ }
+    try {
+      sh(`git apply --whitespace=nowarn ${f}`, dir);
+      applied.push(i);
+    } catch {
+      // A diff that does not apply on top of the others is tried with a
+      // three-way merge; if that conflicts too it is dropped AND recorded
+      // (loop 3's combination silently lost two of its three winners).
+      try {
+        sh(`git apply -3 --whitespace=nowarn ${f}`, dir);
+        if (sh("git diff --name-only --diff-filter=U", dir).trim()) throw new Error("conflicts");
+        applied.push(i);
+      } catch {
+        sh("git reset -q --hard HEAD && git clean -qfd", dir);
+        for (const j of applied) sh(`git apply --3way --whitespace=nowarn ${join(root, `${name}-${j}.diff`)}`, dir);
+      }
+    }
   }
   sh(`bash scripts/worktree-setup.sh ${REPO}`, dir);
   return { dir, applied };
@@ -91,7 +106,7 @@ const riskHeld = (c, base) =>
   );
 const neutral = (c) => ["allocator", "tiger"].every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002);
 
-const report = { loop: L, head: HEAD, blocks: { A, B }, riskGuard: RISK, candidates: [], merged: null };
+const report = { loop: L, head: HEAD, blocks: { A, B }, riskGuard: RISK, candidates: [], confirmations: [], merged: null };
 // Utility, Sharpe and max drawdown of each book, not just the paired uplift.
 const books = (s) => Object.fromEntries(["allocator", "tiger"].map((t) => [t, { utility: s[t].utility, sharpe: s[t].sharpe, maxDD: s[t].maxDD, baselineUtility: s[t].baseline, baselineMaxDD: s[t].baselineMaxDD }]));
 const live = [];
@@ -142,6 +157,7 @@ const winners = live.filter((c) => c.entry.status === "winner-A")
 const tryConfirm = (set, label) => {
   const wt = worktree(label, set.map((c) => c.p.diff));
   const kept = wt.applied.map((i) => set[i]);
+  const dropped = set.filter((_, i) => !wt.applied.includes(i)).map((x) => x.k);
   if (!kept.length || !testsPass(wt.dir)) return null;
   const res = judge(B, [wt.dir]);
   const c = res.candidates[0];
@@ -157,13 +173,14 @@ const tryConfirm = (set, label) => {
     (risky
       ? lowersRisk(c) && untargeted.every((t) => c[t].mean > -0.001)
       : untargeted.every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002));
-  return { ok, kept: kept.map((x) => x.k), blockB: { allocator: c.allocator, tiger: c.tiger, risk: c.risk }, booksB: books(c.summary), baselineB: { ...res.baseline, dir: undefined, books: books(res.baseline) }, dir: wt.dir };
+  report.confirmations.push({ label, kept: kept.map((x) => x.k), dropped, ok, allocator: c.allocator, risk: c.risk });
+  return { ok, kept: kept.map((x) => x.k), dropped, blockB: { allocator: c.allocator, tiger: c.tiger, risk: c.risk }, booksB: books(c.summary), baselineB: { ...res.baseline, dir: undefined, books: books(res.baseline) }, dir: wt.dir };
 };
 if (winners.length) {
   let conf = winners.length > 1 ? tryConfirm(winners, "combined") : null;
   if (!conf?.ok) conf = tryConfirm([winners[0]], "best");
   if (conf) {
-    report.confirmation = { ok: conf.ok, kept: conf.kept, blockB: conf.blockB, booksB: conf.booksB, baselineB: conf.baselineB };
+    report.confirmation = { ok: conf.ok, kept: conf.kept, dropped: conf.dropped, blockB: conf.blockB, booksB: conf.booksB, baselineB: conf.baselineB };
     if (conf.ok) {
       const diff = sh("git add -A && git diff --cached HEAD -- . ':(exclude)node_modules'", conf.dir);
       writeFileSync(join(root, "merge.diff"), diff);

@@ -9,12 +9,17 @@ spots when "independent" agents are one trade, and cuts them — a stop-out clos
 the agent's whole subtree in one operation. Four guarantees; the allocator makes
 the decisions, and each one lands as one operation on one mandate tree:
 
-- **(R) Reserved:** capital is reserved per agent at grant (`delegate`).
+- **(R) Reserved:** capital is reserved per agent at grant (`delegate`), and every
+  order is sized from the agent's available authority in the tree (since loop 3),
+  so the book's own accounting can never let an agent trade more than its
+  reservation; each order is audited against the tree before it is marked.
 - **(A) Adjusted:** reservations are resized from risk-adjusted records (`resize`).
 - **(G) Grouped:** agents that are one trade (overlapping positions) are cut as a
-  group, by one factor in one pass. The allocator groups by positions only: each
-  agent's operator is recorded, and the fund console flags cuts whose members
-  share one after the run, but the allocator does not read operator identity yet.
+  group, by one factor in one pass. Since loop 3 an operator is also one
+  counterparty: when one of its agents is stopped out, its other live agents are
+  capped together, in one plan, at half their full size until each recovers on
+  its own record. The cap never compounds with a ladder cut, never revokes, and
+  never delays or brings forward any agent's own stop-out.
 - **(C) Closed:** a stop-out closes the subtree (`DelegationTree.close`), returning
   the agent's capital and every sub-mandate it handed out to its pod in one
   operation (since loop 2). The AgentHire demo shows a close on a live subtree
@@ -94,7 +99,7 @@ npm run dev:web      # opens the dashboard that renders the snapshot
   fixed rule (the smallest research seed ≥ 1 with a crowd, an operator running
   two agents and ≥ 2 skilled pickers). It writes `apps/web/public/fund-snapshot.json`
   with per-agent series, the decision log, group cuts (one-trade vs book-wide,
-  with shared operators flagged after the run), stop-outs (one `close` each, with the amount freed),
+  with shared operators flagged), stop-outs (one `close` each, with the amount freed),
   the mandate tree at every decision tick and a summary of the sealed loop
   results in `docs/loops/` (only merged, confirmed changes are plotted).
 - `npm run demo:swarm` runs the **center book** (below): a Tiger-Cub fund of
@@ -129,6 +134,10 @@ the mandate tree:
   `tree.close`: the agent's capital and every sub-mandate it handed out go back
   to its pod. The book audits the tree's reservation and close invariants before
   and after every tick.
+- **The reservation is the binding limit.** Every agent's trade is sized from
+  its mandate's *available* authority in the tree (budget − its own spend − what
+  it handed to sub-mandates) × leverage, not from a number the book keeps, and
+  each order is audited against the tree before it is marked.
 - **Crowding control.** Agents in different pods running the same trade are cut
   back to a book-level limit, even when each is inside its own mandate.
 
@@ -148,9 +157,11 @@ from **−4.9% to −2.5%**, and peak crowded exposure from **52% to 15% of NAV*
 at the same mean Sharpe (0.50). It gives up return to do it (+2.8% vs +5.5%). An
 ablation shows crowding control is where the value comes from. This small
 example does not show the improvement loops' gains: across 200-world blocks of
-the virtual-world arena they raise fund utility, and loop 2 also lowers the
-center book's max drawdown, which still sits above the per-agent baseline's
-(7.7% vs 6.9% on loop 2's confirmation block). How each number was judged:
+the virtual-world arena the center book's certainty-equivalent return beats the
+per-agent baseline's (14.4% vs 8.6% on loop 3's confirmation block). Its raw max
+drawdown is about the same or higher (6.6% vs 6.5% there; 7.7% vs 6.9% on loop
+2's block), because it runs more volatility; at the baseline's volatility its
+drawdown is lower (5.9%). How each number was judged:
 [`docs/LOOPS.md`](docs/LOOPS.md).
 
 Full write-up, including what didn't help: [`docs/CENTER-BOOK.md`](docs/CENTER-BOOK.md).
@@ -309,6 +320,8 @@ You can also run any layer in isolation:
 | `@allowance/core` — invariants | `packages/core/src/tree.test.ts` | `audit()` is empty for any tree built through the API and flags over-commitment (children + spend > budget, incl. an unserialized overspend), broadened merchants/purposes/expiry, negative budgets and broken links; `isClosed` separates a close (no unspent authority left) from a bare revoke (authority stranded); nothing can be delegated anywhere inside a closed subtree. |
 | `@allowance/swarm` — close | `packages/swarm/src/close.test.ts` | With PMs holding sub-mandates that pay every tick, the tree is checked from outside at every tick under three policies: children ≤ parent, available ≥ 0, sub-mandates hold exactly their ppm slice of the PM (never more), a closed subtree's budgets are frozen and it can never pay, delegate or grow; every stop-out is exactly one `close` freeing budget − spent into the pod; shares are validated in the ppm they are cut in; the book's audit stops a broken tree before the tick trades (and a mid-tick break at that tick's end); spent authority is a floor no resize crosses, and a grow the fund cannot fund is clipped, never refused. |
 | `@allowance/lab` — close in the arena | `packages/lab/src/arena-close.test.ts` | On randomized arena rosters with desks that spend every tick, center book and guardrails both run to the end on a sound tree, every stop-out is one `close` of the agent with its desks, and no move is refused. |
+| `@allowance/swarm` — reservation binds | `packages/swarm/src/reserve.test.ts`, `packages/lab/src/arena-reserve.test.ts` | Every order is checked from outside at the trade, on books where a PM's budget overstates what it may trade (desks, its own spend, an outside grant) and on randomized arena rosters: it is sized on no more than the mandate's available authority, its gross notional is within available × leverage, a closed PM trades nothing, and the marked PnL is exactly the audited order's; an order inflated for one PM (tree untouched) stops the book at the trade naming that PM; orders are sized after the crowding cuts; the book's reallocations and cuts are made on the tree's budgets. |
+| `@allowance/swarm` — operator counterparty | `packages/swarm/src/counterparty.test.ts`, `packages/lab/src/arena-counterparty.test.ts` | When one of an operator's agents is stopped out, its other live agents are capped as a group in one plan at `cutFactor` of their full size; the cap is a ceiling on capital, so it never compounds with a ladder cut or an earlier cap; it never revokes; every stop-out happens on exactly the tick the agent's own record, replayed alone, breaches its own stop; on the arena's shared-operator worlds a name is revoked if and only if its own ladder stopped it. |
 | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
 | `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
 | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |

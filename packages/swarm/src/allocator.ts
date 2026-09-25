@@ -3,7 +3,7 @@
  * allocation decision is reproducible and unit-testable. `book.ts` turns these
  * decisions into mandate-tree writes (resize = reallocate, close = stop-out).
  *
- * Three things a pod shop does that per-agent guardrails cannot:
+ * Four things a pod shop does that per-agent guardrails cannot:
  *
  *  1. ALLOCATE BY RISK-ADJUSTED, ATTRIBUTABLE RETURNS, CORRELATION-AWARE.
  *     score = shrunk Sharpe over the agent's last year of record (`recordWindow`),
@@ -27,6 +27,18 @@
  *     member contributing to it is scaled down until it doesn't. The whole
  *     book's net exposure to any one instrument is capped too (`bookMaxShare`).
  *     No single agent ever breached a limit — that is the point.
+ *  4. COUNTERPARTIES. An operator (`AgentSpec.operator`, a verified human in
+ *     production) is one counterparty however many names it runs, so a
+ *     stop-out of one of its names is a credit event for all of them: its
+ *     other live names are capped at `cutFactor` of their FULL SIZE (the
+ *     capital the allocator gives them uncut) until each recovers on its own
+ *     record: a new high, or its own ladder lifting a cut. The cap is a
+ *     ceiling on capital, not a multiplier on whatever the name holds: a name
+ *     the ladder already cut (or an earlier operator event already capped) is
+ *     not cut again, and at a reallocation the ladder and the cap take the
+ *     smaller multiplier, never the product. Every name keeps its own ladder:
+ *     the cap never stops anyone, and no name's own stop-out is ever delayed
+ *     or brought forward.
  */
 
 import {
@@ -34,6 +46,7 @@ import {
   correlationMatrix,
   cosineSimilarity,
   currentDrawdown,
+  isNewHigh,
   sharpe,
   volAtHighWater,
 } from "./stats";
@@ -168,6 +181,13 @@ export interface AgentScoreInput {
   stopped: boolean;
   /** Capital multiplier from the drawdown ladder (1, or cutFactor while cut). */
   ladderMultiplier: number;
+  /**
+   * Capital multiplier from an operator cap (cutFactor while one is in force;
+   * see `nextCounterpartyCaps`). Both multipliers are ceilings on the same
+   * full-size target, so the target takes the SMALLER of the two: a name the
+   * ladder cut and its operator capped is sized at cutFactor, not cutFactor².
+   */
+  counterpartyMultiplier?: number;
   /** Absolute capital ceiling from an active crowding cut, if any. */
   crowdCap?: number;
 }
@@ -181,6 +201,11 @@ export interface AgentScore {
   multiplicity: number;
   /** Share of deployable capital before ladder / crowding multipliers. */
   share: number;
+  /**
+   * Full size: share × deployable, the capital the agent gets when nothing
+   * cuts or caps it. Cuts and caps are fractions of this.
+   */
+  fullTarget: number;
   /** Final capital target. */
   target: number;
 }
@@ -235,13 +260,16 @@ export function allocate(
   const shares = capShares(raw, policy.maxAgentShare);
 
   const out: AgentScore[] = live.map((a, i) => {
-    let target = shares[i]! * deployable * a.ladderMultiplier;
+    const fullTarget = shares[i]! * deployable;
+    // Ladder cut and operator cap are one ceiling, not two: the smaller wins.
+    const multiplier = Math.min(a.ladderMultiplier, a.counterpartyMultiplier ?? a.ladderMultiplier);
+    let target = fullTarget * multiplier;
     if (a.crowdCap !== undefined) target = Math.min(target, a.crowdCap);
-    return { ...base[i]!, multiplicity: multiplicity[i]!, share: shares[i]!, target };
+    return { ...base[i]!, multiplicity: multiplicity[i]!, share: shares[i]!, fullTarget, target };
   });
   for (const a of agents) {
     if (a.stopped) {
-      out.push({ name: a.name, sharpe: 0, shrunkSharpe: 0, vol: 0, multiplicity: 1, share: 0, target: 0 });
+      out.push({ name: a.name, sharpe: 0, shrunkSharpe: 0, vol: 0, multiplicity: 1, share: 0, fullTarget: 0, target: 0 });
     }
   }
   return out;
@@ -510,4 +538,100 @@ export function scanCrowding(
   if (book) breaches.push(book);
 
   return { clusters, breaches };
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. Counterparties                                                  */
+/* ------------------------------------------------------------------ */
+
+export interface CounterpartyAgent {
+  name: string;
+  /** Who runs the agent; absent = a counterparty of its own. */
+  operator?: string;
+  ladder: LadderState;
+  /** The agent's own attributable record, oldest first. */
+  unitReturns: readonly number[];
+}
+
+/** An operator cap on one name, in force since tick `since`. */
+export interface CounterpartyCap {
+  /** The name of the same operator whose stop-out set the cap. */
+  after: string;
+  since: number;
+}
+
+export interface CounterpartyUpdate {
+  /** Caps in force after this tick. */
+  caps: Map<string, CounterpartyCap>;
+  /** Names capped this tick (none was capped before), each with the stopped name that caused it. */
+  capped: { name: string; after: string }[];
+  /** Names whose cap lifted this tick (a recovery on their own record, see `nextCounterpartyCaps`). */
+  lifted: string[];
+}
+
+/**
+ * One operator, one counterparty, one credit event. When a name is stopped
+ * out this tick (`stoppedNow`, by its OWN ladder), every other live name of
+ * the same operator that is not capped already is capped. A name that is
+ * already capped stays capped as it was (caps are not stacked), and stopped
+ * names drop out.
+ *
+ * A cap lifts at the first tick after it was set on which the name's own
+ * record shows a recovery: a strict new high (it has re-earned its capital),
+ * or its own ladder lifting a cut this tick (`restoredNow`: back within its
+ * recover rung of its high-water mark). The cap and the ladder's cut are one
+ * ceiling (cutFactor of full size), so they compound neither in size (see
+ * `cutToCeiling`) nor in time: a credit event never holds a name at the cut
+ * size after its own ladder has judged it recovered from that very cut.
+ *
+ * Pure bookkeeping on names and records: capital is not an input, and ladder
+ * states are only read, never written, so no name's stop-out can move.
+ */
+export function nextCounterpartyCaps(
+  caps: ReadonlyMap<string, CounterpartyCap>,
+  agents: readonly CounterpartyAgent[],
+  stoppedNow: readonly string[],
+  restoredNow: readonly string[],
+  t: number,
+): CounterpartyUpdate {
+  const next = new Map<string, CounterpartyCap>();
+  const lifted: string[] = [];
+  for (const a of agents) {
+    const cap = caps.get(a.name);
+    if (!cap || a.ladder === "stopped") continue;
+    if (t > cap.since && (isNewHigh(a.unitReturns) || restoredNow.includes(a.name))) lifted.push(a.name);
+    else next.set(a.name, cap);
+  }
+  const capped: { name: string; after: string }[] = [];
+  for (const stopped of stoppedNow) {
+    const op = agents.find((a) => a.name === stopped)?.operator;
+    if (op === undefined) continue;
+    for (const a of agents) {
+      if (a.name === stopped || a.operator !== op || a.ladder === "stopped" || next.has(a.name)) continue;
+      next.set(a.name, { after: stopped, since: t });
+      capped.push({ name: a.name, after: stopped });
+    }
+  }
+  return { caps: next, capped, lifted };
+}
+
+/**
+ * Relative slack under which capital counts as already AT a ceiling: budgets
+ * are whole micro-USDC, so a name cut to the ceiling can sit a rounding unit
+ * above it, and must not be "cut" again by that unit.
+ */
+export const CEILING_SLACK = 1e-9;
+
+/**
+ * Where a cut to `factor` of the agent's full size leaves its capital: the
+ * ceiling `factor × fullSize` if it holds more than that, else `null` (no
+ * write: it is already there or below, e.g. cut by its own ladder, capped by
+ * an earlier operator event, or cut by crowding). A cut decided this way is
+ * decided on capital, not on ladder state, so two cuts never compound: after
+ * any number of them the agent holds min(capital, factor × fullSize), never
+ * factor² × fullSize.
+ */
+export function cutToCeiling(capital: number, fullSize: number, factor: number): number | null {
+  const ceiling = Math.max(0, factor * fullSize);
+  return capital > ceiling * (1 + CEILING_SLACK) ? ceiling : null;
 }

@@ -71,6 +71,22 @@ export function currentDrawdown(returns: readonly number[]): number {
 }
 
 /**
+ * True when the LAST return lifts the equity curve strictly above every
+ * earlier point, the starting value of 1 included: the series is at a new
+ * high-water mark it has just earned. A flat tick at an old peak is not one.
+ */
+export function isNewHigh(returns: readonly number[]): boolean {
+  if (returns.length === 0) return false;
+  let e = 1;
+  let peak = 1;
+  for (let i = 0; i < returns.length - 1; i++) {
+    e *= 1 + returns[i]!;
+    if (e > peak) peak = e;
+  }
+  return e * (1 + returns[returns.length - 1]!) > peak;
+}
+
+/**
  * Annualized volatility of the last `window` returns up to and including the
  * series' most recent high-water mark: the risk it was running when its record
  * was last at its best. Losses since that peak are excluded, so a drawdown can

@@ -1,0 +1,2205 @@
+diff --git a/README.md b/README.md
+index 9daf2a4..0f8a927 100644
+--- a/README.md
++++ b/README.md
+@@ -129,6 +129,10 @@ the mandate tree:
+   `tree.close`: the agent's capital and every sub-mandate it handed out go back
+   to its pod. The book audits the tree's reservation and close invariants before
+   and after every tick.
++- **The reservation is the binding limit.** Every agent's trade is sized from
++  its mandate's *available* authority in the tree (budget − its own spend − what
++  it handed to sub-mandates) × leverage, not from a number the book keeps, and
++  each order is audited against the tree before it is marked.
+ - **Crowding control.** Agents in different pods running the same trade are cut
+   back to a book-level limit, even when each is inside its own mandate.
+ 
+@@ -309,6 +313,7 @@ You can also run any layer in isolation:
+ | `@allowance/core` — invariants | `packages/core/src/tree.test.ts` | `audit()` is empty for any tree built through the API and flags over-commitment (children + spend > budget, incl. an unserialized overspend), broadened merchants/purposes/expiry, negative budgets and broken links; `isClosed` separates a close (no unspent authority left) from a bare revoke (authority stranded); nothing can be delegated anywhere inside a closed subtree. |
+ | `@allowance/swarm` — close | `packages/swarm/src/close.test.ts` | With PMs holding sub-mandates that pay every tick, the tree is checked from outside at every tick under three policies: children ≤ parent, available ≥ 0, sub-mandates hold exactly their ppm slice of the PM (never more), a closed subtree's budgets are frozen and it can never pay, delegate or grow; every stop-out is exactly one `close` freeing budget − spent into the pod; shares are validated in the ppm they are cut in; the book's audit stops a broken tree before the tick trades (and a mid-tick break at that tick's end); spent authority is a floor no resize crosses, and a grow the fund cannot fund is clipped, never refused. |
+ | `@allowance/lab` — close in the arena | `packages/lab/src/arena-close.test.ts` | On randomized arena rosters with desks that spend every tick, center book and guardrails both run to the end on a sound tree, every stop-out is one `close` of the agent with its desks, and no move is refused. |
++| `@allowance/swarm` — reservation binds | `packages/swarm/src/reserve.test.ts`, `packages/lab/src/arena-reserve.test.ts` | Every order is checked from outside at the trade, on books where a PM's budget overstates what it may trade (desks, its own spend, an outside grant) and on randomized arena rosters: it is sized on no more than the mandate's available authority, its gross notional is within available × leverage, a closed PM trades nothing, and the marked PnL is exactly the audited order's; an order inflated for one PM (tree untouched) stops the book at the trade naming that PM; orders are sized after the crowding cuts; the book's reallocations and cuts are made on the tree's budgets. |
+ | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
+ | `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+ | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
+diff --git a/apps/web/src/swarm/CenterBook.tsx b/apps/web/src/swarm/CenterBook.tsx
+index a1659aa..4798599 100644
+--- a/apps/web/src/swarm/CenterBook.tsx
++++ b/apps/web/src/swarm/CenterBook.tsx
+@@ -27,7 +27,7 @@ const compact = (x: number) => {
+   return `${x < 0 ? "−" : ""}${s}`;
+ };
+ 
+-const SHOWN: ReadonlySet<Decision["kind"]> = new Set(["CROWDING_CUT", "STOP_OUT", "CUT", "GATE_CLIP"]);
++const SHOWN: ReadonlySet<Decision["kind"]> = new Set(["CROWDING_CUT", "OPERATOR_CUT", "STOP_OUT", "CUT", "GATE_CLIP"]);
+ const KIND_LABEL: Record<Decision["kind"], string> = {
+   ALLOCATE: "Allocate",
+   REALLOCATE: "Reallocate",
+@@ -35,6 +35,8 @@ const KIND_LABEL: Record<Decision["kind"], string> = {
+   RESTORE: "Restore",
+   STOP_OUT: "Stop-out · closed",
+   CROWDING_CUT: "Crowding cut",
++  OPERATOR_CUT: "Operator cap",
++  OPERATOR_RESTORE: "Operator cap lifted",
+   GATE_CLIP: "Gate clip",
+ };
+ 
+diff --git a/apps/web/src/swarm/types.ts b/apps/web/src/swarm/types.ts
+index 366be27..88474c4 100644
+--- a/apps/web/src/swarm/types.ts
++++ b/apps/web/src/swarm/types.ts
+@@ -44,7 +44,16 @@ export interface SwarmAgentView {
+ 
+ export interface Decision {
+   t: number;
+-  kind: "ALLOCATE" | "REALLOCATE" | "CUT" | "RESTORE" | "STOP_OUT" | "CROWDING_CUT" | "GATE_CLIP";
++  kind:
++    | "ALLOCATE"
++    | "REALLOCATE"
++    | "CUT"
++    | "RESTORE"
++    | "STOP_OUT"
++    | "CROWDING_CUT"
++    | "OPERATOR_CUT"
++    | "OPERATOR_RESTORE"
++    | "GATE_CLIP";
+   node: string;
+   detail: string;
+ }
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index fae7dd0..8d025bb 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -26,6 +26,7 @@ has limits. It wins through the **center book**:
+ | capital allocation | the node's **budget**: `tree.resize(node, budget)` |
+ | allowed instruments | the node's **allowlist**, attenuated fund ⊇ pod ⊇ PM |
+ | a PM's own sub-agents (execution, data) | **sub-mandates**: children of the PM node, each reserved as a ppm `share` of its budget when granted and resized with it |
++| what a PM may trade | its node's **available** authority × leverage: budget − its own spend − what it handed to sub-mandates (`sizeOrder` in the gate) |
+ | drawdown cut | `resize` to `cutFactor` × capital |
+ | stop-out | **`close`**: the PM and every sub-mandate shrink to what they spent and are revoked, in one operation; the unspent authority is back in the pod |
+ | audit trail | the same ordered event log as payments (`RESIZE`, `REVOKE`) |
+@@ -39,9 +40,21 @@ targets become ceilings instead of refused moves. `close` is why a stop-out
+ can't leave authority behind: the old stop-out was "resize to 0, then revoke",
+ and a PM that had delegated sub-budgets couldn't be resized to 0 at all.
+ 
+-**Invariants, checked twice a tick.** The book audits its tree
+-(`bookViolations`) before each tick trades and again at its end, and throws
+-`BookInvariantError` on any failure:
++**The reservation is the binding limit.** Every order is sized by the gate from
++the PM's *available* authority in the tree at the moment of the trade (after the
++tick's reallocation and crowding cuts), never from a capital number the book
++keeps. A slice reserved for an execution or data desk is not also trading
++capital, and a closed PM (available 0) trades nothing. Before this, a PM that
++had handed 30% of its budget to a desk still traded 100% of it. On the arena's
++rosters (no desks, no PM spend) available authority equals the budget, so the
++arena's numbers are unchanged to the bit.
++
++**Invariants, checked at three points of every tick.** The book audits its tree
++(`bookViolations`) before each tick trades and again at its end, and in
++between it audits every order it is about to mark (`tradeViolations`): no
++PM's gross notional exceeds its available authority × leverage, a closed PM
++trades nothing, and nothing off its allowlist is held. It throws
++`BookInvariantError` on any failure. The tree invariants:
+ 
+ - no node has spent plus delegated more than it holds (children ≤ parent,
+   `available` ≥ 0), and no budget is negative;
+@@ -54,7 +67,13 @@ and a PM that had delegated sub-budgets couldn't be resized to 0 at all.
+ `packages/swarm/src/close.test.ts` checks these from the outside at every tick
+ of books whose PMs hold spending sub-mandates. It also shows that each stop-out
+ is one `close` that frees exactly budget − spent into the pod, and that a closed
+-subtree can never pay, delegate or grow again.
++subtree can never pay, delegate or grow again. `packages/swarm/src/reserve.test.ts`
++and `packages/lab/src/arena-reserve.test.ts` check every order from the outside at
++the trade: sized on no more than available authority, gross notional within
++available × leverage, nothing for a closed PM, and the marked PnL exactly the
++audited order's. They run books in which the PM's budget overstates what it may
++trade (desks, its own spend, an outside grant), and an order inflated for one PM
++while the tree is untouched stops the book at the trade, naming that PM.
+ 
+ ---
+ 
+@@ -144,6 +163,20 @@ Around them sit agents that give the allocator something to allocate between:
+     20% of NAV, however many different-looking strategies it is spread across.
+   - A crowding cut stays in force until the agent's book stops resembling the
+     crowded book. The cap is not lifted just because its twin got stopped out.
++- **Counterparties** (`AgentSpec.operator`, a World ID-verified human in
++  production). One operator is one counterparty however many names it runs, so
++  a stop-out of one of its names is a credit event for all of them. Its other
++  live names are capped in the same tick, as a group, in one tree plan, at 50%
++  of their **full size** (what the allocator gives them uncut). The cap is a
++  ceiling on capital, not a multiplier on what a name holds. A name already at
++  or below it is not cut again: for example, one its own ladder cut, or cut and
++  restored but not yet resized, or one an earlier credit event capped. A
++  reallocation sizes a name that is both ladder-cut and capped at 50%, never
++  25%. The cap lifts at the name's first recovery on its own record: a new
++  high, or its own ladder lifting a cut. It never revokes anyone, and it never
++  moves a ladder. Every stop-out lands on exactly the tick of the agent's own
++  record replayed alone (tested on a scripted book and on every shared-operator
++  arena world on seeds 1–40).
+ 
+ The baseline ("per-agent guardrails") is what agent-trading products ship today.
+ It uses the same agents, the same pre-trade gate and the same leverage, with
+diff --git a/package.json b/package.json
+index 517ba90..f0f712b 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/lab/package.json b/packages/lab/package.json
+index da5f86b..cb0f115 100644
+--- a/packages/lab/package.json
++++ b/packages/lab/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts",
++    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-counterparty.test.ts src/arena-reserve.test.ts",
+     "lab": "tsx src/cli.ts"
+   },
+   "dependencies": {
+diff --git a/packages/lab/src/arena-counterparty.test.ts b/packages/lab/src/arena-counterparty.test.ts
+new file mode 100644
+index 0000000..2c8879a
+--- /dev/null
++++ b/packages/lab/src/arena-counterparty.test.ts
+@@ -0,0 +1,159 @@
++/**
++ * (G) on randomized arena rosters: every world on research seeds 1–40 where
++ * one operator runs two names. Each is run twice on the same market — with
++ * the operator labels, and blind (labels stripped) — and checked tick by tick:
++ *
++ *  - every ladder move (CUT, RESTORE, STOP_OUT) is the agent's own record
++ *    replayed alone, the same with and without labels: no stop-out is ever
++ *    delayed or brought forward by an operator;
++ *  - revoked iff stopped: at the start of every tick, the dead mandates are
++ *    exactly the agents whose own record has stopped them out (an operator cap
++ *    never revokes anyone), and the same at the end;
++ *  - every operator cut follows a stop-out of another name of the same
++ *    operator on that tick, and at the first one in each world every name
++ *    ends the tick at min(what it holds without labels, cutFactor × full
++ *    size): a name already at or below the ceiling is not cut again;
++ *  - at every reallocation while a name is capped, it runs no more than
++ *    cutFactor × its full size.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { CEILING_SLACK, defaultCenterBookPolicy, ladderStep, runBook, type BookResult, type LadderState } from "@allowance/swarm";
++import { makeWorld } from "./arena";
++
++// Research seeds only (< ARENA_EVAL_FLOOR).
++const SEEDS = Array.from({ length: 40 }, (_, i) => i + 1);
++const policy = defaultCenterBookPolicy();
++const CF = policy.cutFactor!;
++
++interface Watched {
++  book: BookResult;
++  /** Dead agent mandates at the start of each tick. */
++  revoked: string[][];
++  /** Agent budgets (USDC) at the start of each tick. */
++  budgets: Map<string, number>[];
++}
++
++async function watched(world: ReturnType<typeof makeWorld>, labelled: boolean): Promise<Watched> {
++  const spec = world.swarm();
++  if (!labelled) for (const a of spec.agents) delete a.operator;
++  const names = spec.agents.map((a) => `${a.label}.${a.pod}.${spec.fund}`);
++  const revoked: string[][] = [];
++  const budgets: Map<string, number>[] = [];
++  const book = await runBook(world.market, spec, policy, {
++    onTick: (t, tree) => {
++      revoked[t] = names.filter((n) => tree.isRevokedInChain(n));
++      budgets[t] = new Map(names.map((n) => [n, Number(tree.requireNode(n).mandate.budget) / 1e6]));
++    },
++  });
++  // The end of the last tick, as if a tick followed it.
++  revoked.push(names.filter((n) => book.tree.isRevokedInChain(n)));
++  budgets.push(new Map(names.map((n) => [n, Number(book.tree.requireNode(n).mandate.budget) / 1e6])));
++  return { book, revoked, budgets };
++}
++
++/** The ladder moves of one record, replayed alone: `${t} ${kind}` per transition. */
++function ownMoves(unitReturns: readonly number[]): { moves: string[]; stopAt: number } {
++  let state: LadderState = "active";
++  const moves: string[] = [];
++  let stopAt = Infinity;
++  unitReturns.forEach((_, t) => {
++    const next = ladderStep(state, unitReturns.slice(0, t + 1), {
++      ddStop: policy.ddStop,
++      ddCut: policy.ddCut,
++      ddRecover: policy.ddRecover,
++      ddStopVol: policy.ddStopVol,
++      volWindow: policy.window,
++      ddStopMax: policy.ddStopMax,
++    }).next;
++    if (next !== state) moves.push(`${t} ${next === "stopped" ? "STOP_OUT" : next === "cut" ? "CUT" : "RESTORE"}`);
++    if (next === "stopped" && stopAt === Infinity) stopAt = t;
++    state = next;
++  });
++  return { moves, stopAt };
++}
++
++const ladderMoves = (b: BookResult, name: string) =>
++  b.decisions.filter((d) => d.node === name && (d.kind === "CUT" || d.kind === "RESTORE" || d.kind === "STOP_OUT")).map((d) => `${d.t} ${d.kind}`);
++
++test("arena: operators are cut as a group, on capital, and never revoke or move anyone's own ladder", async () => {
++  const seen = { worlds: 0, groupCuts: 0, notCutAgain: 0, firstEventChecks: 0, reallocChecks: 0, ticks: 0 };
++  for (const seed of SEEDS) {
++    const world = makeWorld(seed);
++    if (world.meta.sharedOperators === 0) continue;
++    seen.worlds++;
++    const lab = await watched(world, true);
++    const blind = await watched(world, false);
++    const T = lab.book.nav.length;
++
++    // Own ladders, and revoked iff stopped at every tick, in both runs.
++    const stopAt = new Map<string, number>();
++    for (const a of lab.book.agents) {
++      const own = ownMoves(a.unitReturns);
++      assert.deepEqual(ladderMoves(lab.book, a.name), own.moves, `seed ${seed} ${a.label}: ladder moved by the book`);
++      assert.deepEqual(ladderMoves(blind.book, a.name), own.moves, `seed ${seed} ${a.label}: blind ladder`);
++      stopAt.set(a.name, own.stopAt);
++    }
++    for (const r of [lab, blind]) {
++      for (let t = 0; t <= T; t++) {
++        seen.ticks++;
++        const expected = [...stopAt].filter(([, s]) => s < t).map(([n]) => n).sort();
++        assert.deepEqual([...r.revoked[t]!].sort(), expected, `seed ${seed} t=${t}: revoked iff stopped by its own record`);
++      }
++      assert.deepEqual(r.book.tree.audit(), []);
++      assert.ok(!r.book.tree.events.some((e) => e.result === "ATTENUATION_REJECTED"));
++    }
++
++    // Every operator cut follows a same-tick stop-out of a sibling.
++    const agentOf = new Map(lab.book.agents.map((a) => [a.name, a]));
++    const cuts = lab.book.decisions.filter((d) => d.kind === "OPERATOR_CUT");
++    for (const cut of cuts) {
++      seen.groupCuts++;
++      const me = agentOf.get(cut.node)!;
++      assert.ok(me.operator !== undefined);
++      const cause = lab.book.agents.find((a) => a.name !== me.name && a.operator === me.operator && stopAt.get(a.name) === cut.t);
++      assert.ok(cause, `seed ${seed}: ${me.label} capped at ${cut.t} without a stopped sibling`);
++      assert.ok(stopAt.get(me.name)! > cut.t, `seed ${seed}: ${me.label} capped when its own record had stopped it`);
++      if (/not cut again/.test(cut.detail)) seen.notCutAgain++;
++    }
++
++    // The first credit event, exactly: the two runs are one book until then.
++    if (cuts.length > 0) {
++      const t1 = cuts[0]!.t;
++      for (let t = 0; t <= t1; t++) assert.deepEqual(lab.budgets[t], blind.budgets[t], `seed ${seed} t=${t}: dormant until the event`);
++      const capped = new Set(cuts.filter((d) => d.t === t1).map((d) => d.node));
++      for (const a of lab.book.agents) {
++        const without = blind.budgets[t1 + 1]!.get(a.name)!;
++        const got = lab.budgets[t1 + 1]!.get(a.name)!;
++        if (!capped.has(a.name)) {
++          assert.equal(got, without, `seed ${seed} ${a.label}: not capped, not touched`);
++          continue;
++        }
++        seen.firstEventChecks++;
++        const ceiling = CF * a.fullSize[t1]!;
++        if (without <= ceiling * (1 + CEILING_SLACK)) assert.equal(got, without, `seed ${seed} ${a.label}: at the ceiling already, cut again`);
++        else assert.ok(Math.abs(got - ceiling) <= 1e-6, `seed ${seed} ${a.label}: ${got} vs ceiling ${ceiling}`);
++      }
++    }
++
++    // At every reallocation while capped, the cap binds: the name never runs
++    // more than cutFactor × its full size (beyond the rebalance band). (That it
++    // runs exactly that — once, not cutFactor² when its ladder also cuts it —
++    // is pinned on a scripted book in swarm's counterparty.test.ts: here every
++    // capped name that crosses a reallocation also carries a crowding cap.)
++    for (const cut of cuts) {
++      const me = agentOf.get(cut.node)!;
++      const lift = lab.book.decisions.find((d) => d.kind === "OPERATOR_RESTORE" && d.node === me.name && d.t > cut.t)?.t ?? T;
++      const end = Math.min(lift, stopAt.get(me.name)!, T - 1);
++      for (let t = cut.t + 1; t <= end; t++) {
++        if (t < policy.warmup || (t - policy.warmup) % policy.rebalanceEvery !== 0) continue;
++        seen.reallocChecks++;
++        const cap = CF * me.fullSize[t]!;
++        assert.ok(me.capital[t]! <= cap / (1 - policy.rebalanceBand) + 1e-6, `seed ${seed} ${me.label} t=${t}: ${me.capital[t]} vs cap ${cap}`);
++      }
++    }
++  }
++  assert.ok(seen.worlds >= 20, `worlds with shared operators: ${seen.worlds}`);
++  assert.ok(seen.groupCuts > 0 && seen.firstEventChecks > 0 && seen.reallocChecks > 0, JSON.stringify(seen));
++  assert.ok(seen.notCutAgain > 0, `some sibling was already at the ceiling: ${JSON.stringify(seen)}`);
++});
+diff --git a/packages/lab/src/arena-reserve.test.ts b/packages/lab/src/arena-reserve.test.ts
+new file mode 100644
+index 0000000..07379cf
+--- /dev/null
++++ b/packages/lab/src/arena-reserve.test.ts
+@@ -0,0 +1,128 @@
++/**
++ * (R) The reservation binds on randomized arena rosters (clones under two
++ * names, herders, a rogue, crowd crashes). Every order is checked from the
++ * outside at the moment it is handed over for marking: it is sized on no more
++ * than its mandate's available authority (budget − own spend − handed down),
++ * its gross notional is at most that × leverage, a closed agent puts on
++ * nothing, and what the book marks is exactly that order.
++ *
++ * With desks that hold a slice of every agent's budget and pay for something
++ * every tick, the budget overstates what an agent may trade; without them (the
++ * rosters the arena scores), available authority IS the budget for every live
++ * agent, which is why sizing from the tree leaves the arena's numbers
++ * unchanged.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { formatAmount, pay, type DelegationTree, type PaymentAdapters } from "@allowance/core";
++import {
++  defaultCenterBookPolicy,
++  defaultNaivePolicy,
++  orderNotional,
++  runBook,
++  tickToUnix,
++  TRADE_SLACK,
++  type AllocationPolicy,
++  type SizedOrder,
++  type SwarmSpec,
++} from "@allowance/swarm";
++import { makeWorld, type World } from "./arena";
++
++const usdc = (units: bigint) => Number(formatAmount(units));
++
++const allowAll: PaymentAdapters = {
++  identity: { verify: async () => ({ ok: true }) },
++  screening: { screen: async () => ({ approved: true }) },
++  settlement: {
++    settle: async (req) => ({
++      settled: true,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: req.amount,
++      amountOut: req.amount,
++    }),
++  },
++};
++
++async function deskSpend(t: number, tree: DelegationTree): Promise<void> {
++  for (const n of tree.listNodes()) {
++    const desk = n.name.split(".")[0];
++    if ((desk !== "exec" && desk !== "data") || tree.isRevokedInChain(n.name)) continue;
++    const amount = desk === "exec" ? 500_000000n : 50_000000n;
++    if (tree.available(n.name) < amount) continue;
++    const r = await pay(tree, { node: n.name, merchant: n.mandate.allowedMerchants![0]!, amount }, allowAll, { now: tickToUnix(t) });
++    assert.equal(r.outcome, "SETTLED");
++  }
++}
++
++/** Run one book, checking every order at the trade; returns how often the budget overstated authority. */
++async function check(world: World, spec: SwarmSpec, policy: AllocationPolicy, desks: boolean) {
++  const seen: { authority: number; notional: Record<string, number> }[][] = [];
++  let overstated = 0;
++  let live = 0;
++  const book = await runBook(world.market, spec, policy, {
++    onTick: desks ? deskSpend : undefined,
++    onTrade: (t, tree, orders: readonly SizedOrder[]) => {
++      seen.push(
++        orders.map((o) => {
++          const node = tree.requireNode(o.node);
++          const handedDown = tree.childrenOf(o.node).reduce((s, c) => s + c.mandate.budget, 0n);
++          const available = usdc(node.mandate.budget - node.mandate.spentDirect - handedDown);
++          const gross = Object.values(o.weights).reduce((s, w) => s + Math.abs(o.authority * o.leverage * w), 0);
++          if (tree.isRevokedInChain(o.node)) {
++            assert.equal(gross, 0, `t=${t}: closed ${o.node} trades`);
++            assert.deepEqual(o.weights, {});
++          } else {
++            live++;
++            assert.ok(o.authority <= available, `t=${t}: ${o.node} sized on ${o.authority} > available ${available}`);
++            assert.ok(gross <= available * policy.leverage * (1 + TRADE_SLACK), `t=${t}: ${o.node} trades ${gross}`);
++            if (usdc(node.mandate.budget) > available + 1) overstated++;
++            // Without desks or spend, available authority is the budget: the old size, to the unit.
++            if (!desks) assert.equal(o.authority, usdc(node.mandate.budget), `t=${t}: ${o.node}`);
++          }
++          return { authority: o.authority, notional: orderNotional(o) };
++        }),
++      );
++    },
++  });
++  const T = world.market.ticks.length;
++  assert.equal(seen.length, T);
++  for (let t = 0; t < T; t++) {
++    book.agents.forEach((a, i) => {
++      const s = seen[t]![i]!;
++      assert.equal(a.capital[t], s.authority);
++      let pnl = 0;
++      for (const [k, n] of Object.entries(s.notional)) pnl += n * (world.market.ticks[t]!.returns[k] ?? 0);
++      assert.ok(Math.abs(a.pnl[t]! - pnl) <= 1e-9 * Math.max(1, Math.abs(pnl)), `t=${t}: ${a.name} marked ${a.pnl[t]} vs ${pnl}`);
++    });
++  }
++  return { overstated, live, stopped: book.agents.filter((a) => a.ladder === "stopped").length };
++}
++
++let overstated = 0;
++let stopped = 0;
++for (const seed of [7, 8, 9, 10, 11, 12]) {
++  test(`arena world ${seed}: every order is within its mandate's available authority × leverage, with and without desks`, async () => {
++    const world = makeWorld(seed);
++    for (const policy of [defaultCenterBookPolicy(), defaultNaivePolicy()]) {
++      const withDesks = world.swarm();
++      for (const a of withDesks.agents) {
++        a.subMandates = [
++          { label: "exec", share: 0.2 },
++          { label: "data", share: 0.01, instruments: [a.instruments[0]!] },
++        ];
++      }
++      const d = await check(world, withDesks, policy, true);
++      assert.ok(d.overstated > 0.9 * d.live, `desks reserve a slice of every live agent (${d.overstated}/${d.live})`);
++      overstated += d.overstated;
++      stopped += d.stopped;
++      await check(world, world.swarm(), policy, false);
++    }
++  });
++}
++
++test("those worlds had budgets overstating authority, and closed agents", () => {
++  assert.ok(overstated >= 10_000, `live orders whose budget overstated their authority: ${overstated}`);
++  assert.ok(stopped >= 30, `stop-outs: ${stopped}`);
++});
+diff --git a/packages/swarm/package.json b/packages/swarm/package.json
+index a3126f2..d7a15dc 100644
+--- a/packages/swarm/package.json
++++ b/packages/swarm/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/example.test.ts"
++    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/example.test.ts src/reserve.test.ts"
+   },
+   "dependencies": {
+     "@allowance/core": "*"
+diff --git a/packages/swarm/src/allocator.test.ts b/packages/swarm/src/allocator.test.ts
+index 1b3fe10..5e8b978 100644
+--- a/packages/swarm/src/allocator.test.ts
++++ b/packages/swarm/src/allocator.test.ts
+@@ -4,13 +4,26 @@ import { DelegationTree } from "@allowance/core";
+ import {
+   allocate,
+   capShares,
++  CEILING_SLACK,
++  cutToCeiling,
+   defaultCenterBookPolicy,
++  nextCounterpartyCaps,
+   nextLadderState,
+   scaleLadder,
+   scanCrowding,
++  type CounterpartyAgent,
+ } from "./allocator";
+ import { preTradeCheck } from "./gate";
+-import { annualVol, correlation, cosineSimilarity, currentDrawdown, maxDrawdown, sharpe, volAtHighWater } from "./stats";
++import {
++  annualVol,
++  correlation,
++  cosineSimilarity,
++  currentDrawdown,
++  isNewHigh,
++  maxDrawdown,
++  sharpe,
++  volAtHighWater,
++} from "./stats";
+ import { gaussian, mulberry32 } from "./rng";
+ 
+ const noise = (seed: number, n: number, drift = 0) => {
+@@ -263,3 +276,97 @@ test("gate: off-mandate dropped, gross clipped, revoked trades nothing", () => {
+   assert.deepEqual(r.weights, {});
+   assert.deepEqual(r.clipped, { A: 0.5 }, "track record keeps accruing on the clipped book");
+ });
++
++/* ------------------------------------------------------------------ */
++/* Counterparties: one operator, one credit event                      */
++/* ------------------------------------------------------------------ */
++
++test("isNewHigh: only a strict new high-water mark, just earned", () => {
++  assert.equal(isNewHigh([]), false);
++  assert.equal(isNewHigh([0.01]), true);
++  assert.equal(isNewHigh([-0.01]), false);
++  assert.equal(isNewHigh([0.1, -0.05, 0.02]), false, "still below the old peak");
++  assert.equal(isNewHigh([0.1, -0.05, 0.06]), true);
++  assert.equal(isNewHigh([0.1, 0]), false, "flat at the old peak has not earned anything");
++});
++
++test("counterparty caps: a stop-out caps the operator's other live names; caps are not stacked, never stop anyone, and lift on a recovery", () => {
++  const agents = (over: Record<string, Partial<CounterpartyAgent>> = {}): CounterpartyAgent[] =>
++    [
++      { name: "x1", operator: "X", ladder: "stopped" as const, unitReturns: [0.01, -0.3] },
++      { name: "x2", operator: "X", ladder: "active" as const, unitReturns: [0.02, -0.01] },
++      { name: "x3", operator: "X", ladder: "cut" as const, unitReturns: [-0.15] },
++      { name: "x0", operator: "X", ladder: "stopped" as const, unitReturns: [-0.4] },
++      { name: "y", operator: "Y", ladder: "active" as const, unitReturns: [0.01] },
++      { name: "z", ladder: "active" as const, unitReturns: [0.01] },
++    ].map((a) => ({ ...a, ...over[a.name] }));
++
++  // x1 is stopped out at t = 10 (x0 was stopped long ago): every other LIVE X name is capped.
++  const first = nextCounterpartyCaps(new Map(), agents(), ["x1"], [], 10);
++  assert.deepEqual(first.capped, [
++    { name: "x2", after: "x1" },
++    { name: "x3", after: "x1" },
++  ]);
++  assert.deepEqual([...first.caps.keys()], ["x2", "x3"], "other operators and unlabelled names are untouched");
++
++  // A cap never lifts on the tick it was set, nor without a recovery.
++  const same = nextCounterpartyCaps(first.caps, agents({ x2: { unitReturns: [0.02, -0.01, 0.5] } }), [], ["x3"], 10);
++  assert.deepEqual([...same.caps.keys()], ["x2", "x3"]);
++  const partial = nextCounterpartyCaps(first.caps, agents({ x2: { unitReturns: [0.02, -0.01, 0.005] } }), [], [], 11);
++  assert.deepEqual(partial.lifted, [], "a partial recovery has not re-earned the capital");
++  // x2 makes a strict new high; x3's own ladder lifts its cut: each cap lifts on its own record.
++  const high = nextCounterpartyCaps(first.caps, agents({ x2: { unitReturns: [0.02, -0.01, 0.02] } }), [], [], 11);
++  assert.deepEqual(high.lifted, ["x2"]);
++  assert.deepEqual([...high.caps.keys()], ["x3"]);
++  const restored = nextCounterpartyCaps(first.caps, agents({ x3: { ladder: "active" } }), [], ["x3"], 11);
++  assert.deepEqual(restored.lifted, ["x3"]);
++
++  // A second stop-out of the same operator does not stack a cap on a capped name...
++  const again = nextCounterpartyCaps(first.caps, agents({ x3: { ladder: "stopped" } }), ["x3"], [], 12);
++  assert.deepEqual(again.capped, [], "x2 is already capped");
++  assert.deepEqual(again.caps.get("x2"), { after: "x1", since: 10 });
++  assert.ok(!again.caps.has("x3"), "a stopped name leaves the caps");
++  // ...but caps a name whose cap had lifted.
++  const recapped = nextCounterpartyCaps(high.caps, agents({ x3: { ladder: "stopped" } }), ["x3"], [], 12);
++  assert.deepEqual(recapped.capped, [{ name: "x2", after: "x3" }]);
++  // An unlabelled name's stop-out caps no one.
++  assert.equal(nextCounterpartyCaps(new Map(), agents({ z: { ladder: "stopped" } }), ["z"], [], 5).caps.size, 0);
++});
++
++test("cutToCeiling: a cut decided on capital — cutting twice never goes below cutFactor × full size", () => {
++  const full = 1_000_000;
++  assert.equal(cutToCeiling(full, full, 0.5), 500_000, "a name at full size is cut to the ceiling");
++  assert.equal(cutToCeiling(1.08 * full, full, 0.5), 500_000, "from above its full size too");
++  assert.equal(cutToCeiling(500_000, full, 0.5), null, "already at the ceiling (e.g. cut by its ladder): no write");
++  assert.equal(cutToCeiling(500_000 * (1 + CEILING_SLACK / 2), full, 0.5), null, "a rounding unit above is at it");
++  assert.equal(cutToCeiling(200_000, full, 0.5), null, "below it (crowding, a small allocation): left there");
++  assert.equal(cutToCeiling(0, 0, 0.5), null);
++  // In either order, a ladder cut (capital × cutFactor) and an operator cut end at the ceiling, not cutFactor².
++  const operatorFirst = cutToCeiling(full, full, 0.5)!;
++  assert.equal(cutToCeiling(operatorFirst, full, 0.5), null);
++  const ladderFirst = 0.5 * full;
++  assert.equal(cutToCeiling(ladderFirst, full, 0.5), null);
++});
++
++test("allocate: a ladder cut and an operator cap are one ceiling — the target takes the smaller multiplier, never the product", () => {
++  const policy = { ...defaultCenterBookPolicy(), warmup: 50, maxAgentShare: 1 };
++  const r = noise(6, 20);
++  const out = allocate(
++    [
++      { name: "both", unitReturns: r, stopped: false, ladderMultiplier: 0.5, counterpartyMultiplier: 0.5 },
++      { name: "ladder", unitReturns: r, stopped: false, ladderMultiplier: 0.5 },
++      { name: "operator", unitReturns: r, stopped: false, ladderMultiplier: 1, counterpartyMultiplier: 0.5 },
++      { name: "neither", unitReturns: r, stopped: false, ladderMultiplier: 1 },
++      { name: "gone", unitReturns: r, stopped: true, ladderMultiplier: 1 },
++    ],
++    1000,
++    policy,
++  );
++  const by = Object.fromEntries(out.map((s) => [s.name, s]));
++  for (const n of ["both", "ladder", "operator", "neither"]) assert.ok(Math.abs(by[n]!.fullTarget - 250) < 1e-9, `${n}: full size`);
++  assert.ok(Math.abs(by.both!.target - 125) < 1e-9, `both: ${by.both!.target}, not 62.5`);
++  assert.ok(Math.abs(by.ladder!.target - 125) < 1e-9);
++  assert.ok(Math.abs(by.operator!.target - 125) < 1e-9);
++  assert.ok(Math.abs(by.neither!.target - 250) < 1e-9);
++  assert.equal(by.gone!.fullTarget, 0);
++});
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index f4109e1..0ecea48 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -3,7 +3,7 @@
+  * allocation decision is reproducible and unit-testable. `book.ts` turns these
+  * decisions into mandate-tree writes (resize = reallocate, close = stop-out).
+  *
+- * Three things a pod shop does that per-agent guardrails cannot:
++ * Four things a pod shop does that per-agent guardrails cannot:
+  *
+  *  1. ALLOCATE BY RISK-ADJUSTED, ATTRIBUTABLE RETURNS, CORRELATION-AWARE.
+  *     score = shrunk Sharpe over the agent's last year of record (`recordWindow`),
+@@ -27,6 +27,18 @@
+  *     member contributing to it is scaled down until it doesn't. The whole
+  *     book's net exposure to any one instrument is capped too (`bookMaxShare`).
+  *     No single agent ever breached a limit — that is the point.
++ *  4. COUNTERPARTIES. An operator (`AgentSpec.operator`, a verified human in
++ *     production) is one counterparty however many names it runs, so a
++ *     stop-out of one of its names is a credit event for all of them: its
++ *     other live names are capped at `cutFactor` of their FULL SIZE (the
++ *     capital the allocator gives them uncut) until each recovers on its own
++ *     record: a new high, or its own ladder lifting a cut. The cap is a
++ *     ceiling on capital, not a multiplier on whatever the name holds: a name
++ *     the ladder already cut (or an earlier operator event already capped) is
++ *     not cut again, and at a reallocation the ladder and the cap take the
++ *     smaller multiplier, never the product. Every name keeps its own ladder:
++ *     the cap never stops anyone, and no name's own stop-out is ever delayed
++ *     or brought forward.
+  */
+ 
+ import {
+@@ -34,6 +46,7 @@ import {
+   correlationMatrix,
+   cosineSimilarity,
+   currentDrawdown,
++  isNewHigh,
+   sharpe,
+   volAtHighWater,
+ } from "./stats";
+@@ -168,6 +181,13 @@ export interface AgentScoreInput {
+   stopped: boolean;
+   /** Capital multiplier from the drawdown ladder (1, or cutFactor while cut). */
+   ladderMultiplier: number;
++  /**
++   * Capital multiplier from an operator cap (cutFactor while one is in force;
++   * see `nextCounterpartyCaps`). Both multipliers are ceilings on the same
++   * full-size target, so the target takes the SMALLER of the two: a name the
++   * ladder cut and its operator capped is sized at cutFactor, not cutFactor².
++   */
++  counterpartyMultiplier?: number;
+   /** Absolute capital ceiling from an active crowding cut, if any. */
+   crowdCap?: number;
+ }
+@@ -181,6 +201,11 @@ export interface AgentScore {
+   multiplicity: number;
+   /** Share of deployable capital before ladder / crowding multipliers. */
+   share: number;
++  /**
++   * Full size: share × deployable, the capital the agent gets when nothing
++   * cuts or caps it. Cuts and caps are fractions of this.
++   */
++  fullTarget: number;
+   /** Final capital target. */
+   target: number;
+ }
+@@ -235,13 +260,16 @@ export function allocate(
+   const shares = capShares(raw, policy.maxAgentShare);
+ 
+   const out: AgentScore[] = live.map((a, i) => {
+-    let target = shares[i]! * deployable * a.ladderMultiplier;
++    const fullTarget = shares[i]! * deployable;
++    // Ladder cut and operator cap are one ceiling, not two: the smaller wins.
++    const multiplier = Math.min(a.ladderMultiplier, a.counterpartyMultiplier ?? a.ladderMultiplier);
++    let target = fullTarget * multiplier;
+     if (a.crowdCap !== undefined) target = Math.min(target, a.crowdCap);
+-    return { ...base[i]!, multiplicity: multiplicity[i]!, share: shares[i]!, target };
++    return { ...base[i]!, multiplicity: multiplicity[i]!, share: shares[i]!, fullTarget, target };
+   });
+   for (const a of agents) {
+     if (a.stopped) {
+-      out.push({ name: a.name, sharpe: 0, shrunkSharpe: 0, vol: 0, multiplicity: 1, share: 0, target: 0 });
++      out.push({ name: a.name, sharpe: 0, shrunkSharpe: 0, vol: 0, multiplicity: 1, share: 0, fullTarget: 0, target: 0 });
+     }
+   }
+   return out;
+@@ -511,3 +539,99 @@ export function scanCrowding(
+ 
+   return { clusters, breaches };
+ }
++
++/* ------------------------------------------------------------------ */
++/* 4. Counterparties                                                  */
++/* ------------------------------------------------------------------ */
++
++export interface CounterpartyAgent {
++  name: string;
++  /** Who runs the agent; absent = a counterparty of its own. */
++  operator?: string;
++  ladder: LadderState;
++  /** The agent's own attributable record, oldest first. */
++  unitReturns: readonly number[];
++}
++
++/** An operator cap on one name, in force since tick `since`. */
++export interface CounterpartyCap {
++  /** The name of the same operator whose stop-out set the cap. */
++  after: string;
++  since: number;
++}
++
++export interface CounterpartyUpdate {
++  /** Caps in force after this tick. */
++  caps: Map<string, CounterpartyCap>;
++  /** Names capped this tick (none was capped before), each with the stopped name that caused it. */
++  capped: { name: string; after: string }[];
++  /** Names whose cap lifted this tick (a recovery on their own record, see `nextCounterpartyCaps`). */
++  lifted: string[];
++}
++
++/**
++ * One operator, one counterparty, one credit event. When a name is stopped
++ * out this tick (`stoppedNow`, by its OWN ladder), every other live name of
++ * the same operator that is not capped already is capped. A name that is
++ * already capped stays capped as it was (caps are not stacked), and stopped
++ * names drop out.
++ *
++ * A cap lifts at the first tick after it was set on which the name's own
++ * record shows a recovery: a strict new high (it has re-earned its capital),
++ * or its own ladder lifting a cut this tick (`restoredNow`: back within its
++ * recover rung of its high-water mark). The cap and the ladder's cut are one
++ * ceiling (cutFactor of full size), so they compound neither in size (see
++ * `cutToCeiling`) nor in time: a credit event never holds a name at the cut
++ * size after its own ladder has judged it recovered from that very cut.
++ *
++ * Pure bookkeeping on names and records: capital is not an input, and ladder
++ * states are only read, never written, so no name's stop-out can move.
++ */
++export function nextCounterpartyCaps(
++  caps: ReadonlyMap<string, CounterpartyCap>,
++  agents: readonly CounterpartyAgent[],
++  stoppedNow: readonly string[],
++  restoredNow: readonly string[],
++  t: number,
++): CounterpartyUpdate {
++  const next = new Map<string, CounterpartyCap>();
++  const lifted: string[] = [];
++  for (const a of agents) {
++    const cap = caps.get(a.name);
++    if (!cap || a.ladder === "stopped") continue;
++    if (t > cap.since && (isNewHigh(a.unitReturns) || restoredNow.includes(a.name))) lifted.push(a.name);
++    else next.set(a.name, cap);
++  }
++  const capped: { name: string; after: string }[] = [];
++  for (const stopped of stoppedNow) {
++    const op = agents.find((a) => a.name === stopped)?.operator;
++    if (op === undefined) continue;
++    for (const a of agents) {
++      if (a.name === stopped || a.operator !== op || a.ladder === "stopped" || next.has(a.name)) continue;
++      next.set(a.name, { after: stopped, since: t });
++      capped.push({ name: a.name, after: stopped });
++    }
++  }
++  return { caps: next, capped, lifted };
++}
++
++/**
++ * Relative slack under which capital counts as already AT a ceiling: budgets
++ * are whole micro-USDC, so a name cut to the ceiling can sit a rounding unit
++ * above it, and must not be "cut" again by that unit.
++ */
++export const CEILING_SLACK = 1e-9;
++
++/**
++ * Where a cut to `factor` of the agent's full size leaves its capital: the
++ * ceiling `factor × fullSize` if it holds more than that, else `null` (no
++ * write: it is already there or below, e.g. cut by its own ladder, capped by
++ * an earlier operator event, or cut by crowding). A cut decided this way is
++ * decided on capital, not on ladder state, so two cuts never compound: after
++ * any number of them the agent holds min(capital, factor × fullSize), never
++ * factor² × fullSize.
++ */
++export function cutToCeiling(capital: number, fullSize: number, factor: number): number | null {
++  const ceiling = Math.max(0, factor * fullSize);
++  return capital > ceiling * (1 + CEILING_SLACK) ? ceiling : null;
++}
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index ac72223..c72bcea 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -17,6 +17,14 @@
+  *                           handed out shrink to what they spent and are revoked, in one
+  *                           operation; the unspent authority is back in the pod); the
+  *                           drawdown rungs are risk-scaled in the center book
++ *   - counterparty        = AgentSpec.operator     (a stop-out of one name caps the
++ *                           operator's other live names at cutFactor of their full size,
++ *                           as a group in one applyTargets plan, until each recovers on
++ *                           its own record; a ceiling on capital, so it never compounds
++ *                           with a ladder cut or an earlier cap, and it never revokes)
++ *   - trading size        = available × leverage   (available = the budget − what the node
++ *                           spent itself − what it handed down; sized by `sizeOrder` in the
++ *                           gate, never from a number the book keeps)
+  * so every allocator action lands in the same audited event log as payments.
+  *
+  * The tree's invariants (`bookViolations`) are checked twice a tick: before the
+@@ -24,9 +32,14 @@
+  * has acted) and at its end. Children never exceed their parent, nothing is
+  * over-committed, the root still holds the AUM, every revoked mandate is
+  * closed (no authority stranded under a dead node), every stopped agent is
+- * closed and every live one is not. A violation throws `BookInvariantError`:
+- * no tick trades on a tree that failed the check, and a break made during a
+- * tick is caught before the next one starts.
++ * closed and every live one is not. Between the two, every order the tick is
++ * about to mark is checked against the tree as it then stands
++ * (`tradeViolations`): no agent's gross notional exceeds its available
++ * authority × leverage, a closed agent trades nothing, and nothing off its
++ * allowlist is held. A violation throws `BookInvariantError`: no tick trades
++ * on a tree that failed the check, no order is marked that exceeds its
++ * reservation, and a break made during a tick is caught before the next one
++ * starts.
+  *
+  * Money and authority are kept separate on purpose: PnL accrues to the fund's
+  * NAV ledger here, while the tree holds how much each agent is *allowed* to run.
+@@ -35,13 +48,16 @@
+ import { DelegationTree, formatAmount, parseAmount } from "@allowance/core";
+ import {
+   allocate,
++  cutToCeiling,
+   ladderStep,
++  nextCounterpartyCaps,
+   scanCrowding,
+   type AllocationPolicy,
+   type CenterBookPolicy,
++  type CounterpartyCap,
+   type LadderState,
+ } from "./allocator";
+-import { preTradeCheck, type GateViolation } from "./gate";
++import { orderNotional, orderPnl, preTradeCheck, sizeOrder, type GateViolation, type SizedOrder } from "./gate";
+ import { cosineSimilarity } from "./stats";
+ import { SIM_START, type Market } from "./market";
+ import type { Observation, Strategy, Weights } from "./strategies";
+@@ -113,6 +129,8 @@ export type DecisionKind =
+   | "RESTORE"
+   | "STOP_OUT"
+   | "CROWDING_CUT"
++  | "OPERATOR_CUT"
++  | "OPERATOR_RESTORE"
+   | "GATE_CLIP";
+ 
+ export interface Decision {
+@@ -128,10 +146,22 @@ export interface AgentResult {
+   name: string;
+   pod: string;
+   style: string;
++  /** Who runs the agent (`AgentSpec.operator`), if known. */
++  operator?: string;
+   /** Attributable per-unit-of-capital returns (the strategy's own track record). */
+   unitReturns: number[];
+-  /** Capital (USDC) the agent ran each tick. */
++  /**
++   * Capital (USDC) the agent ran each tick: the authority its order was sized
++   * on, i.e. its mandate's available authority at the trade (0 once closed).
++   */
+   capital: number[];
++  /**
++   * The agent's full size in force each tick (USDC): what the allocator gives
++   * it when nothing cuts or caps it (the equal initial allocation until the
++   * first reallocation, then its share of deployable capital at the latest
++   * one; 0 once its mandate is closed). An operator cap is a fraction of this.
++   */
++  fullSize: number[];
+   /** Realized PnL (USDC) each tick. */
+   pnl: number[];
+   ladder: LadderState;
+@@ -293,12 +323,14 @@ export function applyTargets(
+ 
+ /**
+  * Thrown by `runBook` when the tree breaks one of the book's invariants, at
+- * tick `t`: at its `"start"` (before it trades) or at its `"end"`.
++ * tick `t`: at its `"start"` (before it trades), at the `"trade"` (an order
++ * about to be marked breaks its mandate, see `tradeViolations`) or at its
++ * `"end"`.
+  */
+ export class BookInvariantError extends Error {
+   constructor(
+     readonly t: number,
+-    readonly at: "start" | "end",
++    readonly at: "start" | "trade" | "end",
+     readonly violations: readonly string[],
+   ) {
+     super(`book invariant broken at the ${at} of tick ${t}: ${violations.join("; ")}`);
+@@ -342,6 +374,67 @@ export function bookViolations(
+   return out;
+ }
+ 
++/**
++ * Relative slack on the notional bound in `tradeViolations`: the gate leaves
++ * Σ|w| unclipped up to 1 + 1e-9, and the sums are floating point. On $20M of
++ * notional that is 20 cents; nothing larger passes.
++ */
++export const TRADE_SLACK = 1e-8;
++
++/**
++ * (R) at the trade: the orders a tick is about to mark, checked against the
++ * tree as it stands at that moment (after every allocator and crowding write
++ * of the tick), as a list of violations (empty when sound). `runBook` checks
++ * it every tick, after sizing and before anything is marked:
++ *
++ *  - OVER_RESERVATION  an order's gross notional exceeds its mandate's
++ *                      available authority × `leverage` (the policy's gross
++ *                      leverage; the gate keeps Σ|w| ≤ 1). The reservation, not
++ *                      any number the book keeps, bounds what an agent trades.
++ *  - DEAD_TRADES       its mandate (or an ancestor) is revoked or expired and
++ *                      it still trades: a closed agent trades nothing.
++ *  - OFF_MANDATE       it holds an instrument outside its node's allowlist.
++ *  - NOT_FINITE        a non-finite authority, leverage or notional (NaN would
++ *                      pass every comparison above).
++ *  - UNKNOWN_NODE      the order names no node of the tree.
++ *
++ * The notional bound is checked up to `TRADE_SLACK`.
++ */
++export function tradeViolations(
++  tree: DelegationTree,
++  orders: readonly SizedOrder[],
++  opts: { leverage: number; now: number },
++): string[] {
++  const out: string[] = [];
++  for (const o of orders) {
++    if (!tree.getNode(o.node)) {
++      out.push(`UNKNOWN_NODE ${o.node}: no such mandate`);
++      continue;
++    }
++    const notional = Object.entries(orderNotional(o));
++    if (!Number.isFinite(o.authority) || !Number.isFinite(o.leverage) || notional.some(([, n]) => !Number.isFinite(n))) {
++      out.push(`NOT_FINITE ${o.node}: authority ${o.authority}, leverage ${o.leverage}`);
++      continue;
++    }
++    const gross = notional.reduce((s, [, n]) => s + Math.abs(n), 0);
++    if (tree.isRevokedInChain(o.node) || tree.isExpiredInChain(o.node, opts.now)) {
++      if (gross > 0) out.push(`DEAD_TRADES ${o.node}: its mandate is dead, yet it trades ${gross.toFixed(2)} USDC gross`);
++      continue;
++    }
++    const available = toUsdc(tree.available(o.node));
++    if (gross > available * opts.leverage * (1 + TRADE_SLACK)) {
++      out.push(
++        `OVER_RESERVATION ${o.node}: gross notional ${gross.toFixed(2)} > available ${available.toFixed(2)} × leverage ${opts.leverage}`,
++      );
++    }
++    const allowed = tree.requireNode(o.node).mandate.allowedMerchants;
++    for (const [k, n] of notional) {
++      if (n !== 0 && allowed !== undefined && !allowed.includes(k)) out.push(`OFF_MANDATE ${o.node}: holds ${k}`);
++    }
++  }
++  return out;
++}
++
+ /* ------------------------------------------------------------------ */
+ /* Run                                                                */
+ /* ------------------------------------------------------------------ */
+@@ -355,6 +448,17 @@ export interface RunBookOptions {
+    * held to the book's invariants before the tick trades.
+    */
+   onTick?: (t: number, tree: DelegationTree) => void | Promise<void>;
++  /**
++   * Called every tick once the orders are sized from the tree (after the
++   * crowding check), just before they are audited and marked, with one order
++   * per agent in roster order: the seam through which an execution layer
++   * outside the book receives the orders, and through which a test can watch
++   * (or tamper with) them. Whatever it does to them is held to
++   * `tradeViolations`, against the tree as it then stands, before anything is
++   * marked; what is marked is exactly these orders. What it does to the tree
++   * is held to `bookViolations` at the tick's end, like any mid-tick change.
++   */
++  onTrade?: (t: number, tree: DelegationTree, orders: readonly SizedOrder[]) => void | Promise<void>;
+ }
+ 
+ export async function runBook(
+@@ -424,8 +528,10 @@ export async function runBook(
+       name: node.name,
+       pod: a.pod,
+       style: a.strategy.style,
++      ...(a.operator === undefined ? {} : { operator: a.operator }),
+       unitReturns: [],
+       capital: [],
++      fullSize: [],
+       pnl: [],
+       ladder: "active",
+       gateViolations: 0,
+@@ -445,19 +551,40 @@ export async function runBook(
+   // crowded book — NOT merely until the crowd shrinks to one member, or the last
+   // clone standing would be re-sized straight back into the same trade.
+   const crowdCaps = new Map<string, { cap: number; book: Weights }>();
++  // Each agent's full size (see `AgentResult.fullSize`), and the names capped
++  // because another name of the same operator was stopped out. The cap is sized
++  // on capital (`cutToCeiling`), so it needs the full size it is a fraction of.
++  const fullSize = new Map<string, number>(agents.map((a) => [a.name, perAgent]));
++  let operatorCaps: ReadonlyMap<string, CounterpartyCap> = new Map();
++  // The operator cap is a cut to `cutFactor`: without a cut factor below 1 there is none.
++  const capFactor = center?.cutFactor !== undefined && center.cutFactor < 1 ? center.cutFactor : null;
+   const history: Observation["history"][number][] = [];
+   const nav: number[] = [];
+   const bookReturns: number[] = [];
+   const crowdExposure: number[] = [];
+   let currentNav = spec.aum;
+-  // A closed mandate runs no capital: what is left of its budget is only the
+-  // record of what its subtree spent.
+-  const capitalOf = (a: AgentResult) =>
++  // The allocator's lever: the agent's budget in the tree, 0 once its mandate
++  // is closed (what is left of the budget is then only the record of what its
++  // subtree spent). Reallocation bands, crowding cuts and the cut rung are
++  // decided on it. It never sizes a trade: every order is sized by the gate
++  // from the mandate's AVAILABLE authority and audited against the tree.
++  const budgetOf = (a: AgentResult) =>
+     tree.isRevokedInChain(a.name) ? 0 : toUsdc(tree.requireNode(a.name).mandate.budget);
++  const size = (gated: readonly { weights: Weights }[], now: number): SizedOrder[] =>
++    agents.map((a, i) => sizeOrder(tree, a.name, gated[i]!.weights, { leverage: policy.leverage, now }));
+   const audit = (t: number, at: "start" | "end") => {
+     const violations = bookViolations(tree, root, agents);
+     if (violations.length > 0) throw new BookInvariantError(t, at, violations);
+   };
++  const auditTrade = (t: number, orders: readonly SizedOrder[], now: number) => {
++    if (orders.length !== agents.length || agents.some((a, i) => orders[i]?.node !== a.name)) {
++      throw new BookInvariantError(t, "trade", [
++        `ORDERS_MISMATCH: ${orders.length} orders for ${agents.length} agents, or not one per agent in roster order`,
++      ]);
++    }
++    const violations = tradeViolations(tree, orders, { leverage: policy.leverage, now });
++    if (violations.length > 0) throw new BookInvariantError(t, "trade", violations);
++  };
+ 
+   for (let t = 0; t < T; t++) {
+     const tick = market.ticks[t]!;
+@@ -475,6 +602,8 @@ export async function runBook(
+           unitReturns: a.unitReturns,
+           stopped: a.ladder === "stopped",
+           ladderMultiplier: a.ladder === "cut" ? (center.cutFactor ?? 1) : 1,
++          // A ceiling like the ladder's: `allocate` takes the smaller, never the product.
++          ...(capFactor !== null && operatorCaps.has(a.name) ? { counterpartyMultiplier: capFactor } : {}),
+           crowdCap: crowdCaps.get(a.name)?.cap,
+         })),
+         deployable,
+@@ -482,9 +611,10 @@ export async function runBook(
+       );
+       const targets = new Map<string, bigint>();
+       for (const s of scores) {
++        fullSize.set(s.name, s.fullTarget);
+         const agent = agents.find((a) => a.name === s.name)!;
+         if (agent.ladder === "stopped") continue;
+-        const current = capitalOf(agent);
++        const current = budgetOf(agent);
+         const moved = current === 0 ? (s.target > 0 ? Infinity : 0) : Math.abs(s.target - current) / current;
+         if (moved < center.rebalanceBand) continue;
+         targets.set(s.name, toUnits(s.target));
+@@ -531,8 +661,10 @@ export async function runBook(
+ 
+     /* 4) Book-level crowding check on the proposed books (center only). */
+     if (center) {
++      // Exposure is measured on what each agent would trade now: its gated
++      // weights sized from the tree as it stands before any cut.
+       const scan = scanCrowding(
+-        agents.map((a, i) => ({ name: a.name, capital: capitalOf(a), weights: gated[i]!.weights })),
++        size(gated, now).map((o) => ({ name: o.node, capital: o.authority, weights: o.weights })),
+         currentNav,
+         center.leverage,
+         center,
+@@ -550,7 +682,7 @@ export async function runBook(
+           const i = agents.findIndex((a) => a.name === name);
+           // Breaches apply in order and a BOOK breach is solved on capital after
+           // the CLONES cuts, so scaling the live budget compounds correctly.
+-          const cut = capitalOf(agents[i]!) * b.scale;
++          const cut = budgetOf(agents[i]!) * b.scale;
+           const prior = crowdCaps.get(name);
+           crowdCaps.set(name, { cap: prior ? Math.min(prior.cap, cut) : cut, book: gated[i]!.weights });
+           targets.set(name, toUnits(cut));
+@@ -572,21 +704,26 @@ export async function runBook(
+       }
+     }
+ 
+-    /* 5) Mark to market. -------------------------------------------- */
++    /* 5) Size every order from the tree, audit it, mark it. --------- */
++    // Sized after the crowding cuts, from each mandate's available authority
++    // as it now stands. No order is marked before it passes the audit, and
++    // what is marked is exactly the audited order.
++    const orders = size(gated, now);
++    await options.onTrade?.(t, tree, orders);
++    auditTrade(t, orders, now);
+     let tickPnl = 0;
+     let crowdNotional = 0;
+     const crowdName = market.config.crowd.instrument;
+     agents.forEach((a, i) => {
+       const g = gated[i]!;
++      const order = orders[i]!;
+       let unit = 0;
+       for (const [k, w] of Object.entries(g.clipped)) unit += policy.leverage * w * (tick.returns[k] ?? 0);
+-      const capital = capitalOf(a);
+-      let live = 0;
+-      for (const [k, w] of Object.entries(g.weights)) live += policy.leverage * w * (tick.returns[k] ?? 0);
+-      const pnl = capital * live;
+-      crowdNotional += capital * policy.leverage * (g.weights[crowdName] ?? 0);
++      const pnl = orderPnl(order, tick.returns);
++      crowdNotional += order.authority * order.leverage * (order.weights[crowdName] ?? 0);
+       a.unitReturns.push(unit);
+-      a.capital.push(capital);
++      a.capital.push(order.authority);
++      a.fullSize.push(tree.isRevokedInChain(a.name) ? 0 : fullSize.get(a.name)!);
+       a.pnl.push(pnl);
+       tickPnl += pnl;
+     });
+@@ -598,6 +735,8 @@ export async function runBook(
+     history.push(tick.returns);
+ 
+     /* 6) Drawdown ladder. -------------------------------------------- */
++    const stoppedNow: string[] = [];
++    const restoredNow: string[] = [];
+     for (const a of agents) {
+       if (a.ladder === "stopped") continue;
+       // The rungs in force for THIS record: the center book widens them to the
+@@ -614,13 +753,14 @@ export async function runBook(
+       if (next === a.ladder) continue;
+       const pct = (x: number | undefined) => `${((x ?? 0) * 100).toFixed(0)}%`;
+       const why = rungs.scale > 1 ? ` (rungs risk-scaled ×${rungs.scale.toFixed(2)}: the agent runs ${pct(rungs.vol)} vol)` : "";
+-      const capital = capitalOf(a);
++      const capital = budgetOf(a);
+       if (next === "stopped") {
+         // Stop-out: ONE tree.close takes back the agent's capital and every
+         // sub-mandate it handed out (each shrinks to what it spent, then the
+         // subtree is revoked). The freed authority is available to the pod.
+         const subs = tree.subtree(a.name).length - 1;
+         const freed = toUsdc(tree.close(a.name));
++        stoppedNow.push(a.name);
+         decisions.push({
+           t,
+           kind: "STOP_OUT",
+@@ -632,14 +772,76 @@ export async function runBook(
+             (freed > 0 ? `${freed.toFixed(0)} USDC handed back to the pod` : "no capital was at risk (already allocated zero)"),
+         });
+       } else if (next === "cut" && center) {
+-        applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(capital * (center.cutFactor ?? 1))]]));
+-        decisions.push({ t, kind: "CUT", node: a.name, detail: `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${center.cutFactor ?? 1}` });
++        const factor = center.cutFactor ?? 1;
++        if (capFactor !== null && operatorCaps.has(a.name)) {
++          // Its operator's cap already holds it at `cutFactor` of its full size,
++          // and the ladder's cut is the same ceiling: cut on capital, not again.
++          const to = cutToCeiling(capital, fullSize.get(a.name)!, factor);
++          if (to !== null) applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(to)]]));
++          decisions.push({
++            t,
++            kind: "CUT",
++            node: a.name,
++            detail:
++              `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${factor} of its full size ` +
++              (to === null ? "(its operator's cap already holds it there: not cut again)" : `(${capital.toFixed(0)} → ${to.toFixed(0)} USDC)`),
++          });
++        } else {
++          applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(capital * factor)]]));
++          decisions.push({ t, kind: "CUT", node: a.name, detail: `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${factor}` });
++        }
+       } else if (next === "active" && center) {
++        restoredNow.push(a.name);
+         decisions.push({ t, kind: "RESTORE", node: a.name, detail: `recovered to within ${pct(rungs.ddRecover)} of high-water mark; full sizing at next reallocation` });
+       }
+       a.ladder = next;
+     }
+ 
++    /* 6b) Counterparties (center book only). ------------------------- */
++    // After every name's own ladder has moved this tick: it reads the ladders
++    // and never writes one, and it only ever shrinks capital, so it can
++    // neither delay nor bring forward any stop-out.
++    if (capFactor !== null) {
++      const update = nextCounterpartyCaps(
++        operatorCaps,
++        agents.map((a) => ({ name: a.name, operator: a.operator, ladder: a.ladder, unitReturns: a.unitReturns })),
++        stoppedNow,
++        restoredNow,
++        t,
++      );
++      for (const name of update.lifted) {
++        decisions.push({
++          t,
++          kind: "OPERATOR_RESTORE",
++          node: name,
++          detail:
++            (restoredNow.includes(name) ? "its own ladder lifted its cut" : "new high on its own record") +
++            " since its operator's stop-out; full sizing at next reallocation",
++        });
++      }
++      // The whole group in ONE plan: shrinks, then the pods, in one applyTargets.
++      const cuts = new Map<string, bigint>();
++      for (const { name, after } of update.capped) {
++        const capital = budgetOf(agents.find((a) => a.name === name)!);
++        const full = fullSize.get(name)!;
++        const to = cutToCeiling(capital, full, capFactor);
++        if (to !== null) cuts.set(name, toUnits(to));
++        decisions.push({
++          t,
++          kind: "OPERATOR_CUT",
++          node: name,
++          detail:
++            `same operator as ${after}, stopped out → capped at ×${capFactor} of its full size ${full.toFixed(0)} USDC ` +
++            (to === null
++              ? `(it already holds ${capital.toFixed(0)}: not cut again)`
++              : `(${capital.toFixed(0)} → ${to.toFixed(0)} USDC)`) +
++            " until it recovers on its own record (a new high, or its ladder lifting a cut); its own ladder is unchanged",
++        });
++      }
++      if (cuts.size > 0) applyTargets(tree, podOf, subsOf, cuts);
++      operatorCaps = update.caps;
++    }
++
+     /* 7) Invariants: a break made during the tick is caught before the next. */
+     audit(t, "end");
+   }
+diff --git a/packages/swarm/src/counterparty.test.ts b/packages/swarm/src/counterparty.test.ts
+new file mode 100644
+index 0000000..949a709
+--- /dev/null
++++ b/packages/swarm/src/counterparty.test.ts
+@@ -0,0 +1,347 @@
++/**
++ * (G) One operator, one counterparty: a stop-out of one of an operator's names
++ * caps its other live names as a group, in one tree plan, at cutFactor of
++ * their FULL SIZE. Checked on a scripted market where every agent's record is
++ * written tick by tick, so each case the guarantee must survive happens on a
++ * known tick:
++ *
++ *  - a name the ladder cut and restored, still holding half its capital when
++ *    its operator's other name is stopped (loop 2's failure: halved again);
++ *  - a name the ladder holds cut through the event and the next reallocation
++ *    (the two cuts must not multiply);
++ *  - a name capped while healthy that its own ladder then cuts (not again);
++ *  - a second stop-out of the same operator while names are still capped;
++ *  - lifting on a new high, and with the name's own ladder lifting its cut.
++ *
++ * Together they fail if the cap re-cuts a name already at the ceiling (or
++ * decides that on ladder state), multiplies the ladder's and the operator's
++ * factors at a reallocation, lets the ladder's own cut halve a capped name
++ * again, ignores the cap at a reallocation, never lifts it on the name's own
++ * recovery, splits the group into several plans, revokes a name, or moves
++ * anyone's ladder (each was run as a mutation against them).
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { defaultCenterBookPolicy, ladderStep, type LadderState } from "./allocator";
++import { runBook, type BookResult, type SwarmSpec } from "./book";
++import { generateMarket, type Market } from "./market";
++import { isNewHigh } from "./stats";
++import type { Strategy, Weights } from "./strategies";
++
++const FUND = "fund.eth";
++const policy = defaultCenterBookPolicy();
++const CF = policy.cutFactor!;
++const T = 50;
++
++/** base ± amp, alternating: a low-vol record, so every rung is at its fixed floor. */
++const alt = (t: number, base: number, amp: number) => base + (t % 2 === 0 ? amp : -amp);
++
++/**
++ * Each agent holds one instrument, long 0.5 at leverage 2: its record IS the
++ * instrument's return, scripted here. Scripting the market (not the agents)
++ * keeps every agent point-in-time.
++ */
++const SCRIPTS: Record<string, (t: number) => number> = {
++  // mallory's loser: stopped out at t = 20 (the first credit event).
++  L: (t) => (t < 20 ? alt(t, 0.003, 0.002) : t === 20 ? -0.25 : -0.02),
++  // mallory's healthy name: at its high at t = 20, flat until a new high at t = 34.
++  F: (t) => (t <= 20 ? alt(t, 0.003, 0.002) : t < 34 ? 0 : t === 34 ? 0.005 : alt(t, 0.003, 0.002)),
++  // Cut by its ladder at t = 5, restored at t = 6: still at half capital at t = 20.
++  BO: (t) => (t <= 4 ? alt(t, 0.01, 0.002) : t === 5 ? -0.12 : t === 6 ? 0.08 : 0.001),
++  // Cut by its ladder at t = 15 and held there; stopped at t = 40 (the second event).
++  HC: (t) => (t <= 14 ? alt(t, 0.02, 0.002) : t === 15 ? -0.12 : t < 40 ? 0.001 : t === 40 ? -0.15 : -0.01),
++  // Cut at t = 10, still cut at t = 20; its own ladder restores it at t = 26.
++  RC: (t) => (t <= 9 ? alt(t, 0.01, 0.002) : t === 10 ? -0.11 : t < 26 ? 0 : t === 26 ? 0.07 : 0.001),
++  // Healthy at t = 20 (capped), then cut by its own ladder at t = 25 while capped.
++  CC: (t) => (t <= 20 ? alt(t, 0.01, 0.002) : t < 25 ? 0 : t === 25 ? -0.11 : 0),
++  // op-s runs one name: stopped at t = 12, caps no one.
++  SO: (t) => (t < 12 ? alt(t, 0.003, 0.002) : t === 12 ? -0.25 : 0),
++  // No operator: stopped at t = 25, caps no one.
++  AN: (t) => (t < 25 ? alt(t, 0.003, 0.002) : t === 25 ? -0.25 : 0),
++  // op-b's only name: never touched.
++  BY: (t) => alt(t, 0.002, 0.001),
++};
++const INSTRUMENTS = Object.keys(SCRIPTS);
++
++function scriptedMarket(): Market {
++  const m = generateMarket({
++    seed: 11,
++    ticks: T,
++    instruments: INSTRUMENTS,
++    factorVol: 0.008,
++    idioVol: 0.01,
++    // No crowd in this market.
++    crowd: { instrument: "BY", startTick: 10_000, crashTick: 10_001, inflowDrift: 0, crashSize: 0, contagion: 0 },
++  });
++  for (const tick of m.ticks) for (const s of INSTRUMENTS) tick.returns[s] = SCRIPTS[s]!(tick.t);
++  return m;
++}
++const market = scriptedMarket();
++
++class Hold implements Strategy {
++  readonly style = "hold";
++  constructor(private readonly instrument: string) {}
++  decide(): Weights {
++    return { [this.instrument]: 0.5 };
++  }
++}
++
++const ROSTER: [label: string, instrument: string, pod: string, operator?: string][] = [
++  ["loser", "L", "alpha", "mallory"],
++  ["full", "F", "alpha", "mallory"],
++  ["bounced", "BO", "beta", "mallory"],
++  ["heldcut", "HC", "beta", "mallory"],
++  ["recovers", "RC", "alpha", "mallory"],
++  ["capcut", "CC", "alpha", "mallory"],
++  ["solo", "SO", "beta", "op-s"],
++  ["anon", "AN", "alpha"],
++  ["bystander", "BY", "beta", "op-b"],
++];
++
++function swarm(labelled: boolean): SwarmSpec {
++  return {
++    principal: "alice",
++    fund: FUND,
++    aum: 10_000_000,
++    pods: [
++      { label: "alpha", instruments: INSTRUMENTS },
++      { label: "beta", instruments: INSTRUMENTS },
++    ],
++    agents: ROSTER.map(([label, instrument, pod, operator]) => ({
++      label,
++      pod,
++      ...(labelled && operator ? { operator } : {}),
++      instruments: INSTRUMENTS,
++      strategy: new Hold(instrument),
++    })),
++  };
++}
++
++const nameOf = (label: string) => {
++  const [, , pod] = ROSTER.find(([l]) => l === label)!;
++  return `${label}.${pod}.${FUND}`;
++};
++
++/** Each agent's ladder state after every tick, from ITS OWN record alone: no book, no capital, no siblings. */
++function ownLadder(unitReturns: readonly number[]): LadderState[] {
++  let state: LadderState = "active";
++  return unitReturns.map((_, t) => {
++    state = ladderStep(state, unitReturns.slice(0, t + 1), {
++      ddStop: policy.ddStop,
++      ddCut: policy.ddCut,
++      ddRecover: policy.ddRecover,
++      ddStopVol: policy.ddStopVol,
++      volWindow: policy.window,
++      ddStopMax: policy.ddStopMax,
++    }).next;
++    return state;
++  });
++}
++
++interface Run {
++  book: BookResult;
++  /** Agent budgets (USDC) at the start of each tick, before it acts: [t][label]. */
++  budgets: Map<string, number>[];
++  /** Agents whose mandate is dead at the start of each tick. */
++  revoked: Set<string>[];
++  /** Tree event count at the start of each tick. */
++  seq: number[];
++}
++
++async function run(labelled: boolean): Promise<Run> {
++  const budgets: Map<string, number>[] = [];
++  const revoked: Set<string>[] = [];
++  const seq: number[] = [];
++  const book = await runBook(market, swarm(labelled), policy, {
++    onTick: (t, tree) => {
++      seq[t] = tree.events.length;
++      budgets[t] = new Map(ROSTER.map(([l]) => [l, Number(tree.requireNode(nameOf(l)).mandate.budget) / 1e6]));
++      revoked[t] = new Set(ROSTER.map(([l]) => l).filter((l) => tree.isRevokedInChain(nameOf(l))));
++    },
++  });
++  return { book, budgets, revoked, seq };
++}
++
++const labelledRun = run(true);
++const blindRun = run(false);
++const agent = (r: Run, label: string) => r.book.agents.find((a) => a.label === label)!;
++/** Budget at the end of tick t (= the start of t + 1). */
++const endOf = (r: Run, t: number, label: string) => r.budgets[t + 1]!.get(label)!;
++const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b)), `${what}: ${a} vs ${b}`);
++const decisionsAt = (r: Run, t: number, kind: string) =>
++  r.book.decisions.filter((d) => d.t === t && d.kind === kind).map((d) => d.node);
++
++test("the script plays out: each name's ladder moves on the tick its own record says", async () => {
++  const { book } = await labelledRun;
++  const transitions = (kind: string) => book.decisions.filter((d) => d.kind === kind).map((d) => [d.t, d.node]);
++  assert.deepEqual(transitions("STOP_OUT"), [
++    [12, nameOf("solo")],
++    [20, nameOf("loser")],
++    [25, nameOf("anon")],
++    [40, nameOf("heldcut")],
++  ]);
++  assert.deepEqual(transitions("CUT"), [
++    [5, nameOf("bounced")],
++    [10, nameOf("recovers")],
++    [15, nameOf("heldcut")],
++    [25, nameOf("capcut")],
++  ]);
++  assert.deepEqual(transitions("RESTORE"), [
++    [6, nameOf("bounced")],
++    [26, nameOf("recovers")],
++  ]);
++  assert.deepEqual(book.decisions.filter((d) => d.kind === "CROWDING_CUT"), [], "no crowding cut muddies the capital checks");
++});
++
++test("no stop-out (or any ladder move) is delayed or advanced: every one is the agent's own record replayed alone", async () => {
++  const lab = await labelledRun;
++  const blind = await blindRun;
++  const moves = (b: BookResult) =>
++    b.decisions.filter((d) => d.kind === "STOP_OUT" || d.kind === "CUT" || d.kind === "RESTORE").map((d) => `${d.t} ${d.kind} ${d.node}`);
++  assert.deepEqual(moves(lab.book), moves(blind.book), "operator labels move no ladder");
++  const own: string[] = [];
++  for (const a of lab.book.agents) {
++    assert.deepEqual(a.unitReturns, agent(blind, a.label).unitReturns, "records never depend on capital");
++    const states = ownLadder(a.unitReturns);
++    states.forEach((s, t) => {
++      const prev = t === 0 ? "active" : states[t - 1]!;
++      if (s === prev) return;
++      own.push(`${t} ${s === "stopped" ? "STOP_OUT" : s === "cut" ? "CUT" : "RESTORE"} ${a.name}`);
++    });
++    assert.equal(a.ladder, states.at(-1), `${a.label}: final ladder state is its own`);
++  }
++  const byTick = (xs: string[]) => [...xs].sort((x, y) => Number(x.split(" ")[0]) - Number(y.split(" ")[0]) || x.localeCompare(y));
++  assert.deepEqual(byTick(moves(lab.book)), byTick(own));
++});
++
++test("revoked iff stopped by its own record, at every tick: an operator cap never revokes anyone", async () => {
++  for (const r of [await labelledRun, await blindRun]) {
++    const stopAt = new Map(
++      r.book.agents.map((a) => [a.label, ownLadder(a.unitReturns).indexOf("stopped")] as const).filter(([, t]) => t >= 0),
++    );
++    for (let t = 0; t < T; t++) {
++      const expected = [...stopAt].filter(([, s]) => s < t).map(([l]) => l).sort();
++      assert.deepEqual([...r.revoked[t]!].sort(), expected, `t=${t}`);
++    }
++    for (const a of r.book.agents) {
++      assert.equal(r.book.tree.isRevokedInChain(a.name), a.ladder === "stopped", `${a.label} at the end`);
++    }
++  }
++});
++
++test("first credit event: the operator's other names are capped as a group, cut on capital, in one tree plan", async () => {
++  const lab = await labelledRun;
++  const blind = await blindRun;
++  // Dormant until the credit event: the two books are the same book.
++  assert.deepEqual(lab.book.nav.slice(0, 20), blind.book.nav.slice(0, 20));
++  assert.deepEqual(lab.budgets.slice(0, 21), blind.budgets.slice(0, 21));
++  // Before the first reallocation the full size is the equal initial allocation.
++  const perAgent = (10_000_000 * policy.deploy) / ROSTER.length;
++  const capped = ["full", "bounced", "heldcut", "recovers", "capcut"];
++  for (const l of capped) assert.equal(agent(lab, l).fullSize[20], perAgent);
++  assert.equal(agent(lab, "solo").fullSize[20], 0, "a closed mandate has no full size");
++
++  assert.deepEqual(decisionsAt(lab, 20, "OPERATOR_CUT"), capped.map(nameOf), "every other live mallory name, in both pods");
++  assert.deepEqual(decisionsAt(lab, 12, "OPERATOR_CUT"), [], "solo's operator runs no other name");
++  assert.deepEqual(decisionsAt(lab, 25, "OPERATOR_CUT"), [], "anon has no operator");
++
++  // Healthy names at full size are cut to cutFactor of it...
++  for (const l of ["full", "capcut"]) near(endOf(lab, 20, l), CF * perAgent, `${l} capped`);
++  // ...names already at the ceiling are NOT cut again: the one its ladder cut and
++  // restored (still at half capital), and the two its ladder holds cut.
++  for (const l of ["bounced", "heldcut", "recovers"]) {
++    near(endOf(lab, 19, l), CF * perAgent, `${l} was already at the cut size`);
++    assert.equal(endOf(lab, 20, l), endOf(lab, 19, l), `${l} halved again`);
++    assert.equal(endOf(lab, 20, l), endOf(blind, 20, l));
++  }
++  for (const l of ["solo", "anon", "bystander"]) assert.equal(endOf(lab, 20, l), endOf(blind, 20, l), `${l} untouched`);
++  const detail = (l: string) => lab.book.decisions.find((d) => d.t === 20 && d.kind === "OPERATOR_CUT" && d.node === nameOf(l))!.detail;
++  assert.match(detail("bounced"), /not cut again/);
++  assert.match(detail("full"), /→/);
++
++  // ONE plan: after the loser's close (its REVOKE), the tick's remaining tree
++  // writes are exactly the capped names that needed a cut, then the pods.
++  const events = lab.book.tree.events.slice(lab.seq[20], lab.seq[21]);
++  const revoke = events.findIndex((e) => e.type === "REVOKE" && e.node === nameOf("loser"));
++  const after = events.slice(revoke + 1);
++  assert.deepEqual(
++    after.slice(0, 2).map((e) => [e.type, e.result, e.node]),
++    ["full", "capcut"].map((l) => ["RESIZE", "OK", nameOf(l)]),
++  );
++  assert.ok(after.length > 2);
++  for (const e of after.slice(2)) {
++    assert.equal(e.type, "RESIZE");
++    assert.equal(lab.book.tree.requireNode(e.node).parent, FUND, `${e.node}: only pods follow the group`);
++  }
++});
++
++test("a ladder cut on a name its operator already capped does not cut it again", async () => {
++  const lab = await labelledRun;
++  const blind = await blindRun;
++  const cut = lab.book.decisions.find((d) => d.t === 25 && d.kind === "CUT" && d.node === nameOf("capcut"))!;
++  assert.match(cut.detail, /not cut again/);
++  assert.equal(endOf(lab, 25, "capcut"), endOf(lab, 24, "capcut"), "capcut halved again by its own ladder");
++  // Unlabelled, the same record is cut by the ladder as usual.
++  near(endOf(blind, 25, "capcut"), CF * endOf(blind, 24, "capcut"), "blind ladder cut");
++});
++
++test("at a reallocation, capped names are sized at cutFactor of full size — once, even when their ladder also cuts them", async () => {
++  const lab = await labelledRun;
++  const band = policy.rebalanceBand;
++  const t = policy.warmup; // the first reallocation
++  for (const l of ["full", "bounced", "heldcut", "capcut"]) {
++    const a = agent(lab, l);
++    assert.ok(a.fullSize[t]! > 0, `${l} has a full size to be capped at`);
++    const ratio = a.capital[t]! / (CF * a.fullSize[t]!);
++    // Within the rebalance band of cutFactor × full size (never cutFactor²).
++    assert.ok(ratio > 1 - band - 1e-9 && ratio < 1 / (1 - band) + 1e-9, `${l} at t=${t}: ${ratio.toFixed(3)} × the cap`);
++  }
++  // Both the ladder and the operator cap hold heldcut and capcut, and both were moved at t = 30.
++  for (const l of ["heldcut", "capcut"]) {
++    assert.ok(decisionsAt(lab, t, "REALLOCATE").includes(nameOf(l)), `${l} was resized at t=${t}`);
++    near(agent(lab, l).capital[t]!, CF * agent(lab, l).fullSize[t]!, `${l}: cutFactor once`);
++  }
++  // recovers' own ladder lifted its cut at t = 26, and the cap with it: full size at t = 30.
++  assert.deepEqual(decisionsAt(lab, 26, "OPERATOR_RESTORE"), [nameOf("recovers")]);
++  const rc = agent(lab, "recovers");
++  assert.ok(Math.abs(rc.capital[t]! / rc.fullSize[t]! - 1) < band, `recovers back at full size: ${rc.capital[t]} vs ${rc.fullSize[t]}`);
++});
++
++test("a cap lifts on the name's first new high on its own record, and not before", async () => {
++  const lab = await labelledRun;
++  const full = agent(lab, "full");
++  assert.deepEqual(
++    lab.book.decisions.filter((d) => d.kind === "OPERATOR_RESTORE" && d.node === full.name && d.t < 40).map((d) => d.t),
++    [34],
++  );
++  for (let t = 21; t < 34; t++) assert.ok(!isNewHigh(full.unitReturns.slice(0, t + 1)), `no new high at t=${t}`);
++  assert.ok(isNewHigh(full.unitReturns.slice(0, 35)));
++  const ratio = full.capital[35]! / full.fullSize[35]!;
++  assert.ok(Math.abs(ratio - 1) < policy.rebalanceBand, `full size again at the next reallocation: ${ratio}`);
++});
++
++test("second credit event: names still capped are left alone; lifted ones are capped again", async () => {
++  const lab = await labelledRun;
++  assert.deepEqual(decisionsAt(lab, 40, "OPERATOR_CUT"), ["full", "recovers"].map(nameOf));
++  for (const l of ["full", "recovers"]) near(endOf(lab, 40, l), CF * agent(lab, l).fullSize[40]!, `${l} capped again`);
++  const events = lab.book.tree.events.slice(lab.seq[40], lab.seq[41]);
++  const revoke = events.findIndex((e) => e.type === "REVOKE" && e.node === nameOf("heldcut"));
++  assert.deepEqual(
++    events.slice(revoke + 1, revoke + 3).map((e) => [e.type, e.node]),
++    ["full", "recovers"].map((l) => ["RESIZE", nameOf(l)]),
++  );
++  // bounced and capcut, still capped since t = 20, are not written by the event:
++  // an earlier operator cap is not compounded.
++  for (const l of ["bounced", "capcut"]) {
++    assert.ok(!events.slice(revoke + 1).some((e) => e.node === nameOf(l)), `${l} cut again`);
++    const a = agent(lab, l);
++    assert.ok(endOf(lab, 40, l) >= CF * a.fullSize[40]! * (1 - policy.rebalanceBand), `${l} below the cap`);
++  }
++});
++
++test("the tree stays sound through every group cut", async () => {
++  const { book } = await labelledRun;
++  assert.deepEqual(book.tree.audit(), []);
++  assert.ok(!book.tree.events.some((e) => e.result === "ATTENUATION_REJECTED"));
++  assert.equal(book.tree.requireNode(FUND).mandate.budget, 10_000_000_000000n);
++});
+diff --git a/packages/swarm/src/gate.ts b/packages/swarm/src/gate.ts
+index 4bd7bde..2640598 100644
+--- a/packages/swarm/src/gate.ts
++++ b/packages/swarm/src/gate.ts
+@@ -7,13 +7,20 @@
+  *                  a subset of the pod's and the fund's lists)
+  *  - gross         at most `maxGross` × capital
+  *  - liveness      a revoked or expired node (or ancestor) trades nothing
++ *  - size          `sizeOrder` turns the clipped weights into notional from the
++ *                  node's AVAILABLE authority in the tree (its budget, minus
++ *                  what it has spent itself, minus what it has handed down to
++ *                  sub-mandates) × leverage. The tree, not the book's own
++ *                  accounting, decides how much an agent can put at risk: a
++ *                  slice reserved for a sub-mandate is not also trading
++ *                  capital, and a closed mandate (available 0) trades nothing.
+  *
+  * This is the table-stakes layer every agent-trading product ships. It is
+  * necessary and it is not enough: every check here looks at ONE agent. The
+  * center book (allocator.ts / book.ts) is what looks across all of them.
+  */
+ 
+-import type { DelegationTree } from "@allowance/core";
++import { formatAmount, type DelegationTree } from "@allowance/core";
+ import type { Weights } from "./strategies";
+ 
+ export type GateViolation =
+@@ -77,3 +84,70 @@ export function preTradeCheck(
+   }
+   return { weights: clipped, clipped, violations };
+ }
++
++/* ------------------------------------------------------------------ */
++/* Size: the reservation is the binding limit                         */
++/* ------------------------------------------------------------------ */
++
++/** One agent's order for one tick: its gated weights, sized from its mandate. */
++export interface SizedOrder {
++  /** Full node name of the agent. */
++  node: string;
++  /**
++   * USDC the order is sized on: the mandate's AVAILABLE authority when it was
++   * sized (0 when the node or an ancestor is revoked or expired).
++   */
++  authority: number;
++  /** Gross leverage the authority is run at. */
++  leverage: number;
++  /** Signed weights (Σ|w| ≤ the gate's `maxGross`); empty when the mandate is dead. */
++  weights: Weights;
++}
++
++export interface SizeOptions {
++  /** Gross leverage: notional = authority × leverage × weight. */
++  leverage: number;
++  /** Evaluation time in unix seconds, for expiry. */
++  now: number;
++}
++
++/**
++ * Size an agent's gated weights from the tree: notional = available × leverage
++ * × weight, where available = budget − own spend − handed down. Nothing the
++ * caller believes about the agent's capital enters: the only number that sizes
++ * the trade is read from the agent's mandate at the moment of sizing. A revoked
++ * or expired mandate (or ancestor) is sized at zero, with no weights.
++ */
++export function sizeOrder(tree: DelegationTree, nodeName: string, weights: Weights, opts: SizeOptions): SizedOrder {
++  if (tree.isRevokedInChain(nodeName) || tree.isExpiredInChain(nodeName, opts.now)) {
++    return { node: nodeName, authority: 0, leverage: opts.leverage, weights: {} };
++  }
++  const available = tree.available(nodeName);
++  return {
++    node: nodeName,
++    authority: available > 0n ? Number(formatAmount(available)) : 0,
++    leverage: opts.leverage,
++    weights: { ...weights },
++  };
++}
++
++/** Signed notional (USDC) per instrument: authority × leverage × weight. */
++export function orderNotional(order: SizedOrder): Weights {
++  const out: Weights = {};
++  for (const [k, w] of Object.entries(order.weights)) out[k] = order.authority * order.leverage * w;
++  return out;
++}
++
++/** Σ |notional|: the gross exposure (USDC) the order puts on. */
++export function grossNotional(order: SizedOrder): number {
++  let gross = 0;
++  for (const n of Object.values(orderNotional(order))) gross += Math.abs(n);
++  return gross;
++}
++
++/** What the order earns (USDC) on one tick's returns: authority × Σ leverage × w × r. */
++export function orderPnl(order: SizedOrder, returns: Readonly<Record<string, number>>): number {
++  let perUnit = 0;
++  for (const [k, w] of Object.entries(order.weights)) perUnit += order.leverage * w * (returns[k] ?? 0);
++  return order.authority * perUnit;
++}
+diff --git a/packages/swarm/src/reserve.test.ts b/packages/swarm/src/reserve.test.ts
+new file mode 100644
+index 0000000..da96fd0
+--- /dev/null
++++ b/packages/swarm/src/reserve.test.ts
+@@ -0,0 +1,502 @@
++/**
++ * (R) The reservation is the binding risk limit. Every agent's notional is
++ * sized from its mandate's AVAILABLE authority in the tree (budget − its own
++ * spend − what it handed down) × leverage, never from a number the book keeps,
++ * and every order is audited against the tree before it is marked.
++ *
++ * The scenario these tests run is one where the book's own capital number for
++ * an agent (its budget) overstates what the agent may trade, while the tree
++ * is sound: the agent has handed slices of its budget to desks, pays a vendor
++ * out of its own mandate, and is handed an outside sub-mandate mid-run. Sized
++ * from its budget (as the book did before), it would trade authority that is
++ * reserved for someone else.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { DelegationTree, formatAmount, pay, type PaymentAdapters } from "@allowance/core";
++import { defaultCenterBookPolicy, defaultNaivePolicy, type AllocationPolicy } from "./allocator";
++import { BookInvariantError, runBook, tickToUnix, TRADE_SLACK, tradeViolations, type SwarmSpec } from "./book";
++import { grossNotional, orderNotional, orderPnl, sizeOrder, type SizedOrder } from "./gate";
++import { generateMarket, genericMarketConfig, type Market } from "./market";
++import { HerdStrategy, MeanReversionStrategy, NoiseStrategy, TrendStrategy, type Strategy, type Weights } from "./strategies";
++
++const FUND = "fund.eth";
++const usdc = (units: bigint) => Number(formatAmount(units));
++const U = 1_000000n; // one USDC in units
++
++/** Always-yes payment ports: these tests are about authority, not the adapters. */
++const allowAll: PaymentAdapters = {
++  identity: { verify: async () => ({ ok: true }) },
++  screening: { screen: async () => ({ approved: true }) },
++  settlement: {
++    settle: async (req) => ({
++      settled: true,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: req.amount,
++      amountOut: req.amount,
++    }),
++  },
++};
++
++/* ------------------------------------------------------------------ */
++/* Unit: the gate sizes from the tree                                 */
++/* ------------------------------------------------------------------ */
++
++const E = 10_000;
++/** fund 1000 → pod 600 → a 300 (desk 100, spent 20 itself) and b 200. */
++async function smallTree() {
++  const tree = new DelegationTree();
++  tree.fundRoot({ principal: "p", rootName: FUND, mandate: { budget: 1_000n * U, allowedMerchants: ["X", "Y", "Z"], expiry: E } });
++  tree.delegate(FUND, "pod", { budget: 600n * U, allowedMerchants: ["X", "Y", "Z"], expiry: E });
++  const POD = `pod.${FUND}`;
++  tree.delegate(POD, "a", { budget: 300n * U, allowedMerchants: ["X", "Y"], expiry: E });
++  tree.delegate(POD, "b", { budget: 200n * U, allowedMerchants: ["X", "Y"], expiry: E });
++  const A = `a.${POD}`;
++  const B = `b.${POD}`;
++  tree.delegate(A, "desk", { budget: 100n * U, allowedMerchants: ["X"], expiry: E });
++  assert.equal((await pay(tree, { node: A, merchant: "X", amount: 20n * U }, allowAll, { now: 1 })).outcome, "SETTLED");
++  return { tree, POD, A, B };
++}
++
++test("sizeOrder: notional is the AVAILABLE authority × leverage — a desk's slice and the agent's own spend are not trading capital", async () => {
++  const { tree, POD, A, B } = await smallTree();
++  const w: Weights = { X: 0.5, Y: -0.5 };
++  const o = sizeOrder(tree, A, w, { leverage: 2, now: 1 });
++  // Budget 300, spent 20, handed down 100: 180 is what a may still put at risk.
++  assert.equal(o.authority, 180);
++  assert.deepEqual(orderNotional(o), { X: 180, Y: -180 });
++  assert.equal(grossNotional(o), 360, "= available × leverage, not budget × leverage (600)");
++  assert.ok(Math.abs(orderPnl(o, { X: 0.01, Y: -0.02 }) - 180 * 2 * (0.5 * 0.01 + 0.5 * 0.02)) < 1e-12);
++  w.X = 5;
++  assert.equal(o.weights.X, 0.5, "the order holds its own copy of the weights");
++  // A sibling with nothing handed down trades its whole budget.
++  assert.equal(sizeOrder(tree, B, { X: 1 }, { leverage: 2, now: 1 }).authority, 200);
++
++  // Dead mandates are sized at zero with no weights: expired…
++  assert.deepEqual(sizeOrder(tree, A, { X: 1 }, { leverage: 2, now: E + 1 }), { node: A, authority: 0, leverage: 2, weights: {} });
++  // …closed…
++  tree.close(A);
++  assert.deepEqual(sizeOrder(tree, A, { X: 1 }, { leverage: 2, now: 1 }), { node: A, authority: 0, leverage: 2, weights: {} });
++  assert.equal(sizeOrder(tree, B, { X: 1 }, { leverage: 2, now: 1 }).authority, 200);
++  // …or under a closed ancestor.
++  tree.close(POD);
++  assert.equal(sizeOrder(tree, B, { X: 1 }, { leverage: 2, now: 1 }).authority, 0);
++});
++
++test("tradeViolations: an order sized from any number but the tree's available authority is named, and nothing else is", async () => {
++  const { tree, A, B } = await smallTree();
++  const opts = { leverage: 2, now: 1 };
++  const a = sizeOrder(tree, A, { X: 0.5, Y: -0.5 }, opts);
++  const b = sizeOrder(tree, B, { X: 1 }, opts);
++  assert.deepEqual(tradeViolations(tree, [a, b], opts), [], "orders sized from the tree are sound");
++
++  // a sized from its BUDGET (the book's own capital number before this change): named, b is not.
++  assert.deepEqual(tradeViolations(tree, [{ ...a, authority: 300 }, b], opts), [
++    `OVER_RESERVATION ${A}: gross notional 600.00 > available 180.00 × leverage 2`,
++  ]);
++  // Inflated by 1.5× for one agent, or run at more than the policy's leverage.
++  assert.deepEqual(
++    tradeViolations(tree, [a, { ...b, authority: 300 }], opts).map((v) => v.split(":")[0]),
++    [`OVER_RESERVATION ${B}`],
++  );
++  assert.deepEqual(
++    tradeViolations(tree, [{ ...a, leverage: 3 }, b], opts).map((v) => v.split(":")[0]),
++    [`OVER_RESERVATION ${A}`],
++  );
++  // The bound is tight: exactly at it passes, past the slack fails.
++  assert.deepEqual(tradeViolations(tree, [{ ...a, weights: { X: 1 } }], opts), []);
++  assert.deepEqual(tradeViolations(tree, [{ ...a, weights: { X: 1 + 10 * TRADE_SLACK } }], opts).length, 1);
++  // Off the allowlist, non-finite, or not a node at all.
++  assert.deepEqual(tradeViolations(tree, [{ ...a, weights: { Z: 0.1 } }], opts), [`OFF_MANDATE ${A}: holds Z`]);
++  assert.deepEqual(
++    tradeViolations(tree, [{ ...a, authority: Number.NaN }], opts).map((v) => v.split(":")[0]),
++    [`NOT_FINITE ${A}`],
++  );
++  assert.deepEqual(tradeViolations(tree, [{ ...a, node: `ghost.${FUND}` }], opts), [`UNKNOWN_NODE ghost.${FUND}: no such mandate`]);
++
++  // A closed agent trades nothing: any notional at all is named…
++  tree.close(A);
++  assert.deepEqual(
++    tradeViolations(tree, [{ ...a, authority: 1 }, b], opts).map((v) => v.split(":")[0]),
++    [`DEAD_TRADES ${A}`],
++  );
++  // …weights on zero authority put nothing on, and the re-sized order is empty.
++  assert.deepEqual(tradeViolations(tree, [{ ...a, authority: 0 }], opts), []);
++  assert.deepEqual(tradeViolations(tree, [sizeOrder(tree, A, { X: 1 }, opts), b], opts), []);
++  // An expired mandate is dead too.
++  assert.deepEqual(
++    tradeViolations(tree, [b], { ...opts, now: E + 1 }).map((v) => v.split(":")[0]),
++    [`DEAD_TRADES ${B}`],
++  );
++});
++
++/* ------------------------------------------------------------------ */
++/* The book: a budget that overstates the agent's authority           */
++/* ------------------------------------------------------------------ */
++
++const TURN = 80;
++/** The seed-7 generic market, with GOLD scripted to run up until TURN and then slide (a stop-out). */
++function scriptedMarket(): Market {
++  const m = generateMarket(genericMarketConfig(7));
++  m.ticks.forEach((tick, t) => {
++    tick.returns.GOLD = t < TURN ? 0.004 + (t % 2 === 0 ? 0.002 : -0.002) : -0.02;
++  });
++  return m;
++}
++const market = scriptedMarket();
++const T = market.ticks.length;
++
++class LongGold implements Strategy {
++  readonly style = "long-gold";
++  decide(): Weights {
++    return { GOLD: 0.5 };
++  }
++}
++
++const DESKED = `desked.systematic.${FUND}`;
++const DOOMED = `doomed.systematic.${FUND}`;
++const PLAIN = `plain.macro.${FUND}`;
++const GRANT = 50;
++
++function spec(): SwarmSpec {
++  const all = [...market.instruments];
++  return {
++    principal: "alice",
++    fund: FUND,
++    aum: 10_000_000,
++    pods: [
++      { label: "systematic", instruments: all },
++      { label: "macro", instruments: all },
++    ],
++    agents: [
++      {
++        label: "desked",
++        pod: "systematic",
++        instruments: all,
++        strategy: new TrendStrategy(30),
++        subMandates: [
++          { label: "exec", share: 0.3 },
++          { label: "data", share: 0.02, instruments: ["GOLD"] },
++        ],
++      },
++      { label: "doomed", pod: "systematic", instruments: all, strategy: new LongGold(), subMandates: [{ label: "exec", share: 0.25 }] },
++      { label: "plain", pod: "macro", instruments: all, strategy: new MeanReversionStrategy(3) },
++      { label: "herd-a", pod: "macro", instruments: all, strategy: new HerdStrategy(20) },
++      { label: "herd-b", pod: "systematic", instruments: all, strategy: new HerdStrategy(25) },
++      { label: "noise", pod: "macro", instruments: all, strategy: new NoiseStrategy(5) },
++    ],
++  };
++}
++
++/**
++ * What happens to the tree outside the book, every tick: the desks pay for
++ * execution and data, the desked agent pays a vendor out of its own mandate,
++ * and at GRANT its operator hands a vendor a quarter of what it has left (a
++ * sub-mandate the book does not manage). All of it goes through the tree's
++ * own API, so the tree stays sound; only the agent's budget stops being what
++ * it may trade.
++ */
++async function outside(t: number, tree: DelegationTree): Promise<void> {
++  const now = tickToUnix(t);
++  const spend = async (node: string, amount: bigint) => {
++    if (tree.isRevokedInChain(node) || tree.available(node) < amount) return;
++    const r = await pay(tree, { node, merchant: "GOLD", amount }, allowAll, { now });
++    assert.equal(r.outcome, "SETTLED");
++  };
++  for (const n of tree.listNodes()) {
++    if (n.name.startsWith("exec.")) await spend(n.name, 5_000n * U);
++    if (n.name.startsWith("data.")) await spend(n.name, 1_000n * U);
++  }
++  await spend(DESKED, 1_000n * U);
++  if (t === GRANT) {
++    tree.delegate(DESKED, "vendor", { budget: tree.available(DESKED) / 4n, allowedMerchants: ["GOLD"], expiry: tickToUnix(T + 30) });
++  }
++}
++
++interface Seen {
++  authority: number;
++  notional: Weights;
++  dead: boolean;
++}
++
++/**
++ * Run the scenario and check every order from the outside at the moment it is
++ * handed over for marking, restating the bound independently of the book: an
++ * order is sized on no more than available = budget − spent − Σ children's
++ * budgets, its gross notional is at most available × leverage, and a dead
++ * mandate puts on nothing. Also counts how often the budget overstated the
++ * available authority, and how often sizing from it would have broken the
++ * notional bound.
++ */
++async function watchTrades(policy: AllocationPolicy) {
++  const seen: Seen[][] = [];
++  let overstated = 0;
++  let breaches = 0;
++  let worst = 0;
++  const book = await runBook(market, spec(), policy, {
++    onTick: outside,
++    onTrade: (t, tree, orders) => {
++      assert.equal(t, seen.length);
++      const row: Seen[] = [];
++      for (const o of orders) {
++        const node = tree.requireNode(o.node);
++        const handedDown = tree.childrenOf(o.node).reduce((s, c) => s + c.mandate.budget, 0n);
++        const available = node.mandate.budget - node.mandate.spentDirect - handedDown;
++        const dead = tree.isRevokedInChain(o.node);
++        const weightGross = Object.values(o.weights).reduce((s, w) => s + Math.abs(w), 0);
++        const gross = Object.values(o.weights).reduce((s, w) => s + Math.abs(o.authority * o.leverage * w), 0);
++        assert.equal(o.leverage, policy.leverage, `t=${t}: ${o.node} runs the policy's leverage`);
++        if (dead) {
++          assert.deepEqual(o.weights, {}, `t=${t}: closed ${o.node} holds a book`);
++          assert.equal(o.authority, 0, `t=${t}: closed ${o.node} holds authority`);
++        } else {
++          assert.ok(o.authority <= usdc(available), `t=${t}: ${o.node} sized on ${o.authority} > available ${usdc(available)}`);
++          const limit = usdc(available) * policy.leverage;
++          assert.ok(gross <= limit * (1 + TRADE_SLACK), `t=${t}: ${o.node} trades ${gross} > available × leverage ${limit}`);
++          if (node.mandate.budget > available + U) overstated++;
++          const byBudget = usdc(node.mandate.budget) * policy.leverage * weightGross;
++          if (byBudget > limit * (1 + 1e-6)) {
++            breaches++;
++            worst = Math.max(worst, byBudget - limit);
++          }
++        }
++        row.push({ authority: o.authority, notional: orderNotional(o), dead });
++      }
++      seen.push(row);
++    },
++  });
++  return { book, seen, overstated, breaches, worst };
++}
++
++const policies: [string, AllocationPolicy][] = [
++  ["center book", defaultCenterBookPolicy()],
++  ["center book without a cut rung", { ...defaultCenterBookPolicy(), ddCut: undefined, cutFactor: undefined, ddRecover: undefined }],
++  ["per-agent guardrails", defaultNaivePolicy()],
++];
++
++for (const [label, policy] of policies) {
++  test(`${label}: no agent ever trades more than its available authority × leverage, though its budget says more; a closed agent trades nothing`, async () => {
++    const { book, seen, overstated, breaches, worst } = await watchTrades(policy);
++    assert.equal(seen.length, T, "every tick's orders were handed over");
++    const tree = book.tree;
++
++    // The scenario bites: the book's capital number (the budget) overstated
++    // what agents may trade, often, and sizing from it would have put real
++    // money beyond the reservation.
++    assert.ok(overstated >= 300, `live orders whose budget overstated their available authority: ${overstated}`);
++    assert.ok(breaches >= 200, `…of which budget-sizing would breach available × leverage: ${breaches}`);
++    assert.ok(worst >= 500_000, `by up to ${worst.toFixed(0)} USDC of notional`);
++    assert.ok(tree.requireNode(DESKED).mandate.spentDirect > 0n, "the agent paid out of its own mandate");
++    assert.ok(tree.getNode(`vendor.${DESKED}`), "an outside sub-mandate was granted");
++
++    // What is marked is exactly what was audited: capital = the order's
++    // authority, PnL = Σ notional × return, NAV = Σ PnL.
++    let nav = book.startNav;
++    for (let t = 0; t < T; t++) {
++      let tickPnl = 0;
++      book.agents.forEach((a, i) => {
++        const s = seen[t]![i]!;
++        assert.equal(a.capital[t], s.authority, `t=${t}: ${a.name} ran the audited authority`);
++        let pnl = 0;
++        for (const [k, n] of Object.entries(s.notional)) pnl += n * (market.ticks[t]!.returns[k] ?? 0);
++        assert.ok(Math.abs(a.pnl[t]! - pnl) <= 1e-9 * Math.max(1, Math.abs(pnl)), `t=${t}: ${a.name} marked ${a.pnl[t]} vs audited ${pnl}`);
++        tickPnl += a.pnl[t]!;
++      });
++      nav += tickPnl;
++      assert.ok(Math.abs(book.nav[t]! - nav) <= 1e-6, `t=${t}: NAV is the sum of the marked orders`);
++    }
++
++    // The stop-out: from the tick after its close, the doomed agent's orders are empty.
++    const stop = book.decisions.find((d) => d.kind === "STOP_OUT" && d.node === DOOMED);
++    assert.ok(stop, "the doomed agent is stopped out");
++    const i = book.agents.findIndex((a) => a.name === DOOMED);
++    for (let t = stop.t + 1; t < T; t++) {
++      assert.equal(seen[t]![i]!.dead, true);
++      assert.deepEqual(seen[t]![i]!.notional, {});
++      assert.equal(book.agents[i]!.pnl[t], 0);
++    }
++    assert.ok(stop.t + 1 < T - 50, "and there were many ticks after it");
++  });
++}
++
++/* ------------------------------------------------------------------ */
++/* The audit: a corrupted size never reaches the mark                 */
++/* ------------------------------------------------------------------ */
++
++/**
++ * Run the scenario with `tamper` applied to the orders at one tick, and
++ * return what the book threw. The tree is checked sound (the core audit) at
++ * the moment of tampering: only the order's number is wrong.
++ */
++async function tampered(
++  policy: AllocationPolicy,
++  tamper: (t: number, tree: DelegationTree, orders: SizedOrder[]) => boolean,
++): Promise<{ error: unknown; at: number | null }> {
++  let at: number | null = null;
++  try {
++    await runBook(market, spec(), policy, {
++      onTick: outside,
++      onTrade: (t, tree, orders) => {
++        if (at !== null) return;
++        if (tamper(t, tree, orders as SizedOrder[])) {
++          assert.deepEqual(tree.audit(), [], "the tree itself is sound");
++          at = t;
++        }
++      },
++    });
++  } catch (error) {
++    return { error, at };
++  }
++  return { error: null, at };
++}
++
++const index = (name: string) => spec().agents.findIndex((a) => `${a.label}.${a.pod}.${FUND}` === name);
++
++test("a book capital number inflated for one agent (the tree untouched) stops the book at the trade, naming that agent", async () => {
++  for (const [, policy] of policies) {
++    // The desked agent sized from its budget, as the book sized every agent before.
++    const fromBudget = await tampered(policy, (t, tree, orders) => {
++      if (t !== 60) return false;
++      orders[index(DESKED)]!.authority = usdc(tree.requireNode(DESKED).mandate.budget);
++      return true;
++    });
++    assert.equal(fromBudget.at, 60);
++    assert.ok(fromBudget.error instanceof BookInvariantError, String(fromBudget.error));
++    assert.equal(fromBudget.error.t, 60);
++    assert.equal(fromBudget.error.at, "trade");
++    assert.deepEqual(fromBudget.error.violations.map((v) => v.split(":")[0]), [`OVER_RESERVATION ${DESKED}`]);
++
++    // An agent with nothing handed down, inflated 1.5×.
++    const inflated = await tampered(policy, (t, _tree, orders) => {
++      const o = orders[index(PLAIN)]!;
++      if (t < 40 || grossNotional(o) === 0) return false;
++      o.authority *= 1.5;
++      return true;
++    });
++    assert.ok(inflated.error instanceof BookInvariantError);
++    assert.equal(inflated.error.t, inflated.at);
++    assert.deepEqual(inflated.error.violations.map((v) => v.split(":")[0]), [`OVER_RESERVATION ${PLAIN}`]);
++
++    // A closed agent handed its old book back.
++    const revived = await tampered(policy, (_t, tree, orders) => {
++      if (!tree.isRevokedInChain(DOOMED)) return false;
++      orders[index(DOOMED)]!.authority = 1_000_000;
++      orders[index(DOOMED)]!.weights = { GOLD: 0.5 };
++      return true;
++    });
++    assert.ok(revived.error instanceof BookInvariantError);
++    assert.ok(revived.at !== null && revived.at > TURN);
++    assert.deepEqual(revived.error.violations.map((v) => v.split(":")[0]), [`DEAD_TRADES ${DOOMED}`]);
++
++    // One agent's order dropped.
++    const dropped = await tampered(policy, (t, _tree, orders) => {
++      if (t !== 10) return false;
++      orders.pop();
++      return true;
++    });
++    assert.ok(dropped.error instanceof BookInvariantError);
++    assert.match(dropped.error.violations[0]!, /^ORDERS_MISMATCH/);
++
++    // Control: a hook that only looks runs the book to the end.
++    const untouched = await tampered(policy, () => false);
++    assert.equal(untouched.error, null);
++  }
++});
++
++test("orders are sized after the crowding cuts: a crowd-cut agent trades its cut authority on the very tick it is cut", async () => {
++  const policy = defaultCenterBookPolicy();
++  // Available authority once the tick's outside spending is done (before the
++  // book acts), and the authority each order was sized on.
++  const before = new Map<string, number>();
++  const sized = new Map<string, number>();
++  const key = (t: number, node: string) => `${t} ${node}`;
++  const book = await runBook(market, spec(), policy, {
++    onTick: async (t, tree) => {
++      await outside(t, tree);
++      for (const n of tree.listNodes()) before.set(key(t, n.name), usdc(tree.available(n.name)));
++    },
++    onTrade: (t, _tree, orders) => {
++      for (const o of orders) sized.set(key(t, o.node), o.authority);
++    },
++  });
++  const rebalances = (t: number) => t >= policy.warmup && (t - policy.warmup) % policy.rebalanceEvery === 0;
++  const cuts = book.decisions.filter((d) => d.kind === "CROWDING_CUT" && !rebalances(d.t));
++  assert.ok(cuts.length >= 5, `crowding cuts on ticks without a reallocation: ${cuts.length}`);
++  for (const d of cuts) {
++    for (const name of d.node.split(", ")) {
++      const was = before.get(key(d.t, name))!;
++      const now = sized.get(key(d.t, name))!;
++      assert.ok(now < was, `t=${d.t}: ${name} traded ${now}, not the ${was} it held before the cut`);
++    }
++  }
++});
++
++test("the book decides on the tree's numbers: every REALLOCATE starts from the budget the tree held, and every CUT halves it in the tree", async () => {
++  const policy = defaultCenterBookPolicy();
++  const key = (t: number, node: string) => `${t} ${node}`;
++  // Budgets once the tick's outside activity is done (before the book acts), and at the trade.
++  const atTick = new Map<string, number>();
++  const atTrade = new Map<string, number>();
++  const book = await runBook(market, spec(), policy, {
++    onTick: async (t, tree) => {
++      await outside(t, tree);
++      for (const n of tree.listNodes()) atTick.set(key(t, n.name), usdc(n.mandate.budget));
++    },
++    onTrade: (t, tree, orders) => {
++      for (const o of orders) atTrade.set(key(t, o.node), usdc(tree.requireNode(o.node).mandate.budget));
++    },
++  });
++
++  const moves = book.decisions.filter((d) => d.kind === "REALLOCATE");
++  assert.equal(new Set(moves.map((d) => d.node)).size, book.agents.length, "every agent was reallocated");
++  for (const d of moves) {
++    const from = Number(/^(\d+) → /.exec(d.detail)![1]);
++    const held = atTick.get(key(d.t, d.node))!;
++    assert.ok(Math.abs(from - held) <= 0.5, `t=${d.t}: ${d.node} reallocated from ${from}, but the tree held ${held}`);
++  }
++
++  // An agent with no sub-mandates has no floor: its cut budget is exactly
++  // cutFactor × what the tree held at the trade.
++  let checked = 0;
++  for (const d of book.decisions.filter((x) => x.kind === "CUT" && x.t + 1 < T)) {
++    if (book.tree.childrenOf(d.node).length > 0) continue;
++    const before = atTrade.get(key(d.t, d.node))!;
++    const after = atTick.get(key(d.t + 1, d.node))!;
++    assert.ok(Math.abs(after - before * policy.cutFactor!) <= 1e-6, `t=${d.t}: ${d.node} cut from ${before} to ${after}`);
++    checked++;
++  }
++  assert.ok(checked >= 2, `cuts checked: ${checked}`);
++});
++
++test("the trade audit reads the tree as it stands at the trade: a cut made after sizing stops the stale order; a bare revoke there is caught at the tick's end", async () => {
++  // An outside risk officer halves an agent through the tree's own API after
++  // its order was sized: the tree is sound, the order now exceeds it.
++  const halved = await tampered(defaultCenterBookPolicy(), (t, tree, orders) => {
++    if (t < 40 || grossNotional(orders[index(PLAIN)]!) === 0) return false;
++    tree.resize(PLAIN, tree.requireNode(PLAIN).mandate.budget / 2n);
++    return true;
++  });
++  assert.ok(halved.error instanceof BookInvariantError);
++  assert.equal(halved.error.at, "trade");
++  assert.deepEqual(halved.error.violations.map((v) => v.split(":")[0]), [`OVER_RESERVATION ${PLAIN}`]);
++
++  // A desk revoked without being closed at the trade (its agent's order is
++  // still within its reservation) is a mid-tick break of the tree, caught at
++  // that tick's end like any other.
++  let at = -1;
++  await assert.rejects(
++    runBook(market, spec(), defaultNaivePolicy(), {
++      onTick: outside,
++      onTrade: (t, tree) => {
++        if (t !== 40) return;
++        tree.revoke(`exec.${DESKED}`);
++        at = t;
++      },
++    }),
++    (e: unknown) =>
++      e instanceof BookInvariantError && e.t === 40 && e.at === "end" && e.violations.some((v) => v.startsWith(`NOT_CLOSED exec.${DESKED}`)),
++  );
++  assert.equal(at, 40);
++});
+diff --git a/packages/swarm/src/stats.ts b/packages/swarm/src/stats.ts
+index ff17cdf..d290edb 100644
+--- a/packages/swarm/src/stats.ts
++++ b/packages/swarm/src/stats.ts
+@@ -70,6 +70,22 @@ export function currentDrawdown(returns: readonly number[]): number {
+   return 1 - e / peak;
+ }
+ 
++/**
++ * True when the LAST return lifts the equity curve strictly above every
++ * earlier point, the starting value of 1 included: the series is at a new
++ * high-water mark it has just earned. A flat tick at an old peak is not one.
++ */
++export function isNewHigh(returns: readonly number[]): boolean {
++  if (returns.length === 0) return false;
++  let e = 1;
++  let peak = 1;
++  for (let i = 0; i < returns.length - 1; i++) {
++    e *= 1 + returns[i]!;
++    if (e > peak) peak = e;
++  }
++  return e * (1 + returns[returns.length - 1]!) > peak;
++}
++
+ /**
+  * Annualized volatility of the last `window` returns up to and including the
+  * series' most recent high-water mark: the risk it was running when its record

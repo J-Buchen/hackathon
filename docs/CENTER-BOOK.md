@@ -26,6 +26,7 @@ has limits. It wins through the **center book**:
 | capital allocation | the node's **budget**: `tree.resize(node, budget)` |
 | allowed instruments | the node's **allowlist**, attenuated fund ⊇ pod ⊇ PM |
 | a PM's own sub-agents (execution, data) | **sub-mandates**: children of the PM node, each reserved as a ppm `share` of its budget when granted and resized with it |
+| what a PM may trade | its node's **available** authority × leverage: budget − its own spend − what it handed to sub-mandates (`sizeOrder` in the gate) |
 | drawdown cut | `resize` to `cutFactor` × capital |
 | stop-out | **`close`**: the PM and every sub-mandate shrink to what they spent and are revoked, in one operation; the unspent authority is back in the pod |
 | audit trail | the same ordered event log as payments (`RESIZE`, `REVOKE`) |
@@ -39,9 +40,21 @@ targets become ceilings instead of refused moves. `close` is why a stop-out
 can't leave authority behind: the old stop-out was "resize to 0, then revoke",
 and a PM that had delegated sub-budgets couldn't be resized to 0 at all.
 
-**Invariants, checked twice a tick.** The book audits its tree
-(`bookViolations`) before each tick trades and again at its end, and throws
-`BookInvariantError` on any failure:
+**The reservation is the binding limit.** Every order is sized by the gate from
+the PM's *available* authority in the tree at the moment of the trade (after the
+tick's reallocation and crowding cuts), never from a capital number the book
+keeps. A slice reserved for an execution or data desk is not also trading
+capital, and a closed PM (available 0) trades nothing. Before this, a PM that
+had handed 30% of its budget to a desk still traded 100% of it. On the arena's
+rosters (no desks, no PM spend) available authority equals the budget, so the
+arena's numbers are unchanged to the bit.
+
+**Invariants, checked at three points of every tick.** The book audits its tree
+(`bookViolations`) before each tick trades and again at its end, and in
+between it audits every order it is about to mark (`tradeViolations`): no
+PM's gross notional exceeds its available authority × leverage, a closed PM
+trades nothing, and nothing off its allowlist is held. It throws
+`BookInvariantError` on any failure. The tree invariants:
 
 - no node has spent plus delegated more than it holds (children ≤ parent,
   `available` ≥ 0), and no budget is negative;
@@ -54,7 +67,13 @@ and a PM that had delegated sub-budgets couldn't be resized to 0 at all.
 `packages/swarm/src/close.test.ts` checks these from the outside at every tick
 of books whose PMs hold spending sub-mandates. It also shows that each stop-out
 is one `close` that frees exactly budget − spent into the pod, and that a closed
-subtree can never pay, delegate or grow again.
+subtree can never pay, delegate or grow again. `packages/swarm/src/reserve.test.ts`
+and `packages/lab/src/arena-reserve.test.ts` check every order from the outside at
+the trade: sized on no more than available authority, gross notional within
+available × leverage, nothing for a closed PM, and the marked PnL exactly the
+audited order's. They run books in which the PM's budget overstates what it may
+trade (desks, its own spend, an outside grant), and an order inflated for one PM
+while the tree is untouched stops the book at the trade, naming that PM.
 
 ---
 
@@ -144,6 +163,20 @@ Around them sit agents that give the allocator something to allocate between:
     20% of NAV, however many different-looking strategies it is spread across.
   - A crowding cut stays in force until the agent's book stops resembling the
     crowded book. The cap is not lifted just because its twin got stopped out.
+- **Counterparties** (`AgentSpec.operator`, a World ID-verified human in
+  production). One operator is one counterparty however many names it runs, so
+  a stop-out of one of its names is a credit event for all of them. Its other
+  live names are capped in the same tick, as a group, in one tree plan, at 50%
+  of their **full size** (what the allocator gives them uncut). The cap is a
+  ceiling on capital, not a multiplier on what a name holds. A name already at
+  or below it is not cut again: for example, one its own ladder cut, or cut and
+  restored but not yet resized, or one an earlier credit event capped. A
+  reallocation sizes a name that is both ladder-cut and capped at 50%, never
+  25%. The cap lifts at the name's first recovery on its own record: a new
+  high, or its own ladder lifting a cut. It never revokes anyone, and it never
+  moves a ladder. Every stop-out lands on exactly the tick of the agent's own
+  record replayed alone (tested on a scripted book and on every shared-operator
+  arena world on seeds 1–40).
 
 The baseline ("per-agent guardrails") is what agent-trading products ship today.
 It uses the same agents, the same pre-trade gate and the same leverage, with

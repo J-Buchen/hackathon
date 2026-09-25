@@ -7,13 +7,20 @@
  *                  a subset of the pod's and the fund's lists)
  *  - gross         at most `maxGross` × capital
  *  - liveness      a revoked or expired node (or ancestor) trades nothing
+ *  - size          `sizeOrder` turns the clipped weights into notional from the
+ *                  node's AVAILABLE authority in the tree (its budget, minus
+ *                  what it has spent itself, minus what it has handed down to
+ *                  sub-mandates) × leverage. The tree, not the book's own
+ *                  accounting, decides how much an agent can put at risk: a
+ *                  slice reserved for a sub-mandate is not also trading
+ *                  capital, and a closed mandate (available 0) trades nothing.
  *
  * This is the table-stakes layer every agent-trading product ships. It is
  * necessary and it is not enough: every check here looks at ONE agent. The
  * center book (allocator.ts / book.ts) is what looks across all of them.
  */
 
-import type { DelegationTree } from "@allowance/core";
+import { formatAmount, type DelegationTree } from "@allowance/core";
 import type { Weights } from "./strategies";
 
 export type GateViolation =
@@ -76,4 +83,71 @@ export function preTradeCheck(
     return { weights: {}, clipped, violations };
   }
   return { weights: clipped, clipped, violations };
+}
+
+/* ------------------------------------------------------------------ */
+/* Size: the reservation is the binding limit                         */
+/* ------------------------------------------------------------------ */
+
+/** One agent's order for one tick: its gated weights, sized from its mandate. */
+export interface SizedOrder {
+  /** Full node name of the agent. */
+  node: string;
+  /**
+   * USDC the order is sized on: the mandate's AVAILABLE authority when it was
+   * sized (0 when the node or an ancestor is revoked or expired).
+   */
+  authority: number;
+  /** Gross leverage the authority is run at. */
+  leverage: number;
+  /** Signed weights (Σ|w| ≤ the gate's `maxGross`); empty when the mandate is dead. */
+  weights: Weights;
+}
+
+export interface SizeOptions {
+  /** Gross leverage: notional = authority × leverage × weight. */
+  leverage: number;
+  /** Evaluation time in unix seconds, for expiry. */
+  now: number;
+}
+
+/**
+ * Size an agent's gated weights from the tree: notional = available × leverage
+ * × weight, where available = budget − own spend − handed down. Nothing the
+ * caller believes about the agent's capital enters: the only number that sizes
+ * the trade is read from the agent's mandate at the moment of sizing. A revoked
+ * or expired mandate (or ancestor) is sized at zero, with no weights.
+ */
+export function sizeOrder(tree: DelegationTree, nodeName: string, weights: Weights, opts: SizeOptions): SizedOrder {
+  if (tree.isRevokedInChain(nodeName) || tree.isExpiredInChain(nodeName, opts.now)) {
+    return { node: nodeName, authority: 0, leverage: opts.leverage, weights: {} };
+  }
+  const available = tree.available(nodeName);
+  return {
+    node: nodeName,
+    authority: available > 0n ? Number(formatAmount(available)) : 0,
+    leverage: opts.leverage,
+    weights: { ...weights },
+  };
+}
+
+/** Signed notional (USDC) per instrument: authority × leverage × weight. */
+export function orderNotional(order: SizedOrder): Weights {
+  const out: Weights = {};
+  for (const [k, w] of Object.entries(order.weights)) out[k] = order.authority * order.leverage * w;
+  return out;
+}
+
+/** Σ |notional|: the gross exposure (USDC) the order puts on. */
+export function grossNotional(order: SizedOrder): number {
+  let gross = 0;
+  for (const n of Object.values(orderNotional(order))) gross += Math.abs(n);
+  return gross;
+}
+
+/** What the order earns (USDC) on one tick's returns: authority × Σ leverage × w × r. */
+export function orderPnl(order: SizedOrder, returns: Readonly<Record<string, number>>): number {
+  let perUnit = 0;
+  for (const [k, w] of Object.entries(order.weights)) perUnit += order.leverage * w * (returns[k] ?? 0);
+  return order.authority * perUnit;
 }

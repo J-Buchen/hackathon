@@ -27,7 +27,7 @@ const compact = (x: number) => {
   return `${x < 0 ? "−" : ""}${s}`;
 };
 
-const SHOWN: ReadonlySet<Decision["kind"]> = new Set(["CROWDING_CUT", "STOP_OUT", "CUT", "GATE_CLIP"]);
+const SHOWN: ReadonlySet<Decision["kind"]> = new Set(["CROWDING_CUT", "OPERATOR_CUT", "STOP_OUT", "CUT", "GATE_CLIP"]);
 const KIND_LABEL: Record<Decision["kind"], string> = {
   ALLOCATE: "Allocate",
   REALLOCATE: "Reallocate",
@@ -35,6 +35,8 @@ const KIND_LABEL: Record<Decision["kind"], string> = {
   RESTORE: "Restore",
   STOP_OUT: "Stop-out · closed",
   CROWDING_CUT: "Crowding cut",
+  OPERATOR_CUT: "Operator cap",
+  OPERATOR_RESTORE: "Operator cap lifted",
   GATE_CLIP: "Gate clip",
 };
 
