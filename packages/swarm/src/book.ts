@@ -12,7 +12,8 @@
  * The mapping onto the tree is one-to-one:
  *   - capital allocation  = the node's budget      (tree.resize)
  *   - allowed instruments = the node's allowlist   (attenuated fund → pod → agent)
- *   - stop-out            = resize to 0 + revoke   (tree.revoke)
+ *   - stop-out            = resize to 0 + revoke   (tree.revoke); drawdown
+ *                           rungs are risk-scaled in the center book
  * so every allocator action lands in the same audited event log as payments.
  *
  * Money and authority are kept separate on purpose: PnL accrues to the fund's
@@ -23,6 +24,7 @@ import { DelegationTree, formatAmount, parseAmount } from "@allowance/core";
 import {
   allocate,
   nextLadderState,
+  scaleLadder,
   scanCrowding,
   type AllocationPolicy,
   type CenterBookPolicy,
@@ -393,12 +395,21 @@ export async function runBook(
 
     /* 6) Drawdown ladder. -------------------------------------------- */
     for (const a of agents) {
-      const next = nextLadderState(a.ladder, a.unitReturns, {
+      if (a.ladder === "stopped") continue;
+      // The rungs in force for THIS record: the center book widens them to the
+      // risk the agent runs (never below the fixed percentages); per-agent
+      // guardrails keep the fixed stop-loss.
+      const rungs = scaleLadder(a.unitReturns, {
         ddStop: policy.ddStop,
         ddCut: center?.ddCut,
         ddRecover: center?.ddRecover,
+        ddStopVol: center?.ddStopVol,
+        volWindow: center?.window,
       });
+      const next = nextLadderState(a.ladder, a.unitReturns, rungs);
       if (next === a.ladder) continue;
+      const pct = (x: number | undefined) => `${((x ?? 0) * 100).toFixed(0)}%`;
+      const why = rungs.scale > 1 ? ` (rungs risk-scaled ×${rungs.scale.toFixed(2)}: the agent runs ${pct(rungs.vol)} vol)` : "";
       const capital = capitalOf(a);
       if (next === "stopped") {
         // Stop-out: hand the capital back up the tree, then revoke authority.
@@ -409,14 +420,14 @@ export async function runBook(
           kind: "STOP_OUT",
           node: a.name,
           detail:
-            `drawdown ≥ ${(policy.ddStop * 100).toFixed(0)}% → mandate revoked, ` +
+            `drawdown ≥ ${pct(rungs.ddStop)}${why} → mandate revoked, ` +
             (capital > 0 ? `${capital.toFixed(0)} USDC handed back to the pod` : "no capital was at risk (already allocated zero)"),
         });
       } else if (next === "cut" && center) {
         applyTargets(tree, podOf, new Map([[a.name, toUnits(capital * center.cutFactor)]]));
-        decisions.push({ t, kind: "CUT", node: a.name, detail: `drawdown ≥ ${(center.ddCut * 100).toFixed(0)}% → capital ×${center.cutFactor}` });
+        decisions.push({ t, kind: "CUT", node: a.name, detail: `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${center.cutFactor}` });
       } else if (next === "active" && center) {
-        decisions.push({ t, kind: "RESTORE", node: a.name, detail: `recovered to within ${(center.ddRecover * 100).toFixed(0)}% of high-water mark; full sizing at next reallocation` });
+        decisions.push({ t, kind: "RESTORE", node: a.name, detail: `recovered to within ${pct(rungs.ddRecover)} of high-water mark; full sizing at next reallocation` });
       }
       a.ladder = next;
     }

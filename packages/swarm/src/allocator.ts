@@ -12,7 +12,10 @@
  *     each taking a full one.
  *  2. A DRAWDOWN LADDER. At `ddCut` an agent's capital is cut to `cutFactor`;
  *     it is restored only once it recovers above `ddRecover`. At `ddStop` it is
- *     stopped out: capital to zero and the mandate revoked.
+ *     stopped out: capital to zero and the mandate revoked. The rungs are
+ *     RISK-SCALED: drawdowns are judged against the vol the agent runs
+ *     (`ddStopVol`), so a volatile skilled book is not revoked for ordinary
+ *     noise while the fixed percentages remain the floor.
  *  3. CROWDING. Agents whose proposed books point the same way (cosine
  *     similarity ≥ `crowdSimilarity`) form a crowd. If a crowd's combined
  *     exposure to any one instrument exceeds `crowdMaxShare` of NAV, every
@@ -27,6 +30,7 @@ import {
   cosineSimilarity,
   currentDrawdown,
   sharpe,
+  volAtHighWater,
 } from "./stats";
 import type { Weights } from "./strategies";
 
@@ -56,6 +60,18 @@ export interface CenterBookPolicy {
   ddRecover: number;
   /** Drawdown that triggers a stop-out (revocation). */
   ddStop: number;
+  /**
+   * Risk-scaled ladder. A fixed-percentage drawdown is not evidence on its own:
+   * 20% is routine for a book running 45% annual vol and alarming for one
+   * running 10%. The center book sees each agent's record, so it measures
+   * drawdowns in units of the risk the agent runs: the stop fires at
+   * max(ddStop, ddStopVol × σ), where σ is the agent's annualized vol over
+   * `window` ticks up to its high-water mark, and the cut and recover rungs
+   * widen by the same factor. The fixed percentages remain floors, so the center
+   * book never cuts or stops an agent sooner than its own stop-loss would.
+   * 0 = the fixed-percentage ladder.
+   */
+  ddStopVol: number;
   /** Cosine similarity at which two agents' books count as the same trade. */
   crowdSimilarity: number;
   /** Max combined exposure of one crowd to one instrument, as a share of NAV. */
@@ -92,6 +108,9 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
     cutFactor: 0.5,
     ddRecover: 0.05,
     ddStop: 0.2,
+    // A skilled agent (Sharpe S) sits in a drawdown ≥ kσ about e^(−2Sk) of the
+    // time; at k = 1.5 that is ~5% for S = 1, so revocation needs real evidence.
+    ddStopVol: 1.5,
     crowdSimilarity: 0.8,
     crowdMaxShare: 0.1,
     bookMaxShare: 0.2,
@@ -226,15 +245,49 @@ export interface LadderThresholds {
   ddCut?: number;
   ddRecover?: number;
   ddStop: number;
+  /** Risk scaling (see `CenterBookPolicy.ddStopVol`); absent or 0 = fixed rungs. */
+  ddStopVol?: number;
+  /** Trailing ticks the risk measure is taken over (default: the whole record). */
+  volWindow?: number;
+}
+
+/** The rungs actually in force for one record, after risk scaling. */
+export interface ScaledLadder {
+  ddCut?: number;
+  ddRecover?: number;
+  ddStop: number;
+  /** Annualized vol of the record up to its high-water mark. */
+  vol: number;
+  /** Factor the configured rungs were widened by (≥ 1). */
+  scale: number;
+}
+
+/**
+ * Widen the configured rungs to the risk this record runs: every rung is
+ * multiplied by max(1, ddStopVol × σ / ddStop), σ measured up to the last
+ * high-water mark so the losses being judged cannot loosen their own limit.
+ * Never tighter than the configured percentages.
+ */
+export function scaleLadder(unitReturns: readonly number[], t: LadderThresholds): ScaledLadder {
+  const vol = t.ddStopVol ? volAtHighWater(unitReturns, t.volWindow ?? unitReturns.length) : 0;
+  const scale = t.ddStopVol && t.ddStop > 0 ? Math.max(1, (t.ddStopVol * vol) / t.ddStop) : 1;
+  return {
+    ddStop: t.ddStop * scale,
+    ddCut: t.ddCut === undefined ? undefined : t.ddCut * scale,
+    ddRecover: t.ddRecover === undefined ? undefined : t.ddRecover * scale,
+    vol,
+    scale,
+  };
 }
 
 /** Next ladder state from the agent's own attributable track record. */
 export function nextLadderState(
   state: LadderState,
   unitReturns: readonly number[],
-  t: LadderThresholds,
+  thresholds: LadderThresholds,
 ): LadderState {
   if (state === "stopped") return "stopped"; // revocation is final
+  const t = scaleLadder(unitReturns, thresholds);
   const dd = currentDrawdown(unitReturns);
   if (dd >= t.ddStop) return "stopped";
   if (t.ddCut === undefined) return "active";

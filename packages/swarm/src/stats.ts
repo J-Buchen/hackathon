@@ -70,6 +70,27 @@ export function currentDrawdown(returns: readonly number[]): number {
   return 1 - e / peak;
 }
 
+/**
+ * Annualized volatility of the last `window` returns up to and including the
+ * series' most recent high-water mark: the risk it was running when its record
+ * was last at its best. Losses since that peak are excluded, so a drawdown can
+ * never inflate the yardstick it is measured against. 0 when the series has
+ * never been above its starting value (no record, no measured risk).
+ */
+export function volAtHighWater(returns: readonly number[], window: number): number {
+  let e = 1;
+  let peak = 1;
+  let upTo = 0;
+  returns.forEach((r, i) => {
+    e *= 1 + r;
+    if (e >= peak) {
+      peak = e;
+      upTo = i + 1;
+    }
+  });
+  return annualVol(returns.slice(Math.max(0, upTo - window), upTo));
+}
+
 /** Pearson correlation of two equal-length series. 0 if either is flat. */
 export function correlation(a: readonly number[], b: readonly number[]): number {
   const n = Math.min(a.length, b.length);

@@ -137,6 +137,7 @@ export async function ablation(seeds: number[]): Promise<AblationRow[]> {
     { variant: "center book", description: "everything on" },
     { variant: "− crowding", description: "score-based allocation + ladder, no crowding limits", patch: { crowdMaxShare: off, bookMaxShare: off } },
     { variant: "− drawdown cut", description: "no cut rung (stop-out kept)", patch: { ddCut: off } },
+    { variant: "− risk-scaled ladder", description: "drawdown rungs at fixed percentages, whatever vol the agent runs", patch: { ddStopVol: 0 } },
     { variant: "crowding only", description: "equal weight + crowding limits, no scoring, no cut", patch: { warmup: off, ddCut: off } },
   ];
   const rows: AblationRow[] = [];

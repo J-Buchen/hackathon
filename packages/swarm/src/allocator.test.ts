@@ -6,10 +6,11 @@ import {
   capShares,
   defaultCenterBookPolicy,
   nextLadderState,
+  scaleLadder,
   scanCrowding,
 } from "./allocator";
 import { preTradeCheck } from "./gate";
-import { correlation, cosineSimilarity, currentDrawdown, maxDrawdown, sharpe } from "./stats";
+import { annualVol, correlation, cosineSimilarity, currentDrawdown, maxDrawdown, sharpe, volAtHighWater } from "./stats";
 import { gaussian, mulberry32 } from "./rng";
 
 const noise = (seed: number, n: number, drift = 0) => {
@@ -90,6 +91,53 @@ test("drawdown ladder: cut → restore → stop, and stop is final", () => {
   assert.equal(nextLadderState("stopped", [0.5], th), "stopped");
   // Naive books have no cut rung.
   assert.equal(nextLadderState("active", [-0.15], { ddStop: 0.2 }), "active");
+});
+
+test("volAtHighWater: the risk run up to the last peak, not the losses since", () => {
+  const calm = Array.from({ length: 60 }, (_, i) => (i % 2 === 0 ? 0.006 : -0.004));
+  const before = volAtHighWater(calm, 90);
+  assert.ok(before > 0.07 && before < 0.09, `≈8% annual vol, got ${before}`);
+  // A crash after the peak does not move the yardstick…
+  assert.equal(volAtHighWater([...calm, -0.3], 90), before);
+  // …though it would dominate a trailing estimate.
+  assert.ok(annualVol([...calm, -0.3]) > 0.5);
+  // The window is counted back from the peak (calm's last peak is its 59th tick).
+  assert.equal(volAtHighWater([-0.05, 0.05, ...calm], 59), before);
+  assert.ok(volAtHighWater([-0.05, 0.05, ...calm], 61) > 0.1, "a wider window reaches the swing");
+  // Never above water → no measured risk.
+  assert.equal(volAtHighWater([-0.01, -0.02, 0.005], 90), 0);
+  assert.equal(volAtHighWater([], 90), 0);
+});
+
+test("risk-scaled ladder: a drawdown is judged against the vol the agent runs, never below the fixed rungs", () => {
+  const rungs = { ddStop: 0.2, ddCut: 0.1, ddRecover: 0.05, ddStopVol: 1.5, volWindow: 90 };
+  // A volatile book (~48% annual vol) at its high-water mark, then a 28% drawdown.
+  const volatile = [...Array.from({ length: 60 }, (_, i) => (i % 2 === 0 ? 0.032 : -0.028)), -0.1, -0.1, -0.08];
+  const v = scaleLadder(volatile, rungs);
+  assert.ok(Math.abs(v.ddStop - 1.5 * v.vol) < 1e-12, "stop at 1.5σ");
+  assert.ok(Math.abs(v.ddCut! / v.ddStop - 0.5) < 1e-12 && Math.abs(v.ddRecover! / v.ddStop - 0.25) < 1e-12, "rungs keep their proportions");
+  assert.ok(currentDrawdown(volatile) > 0.2 && currentDrawdown(volatile) < v.ddCut!);
+  assert.equal(nextLadderState("active", volatile, rungs), "active", "ordinary noise for this book");
+  assert.equal(nextLadderState("active", volatile, { ddStop: 0.2, ddCut: 0.1 }), "stopped", "the fixed stop-loss revokes it");
+  // Same drawdown on a calm book (~8% vol) is ~3σ: the fixed floor applies and it is stopped.
+  const calm = [...Array.from({ length: 60 }, (_, i) => (i % 2 === 0 ? 0.006 : -0.004)), -0.1, -0.1, -0.08];
+  const c = scaleLadder(calm, rungs);
+  assert.equal(c.scale, 1);
+  assert.deepEqual([c.ddStop, c.ddCut, c.ddRecover], [0.2, 0.1, 0.05]);
+  assert.equal(nextLadderState("active", calm, rungs), "stopped");
+  // A single crash cannot loosen its own limit: σ is measured up to the peak.
+  const crash = [...calm.slice(0, 60), -0.3];
+  assert.equal(scaleLadder(crash, rungs).scale, 1);
+  assert.equal(nextLadderState("active", crash, rungs), "stopped");
+  // Off switch and final revocation.
+  assert.equal(scaleLadder(volatile, { ...rungs, ddStopVol: 0 }).scale, 1);
+  assert.equal(nextLadderState("stopped", [0.5], rungs), "stopped");
+  // Risk scaling only ever widens: across random records the scaled rungs dominate the fixed ones.
+  for (let seed = 1; seed <= 50; seed++) {
+    const r = noise(seed, 120, 0.001).map((x) => x * (1 + (seed % 5)));
+    const s = scaleLadder(r, rungs);
+    assert.ok(s.scale >= 1 && s.ddStop >= 0.2 && s.ddCut! >= 0.1 && s.ddRecover! >= 0.05);
+  }
 });
 
 test("crowding: agents in different pods running one trade are cut back to the limit", () => {

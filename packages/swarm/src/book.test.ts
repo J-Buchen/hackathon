@@ -4,6 +4,7 @@ import { defaultCenterBookPolicy, defaultNaivePolicy } from "./allocator";
 import { runBook, type SwarmSpec } from "./book";
 import { generateMarket, genericMarketConfig } from "./market";
 import { summarize } from "./evaluate";
+import { currentDrawdown } from "./stats";
 import { HerdStrategy, NoiseStrategy, RogueStrategy, TrendStrategy, MeanReversionStrategy } from "./strategies";
 
 // A thesis-free swarm on the generic market: three herd agents in three pods
@@ -85,4 +86,35 @@ test("clones across pods are caught as a crowd; per-agent guardrails never see t
   const c = summarize(center, market);
   assert.ok(c.peakCrowdExposure < n.peakCrowdExposure);
   assert.ok(c.crashWindowReturn > n.crashWindowReturn, `unwind: center ${c.crashWindowReturn} vs naive ${n.crashWindowReturn}`);
+});
+
+test("risk-scaled stops: the center book never revokes an agent sooner than its own stop-loss would", async () => {
+  const policy = defaultCenterBookPolicy();
+  const naive = await runBook(market, genericSwarm(), defaultNaivePolicy());
+  const center = await runBook(market, genericSwarm(), policy);
+  const fixed = await runBook(market, genericSwarm(), { ...policy, ddStopVol: 0 });
+  const stopAt = (b: typeof center, name: string) =>
+    b.decisions.find((d) => d.kind === "STOP_OUT" && d.node === name)?.t;
+  // Attributable records do not depend on capital, so every book judges the same record.
+  center.agents.forEach((a, i) => assert.deepEqual(a.unitReturns, naive.agents[i]!.unitReturns));
+
+  let kept = 0;
+  for (const a of center.agents) {
+    const tc = stopAt(center, a.name);
+    const tn = stopAt(naive, a.name);
+    if (tc === undefined) {
+      if (tn !== undefined) kept++;
+      continue;
+    }
+    assert.ok(tn !== undefined && tn <= tc, `${a.label}: center stopped it at ${tc}, its own stop-loss at ${tn}`);
+    assert.ok(currentDrawdown(a.unitReturns.slice(0, tc + 1)) >= policy.ddStop, `${a.label} stopped inside the fixed floor`);
+    const d = center.decisions.find((x) => x.kind === "STOP_OUT" && x.node === a.name)!;
+    assert.match(d.detail, /drawdown ≥ \d+%/);
+  }
+  assert.ok(kept > 0, "some agent the fixed stop-loss revokes is ordinary noise for the risk it runs");
+  // The switch reproduces the fixed ladder exactly.
+  assert.deepEqual(
+    fixed.decisions.filter((d) => d.kind === "STOP_OUT").map((d) => [d.t, d.node]),
+    naive.decisions.filter((d) => d.kind === "STOP_OUT").map((d) => [d.t, d.node]),
+  );
 });
