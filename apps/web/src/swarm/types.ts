@@ -75,10 +75,12 @@ export interface ScorecardRow {
   evidence: Record<Question, string[]>;
   catalysts: Catalyst[];
   keyRisk: string;
+  sources: Array<{ label: string; url: string }>;
 }
 
 export interface ThesisView {
   asOf: string;
+  caveat: string | null;
   trend: {
     name: string;
     thesis: string;

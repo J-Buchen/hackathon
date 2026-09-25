@@ -269,6 +269,7 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
   const long = pm?.long ?? null;
   const short = pm?.short ?? null;
   const longRow = thesis.scorecard.find((r) => r.ticker === long);
+  const shortRow = thesis.scorecard.find((r) => r.ticker === short);
   const converged = thesis.pms.length > 1 && thesis.pms.every((p) => p.long === long);
 
   return (
@@ -346,6 +347,19 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
               <p className="cb-risk">
                 <strong>What would make this wrong:</strong> {longRow.keyRisk}
               </p>
+              {longRow.sources.length > 0 && (
+                <p className="cb-sources">
+                  Sources:{" "}
+                  {longRow.sources.map((src, i) => (
+                    <span key={src.url}>
+                      {i > 0 && " · "}
+                      <a href={src.url} target="_blank" rel="noreferrer">
+                        {src.label}
+                      </a>
+                    </span>
+                  ))}
+                </p>
+              )}
             </div>
             <div className="cb-pick-col">
               <h3>Catalyst calendar</h3>
@@ -356,6 +370,18 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
                   </li>
                 ))}
               </ul>
+              {shortRow && (
+                <>
+                  <h3>The pair: short {shortRow.ticker}</h3>
+                  <p className="cb-risk">
+                    Rides the same trend (exposure {shortRow.trendExposure}/5) but fails "Why now?"{" "}
+                    <Score v={shortRow.scores.whyNow} />. {shortRow.evidence.whyNow[0]}
+                  </p>
+                  <p className="cb-risk">
+                    <strong>What would make this wrong:</strong> {shortRow.keyRisk}
+                  </p>
+                </>
+              )}
               <h3>The Tiger Cubs in this book</h3>
               <ul className="cb-pms">
                 {thesis.pms.map((p) => (
@@ -378,6 +404,7 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
           </div>
         )}
         <p className="cb-disclaimer">
+          {thesis.caveat && <>{thesis.caveat} </>}
           Research is illustrative and dated; not investment advice. Prices in the simulation are synthetic;
           real tickers are used only to label the thesis.{" "}
           {thesis.assumesEdge

@@ -68,6 +68,7 @@ async function main(): Promise<void> {
       "Find something the world is doing more of, then find the company best placed to win from it.",
     );
     line(spec.thesis.trend.thesis);
+    if (spec.thesis.caveat) line(`⚠ ${spec.thesis.caveat}`);
     for (const e of spec.thesis.trend.evidence) line(`• ${e.claim}${e.source ? ` [${e.source}]` : ""}`);
 
     header(

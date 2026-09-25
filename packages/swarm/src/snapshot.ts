@@ -38,6 +38,7 @@ export interface SwarmAgentView extends TrackRecord {
 
 export interface ThesisView {
   asOf: string;
+  caveat: string | null;
   trend: TrendThesis["trend"];
   /** Balanced-style scorecard for every candidate, best first. */
   scorecard: Array<
@@ -47,6 +48,7 @@ export interface ThesisView {
       evidence: Record<Question, string[]>;
       catalysts: Catalyst[];
       keyRisk: string;
+      sources: { label: string; url: string }[];
     }
   >;
   /** What each Tiger-Cub PM in the book decided to trade. */
@@ -127,6 +129,7 @@ function thesisView(spec: SwarmSpec, h: HeadToHead): ThesisView | null {
   const events = h.market.config.events ?? [];
   return {
     asOf: thesis.asOf,
+    caveat: thesis.caveat ?? null,
     trend: thesis.trend,
     scorecard: scoreCandidates(thesis, BALANCED_STYLE).map((s) => {
       const c = byTicker.get(s.ticker)!;
@@ -137,6 +140,7 @@ function thesisView(spec: SwarmSpec, h: HeadToHead): ThesisView | null {
         evidence: { company: c.company_q.evidence, management: c.management_q.evidence, whyNow: c.whyNow_q.evidence },
         catalysts: c.whyNow_q.catalysts,
         keyRisk: c.keyRisk,
+        sources: c.sources ?? [],
       };
     }),
     pms,

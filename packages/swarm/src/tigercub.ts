@@ -10,8 +10,9 @@
  *        - Is this a good company?          (economics, growth, moat, balance sheet)
  *        - Is this a good management team?  (track record, capital allocation, alignment)
  *        - Why now?                          (dated catalysts in the next 6–12 months)
- *   4. Pair it with a short in the trend's structural loser, so the book is
- *      paid for being right about the trend's winners, not for market beta.
+ *   4. Pair it with a short in a name that rides the SAME trend but has no
+ *      reason to work now (fails "Why now?"), so the book is paid for picking
+ *      the winner within the trend, not for trend or market beta.
  *   5. Size by conviction, and lean in ahead of catalysts.
  *
  * This file is that process as data + pure functions + a `Strategy`. The
@@ -58,11 +59,15 @@ export interface Candidate {
   management_q: QuestionAnswer;
   whyNow_q: QuestionAnswer & { catalysts: Catalyst[] };
   keyRisk: string;
+  /** Primary / secondary sources behind the answers. */
+  sources?: { label: string; url: string }[];
 }
 
 export interface TrendThesis {
   /** Research as-of date, "YYYY-MM-DD". */
   asOf: string;
+  /** How the research was gathered and what was not verified. Shown wherever the thesis is. */
+  caveat?: string;
   trend: { name: string; thesis: string; evidence: Evidence[] };
   candidates: Candidate[];
 }
@@ -84,7 +89,7 @@ export interface PmStyle {
   weights: Record<Question, number>;
   /** Minimum score on EVERY question for a long ("yes" to all three). */
   passMark: number;
-  /** A short must fail at least one question AND ride the trend at least this much. */
+  /** A short must fail "Why now?" AND ride the trend at least this much. */
   shortMinExposure: number;
 }
 
@@ -150,15 +155,24 @@ export function pickTrade(thesis: TrendThesis, style: PmStyle = BALANCED_STYLE):
   const ranked = scoreCandidates(thesis, style);
   const long = ranked.find((c) => c.failed.length === 0) ?? null;
   const exposure = new Map(thesis.candidates.map((c) => [c.ticker, c.trendExposure]));
+  // A Tiger pair short is not "the worst company". It is the name that rides
+  // the SAME trend (so the pair cancels trend and commodity beta) but has no
+  // reason to work now — it fails "Why now?". Most trend-exposed first, then
+  // weakest why-now, then weakest overall.
   const short =
-    [...ranked]
-      .reverse()
-      .find(
+    ranked
+      .filter(
         (c) =>
-          c.failed.length > 0 &&
+          c.failed.includes("whyNow") &&
           c.ticker !== long?.ticker &&
           (exposure.get(c.ticker) ?? 0) >= style.shortMinExposure,
-      ) ?? null;
+      )
+      .sort(
+        (a, b) =>
+          (exposure.get(b.ticker) ?? 0) - (exposure.get(a.ticker) ?? 0) ||
+          a.scores.whyNow - b.scores.whyNow ||
+          a.total - b.total,
+      )[0] ?? null;
   const catalysts = long ? thesis.candidates.find((c) => c.ticker === long.ticker)!.whyNow_q.catalysts : [];
 
   const fmt = (c: ScoredCandidate) =>
@@ -168,7 +182,8 @@ export function pickTrade(thesis: TrendThesis, style: PmStyle = BALANCED_STYLE):
   else rationale.push("No candidate answers all three questions — no long. Cash is a position.");
   if (short) {
     const why = short.failed.map((q) => `"${QUESTION_TEXT[q]}"`).join(" and ");
-    rationale.push(`SHORT ${fmt(short)}: rides the trend but fails ${why}.`);
+    const exp = exposure.get(short.ticker) ?? 0;
+    rationale.push(`SHORT ${fmt(short)}: rides the same trend (exposure ${exp}/5) but fails ${why} — the pair hedge.`);
   }
   return { trend: thesis.trend.name, long, short, catalysts, rationale };
 }

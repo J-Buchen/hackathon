@@ -268,7 +268,7 @@ function Nav() {
         <a href="#problem" className="nav-hide-sm">The problem</a>
         <a href="#how" className="nav-hide-sm">How it works</a>
         <a href="#dashboard">Dashboard</a>
-        <a href="#center-book">Center book</a>
+        <a href="#center-book" className="nav-hide-sm">Center book</a>
         <span className="nav-pill">
           <span className="dot" /> live · x402
         </span>

@@ -33,7 +33,7 @@ const THESIS: TrendThesis = {
   trend: { name: "Rising widget consumption", thesis: "", evidence: [] },
   candidates: [
     // Great company, great team — but no reason it works NOW.
-    cand("NOCAT", [5, 5, 2]),
+    cand("NOCAT", [5, 5, 2], 3),
     // Yes to all three.
     cand("WIN", [4, 4, 5], 5, [
       { event: "Investor day", expected: "2026-11-10" },
@@ -41,8 +41,10 @@ const THESIS: TrendThesis = {
       { event: "Undated", expected: null },
     ]),
     cand("OK", [3, 3, 3]),
-    // Rides the trend, bad company and bad management: the short.
-    cand("LOSER", [2, 2, 3], 4),
+    // Rides the trend hardest but has no reason to work now: the pair short.
+    cand("LOSER", [3, 3, 2], 5),
+    // Bad company, but a catalyst for the upside: not a short.
+    cand("CHEAPCAT", [2, 2, 4], 5),
     // Fails questions but barely exposed to the trend: not a pair hedge.
     cand("OFFTREND", [1, 1, 1], 1),
   ],
@@ -57,10 +59,12 @@ test("a long must answer yes to all three questions — a great company with no 
   assert.equal(nocat.conviction, 0);
 });
 
-test("the short is the weakest trend-exposed name that fails a question", () => {
+test("the short rides the same trend but fails \"why now\" — a bad company with a catalyst is not a short", () => {
   const idea = pickTrade(THESIS, BALANCED_STYLE);
-  assert.equal(idea.short?.ticker, "LOSER");
-  assert.match(idea.rationale.join("\n"), /SHORT LOSER .*fails "Is this a good company\?" and "Is this a good management team\?"/);
+  assert.equal(idea.short?.ticker, "LOSER", "most trend-exposed name failing why-now");
+  assert.notEqual(idea.short?.ticker, "CHEAPCAT");
+  assert.notEqual(idea.short?.ticker, "OFFTREND", "barely exposed to the trend: no hedge value");
+  assert.match(idea.rationale.join("\n"), /SHORT LOSER .*exposure 5\/5.*fails "Why now\?"/);
 });
 
 test("no candidate clears the bar → no long (cash is a position)", () => {

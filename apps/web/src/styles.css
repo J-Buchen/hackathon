@@ -989,3 +989,5 @@ a { color: inherit; }
   .chart-tip { display: none; }
 }
 .cb-log-scroll { max-height: 560px; }
+.cb-sources { font-size: 12px; color: var(--text-faint); margin: 8px 0 0; }
+.cb-sources a { color: var(--gold-bright); }

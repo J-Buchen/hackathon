@@ -63,9 +63,50 @@ npm run dev:web      # opens the dashboard that renders the snapshot
   `apps/web/public/demo-snapshot.json`.
 - `npm run dev:web` serves the React dashboard that visualizes the spend tree
   and the event ledger from that snapshot.
+- `npm run demo:swarm` runs the **center book** (below): a Tiger-Cub fund of
+  agents, head-to-head vs per-agent guardrails, a 20-seed sweep and an
+  ablation. It writes `apps/web/public/swarm-snapshot.json`.
 - `npm run typecheck` runs `tsc -b` across every package.
 - `npm test` runs the aggregated Node test suite (core + adapters + orchestrator).
   See [Testing](#testing) for the full matrix, including the web and Solidity suites.
+
+---
+
+## From one agent to a fund of them: the center book
+
+Guardrails on a single agent are table stakes. What's differentiated is what a
+multi-manager ("pod shop") fund does **across** its PMs when the PMs are agents
+trading real capital. `@allowance/swarm` is that center book, built directly on
+the mandate tree:
+
+- **Allocation is a `resize`, a stop-out is a `revoke`.** Fund → pod → agent is
+  a mandate tree, and every allocator action lands in the same audited event
+  log as payments.
+- **Allocation uses risk-adjusted, attributable returns, and is
+  correlation-aware.** Clones split one allocation.
+- **A drawdown ladder:** cut at 10%, revoke at 20%.
+- **Crowding control.** Agents in different pods running the same trade are cut
+  back to a book-level limit, even when each is inside its own mandate.
+
+The example portfolio **runs like a Tiger Cub**:
+1. Start from a trend: rising global coffee consumption, with dated and sourced
+   research.
+2. Score every exposed company on three questions: *good company? good
+   management? why now?*
+3. Own only a company that is "yes" to all three (**SBUX**), paired with a short
+   that rides the same trend but fails "why now?" (**BROS**).
+4. Size into dated catalysts.
+
+Three Tiger-Cub agents in three pods, each weighting the questions differently,
+all land on SBUX: a hedge-fund hotel. Over 20 synthetic markets, the center book
+cuts mean max drawdown from **7.9% to 4.6%**, the loss in the crowd's unwind
+from **−4.9% to −1.8%**, and peak crowded exposure from **52% to 17% of NAV**.
+It gives up return to do it (+2.9% vs +5.5%). An ablation shows crowding
+control is where the value comes from.
+
+Full write-up, including what didn't help: [`docs/CENTER-BOOK.md`](docs/CENTER-BOOK.md).
+Prices are synthetic and the research is illustrative; this is not investment
+advice.
 
 ---
 
@@ -154,7 +195,7 @@ toolchain each layer needs:
 
 | Command | Runner | Covers |
 | --- | --- | --- |
-| `npm test` | Node `--test` (tsx loader) | `@allowance/core` (attenuation, tree, payment gauntlet) + `@allowance/adapters` (sponsor ports) + `@allowance/orchestrator` (demo flow) |
+| `npm test` | Node `--test` (tsx loader) | `@allowance/core` (attenuation, tree, payment gauntlet) + `@allowance/adapters` (sponsor ports) + `@allowance/swarm` (center book, Tiger-Cub process, example thesis) + `@allowance/orchestrator` (demo flow) |
 | `npm -w allowance-web run test` | Node `--test` (tsx loader) | web fetch-boundary logic: snapshot validation, amount formatting, tree view-model |
 | `npm -w @allowance/contracts test` | Hardhat (`hardhat test`) | Solidity: `MandateRegistry`, `SpendCapHook`, screening `Escrow` |
 
@@ -170,6 +211,11 @@ You can also run any layer in isolation:
 | `@allowance/core` — tree | `packages/core/src/tree.test.ts` | ENS subname helpers (parent/label parsing) and `DelegationTree` — insert/lookup, remaining-budget accounting, revoke cascades over the subtree. |
 | `@allowance/core` — payment | `packages/core/src/payment.test.ts` | The four-stage `pay()` gauntlet in order — identity → mandate → screening → settle — with each blocked/denied/revoked path; amount round-trips through settlement without precision loss. |
 | `@allowance/adapters` | `packages/adapters/src/adapters.test.ts` | Sponsor ports on deterministic mocks: Intercepta screening **block**, 1inch Aqua swap-rate math, identity/principal verification paths, and the `SpendCapHook` mirror of the on-chain cap. |
+| `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
+| `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+| `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
+| `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are revoked with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book. |
+| `@allowance/swarm` — example | `packages/swarm/src/example.test.ts` | The coffee thesis is well-formed (scores 1–5, sourced trend claims, parseable catalyst dates); the three Tiger Cubs converge on one long; the center book flags it on day one and loses less in the unwind. |
 | `@allowance/orchestrator` | `services/orchestrator/src/flow.test.ts` | The end-to-end demo flow reproduces the storyline outcomes (§8 balances and event count), and the off-chain result **agrees** with the `SpendCapHook` cap decision (hook agreement). |
 | `allowance-web` — snapshot | `apps/web/src/snapshot.test.ts` | Runtime validation of `demo-snapshot.json` against the frozen schema: well-formed input round-trips unchanged; malformed/stale input throws a precise, path-tagged `SnapshotParseError`. |
 | `allowance-web` — format | `apps/web/src/format.test.ts` | Smallest-unit integer strings render to human token amounts via BigInt (no float drift), including fractional, zero, and negative values. |
@@ -189,6 +235,7 @@ test to force a green run — fix the code instead.
 ```
 packages/core         @allowance/core         pure domain: types, attenuation, tree, payment engine (zero runtime deps)
 packages/adapters     @allowance/adapters     sponsor ports: deterministic mock + real-integration stub
+packages/swarm        @allowance/swarm        the center book: agent swarm, allocator, Tiger-Cub process, coffee thesis
 services/orchestrator @allowance/orchestrator x402 flow + demo runner (writes the snapshot)
 apps/web              allowance-web           Vite + React dashboard of the spend tree + event ledger
 contracts             solidity (Hardhat)      Uniswap v4 hook / settlement guard enforcing the cap on-chain
@@ -204,6 +251,7 @@ DESIGN.md             authoritative spec — locked types, signatures, and the s
   ready) and the motion-performance invariants (`LazyMotion` + `m`, code-split
   dashboard, GPU-only animation, `content-visibility`, reduced-motion, no
   external fonts/CDNs) — read it before touching `apps/web`.
+- [`docs/CENTER-BOOK.md`](docs/CENTER-BOOK.md) — the center book and the Tiger-Cub example portfolio: design, results, ablation, limits.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — domain model, attenuation rule, payment pipeline, data flow, on-chain vs off-chain split.
 - [`docs/SPONSORS.md`](docs/SPONSORS.md) — per-track submission checklist with the required failure-path demos flagged.
 - [`docs/FEEDBACK.md`](docs/FEEDBACK.md) — the Uniswap-required developer feedback.
