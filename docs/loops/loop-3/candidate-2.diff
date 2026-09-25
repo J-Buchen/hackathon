@@ -1,0 +1,694 @@
+diff --git a/README.md b/README.md
+index 9daf2a4..60d3a53 100644
+--- a/README.md
++++ b/README.md
+@@ -130,7 +130,10 @@ the mandate tree:
+   to its pod. The book audits the tree's reservation and close invariants before
+   and after every tick.
+ - **Crowding control.** Agents in different pods running the same trade are cut
+-  back to a book-level limit, even when each is inside its own mandate.
++  back to a book-level limit, even when each is inside its own mandate. A crowd
++  whose books have held together for a whole rebalance cycle (5 days) is one
++  signal under several names, not a coincidence, and is held to half that
++  limit: a cut added after the others, never a looser one.
+ 
+ The example portfolio **runs like a Tiger Cub**:
+ 1. Start from a trend: rising global coffee consumption, with dated and sourced
+@@ -143,9 +146,9 @@ The example portfolio **runs like a Tiger Cub**:
+ 
+ Three Tiger-Cub agents in three pods, each weighting the questions differently,
+ all land on SBUX: a hedge-fund hotel. Over 20 synthetic markets, the center book
+-cuts mean max drawdown from **7.9% to 5.6%**, the loss in the crowd's unwind
+-from **−4.9% to −2.5%**, and peak crowded exposure from **52% to 15% of NAV**,
+-at the same mean Sharpe (0.50). It gives up return to do it (+2.8% vs +5.5%). An
++cuts mean max drawdown from **7.9% to 5.1%**, the loss in the crowd's unwind
++from **−4.9% to −1.6%**, and peak crowded exposure from **52% to 13% of NAV**,
++at a slightly lower mean Sharpe (0.47 vs 0.50). It gives up return to do it (+2.4% vs +5.5%). An
+ ablation shows crowding control is where the value comes from. This small
+ example does not show the improvement loops' gains: across 200-world blocks of
+ the virtual-world arena they raise fund utility, and loop 2 also lowers the
+@@ -310,9 +313,9 @@ You can also run any layer in isolation:
+ | `@allowance/swarm` — close | `packages/swarm/src/close.test.ts` | With PMs holding sub-mandates that pay every tick, the tree is checked from outside at every tick under three policies: children ≤ parent, available ≥ 0, sub-mandates hold exactly their ppm slice of the PM (never more), a closed subtree's budgets are frozen and it can never pay, delegate or grow; every stop-out is exactly one `close` freeing budget − spent into the pod; shares are validated in the ppm they are cut in; the book's audit stops a broken tree before the tick trades (and a mid-tick break at that tick's end); spent authority is a floor no resize crosses, and a grow the fund cannot fund is clipped, never refused. |
+ | `@allowance/lab` — close in the arena | `packages/lab/src/arena-close.test.ts` | On randomized arena rosters with desks that spend every tick, center book and guardrails both run to the end on a sound tree, every stop-out is one `close` of the agent with its desks, and no move is refused. |
+ | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
+-| `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
++| `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; a crowd whose books held together for `crowdTenure` days (funded or not) is cut to the tighter limit while a one-day overlap is not, only funded members are cut, and on random books, capital and histories the check leaves every clone and book decision unchanged and never leaves an agent more capital; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+ | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
+-| `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are closed with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book. |
++| `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are closed with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book; the herd is an established crowd no sooner than `crowdTenure` days after it forms and is cut before the unwind; cutting off the market's future (at eight points through the crowd) changes no decision taken before the cut. |
+ | `@allowance/swarm` — example | `packages/swarm/src/example.test.ts` | The coffee thesis is well-formed (scores 1–5, sourced trend claims, parseable catalyst dates); the three Tiger Cubs converge on one long; the center book flags it on day one and loses less in the unwind. |
+ | `@allowance/orchestrator` | `services/orchestrator/src/flow.test.ts` | `executePayment` reaches every `PaymentOutcome`; in each, the off-chain result **agrees** with the `SpendCapHook` cap decision (hook agreement), the emitted event matches the record, and a settled payment moves the node's ENS `spentDirect` record in lock-step. |
+ | `allowance-web` — snapshot | `apps/web/src/snapshot.test.ts` | Runtime validation of `demo-snapshot.json` against the frozen schema: well-formed input round-trips unchanged; malformed/stale input throws a precise, path-tagged `SnapshotParseError`. |
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index fae7dd0..012b92d 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -142,6 +142,18 @@ Around them sit agents that give the allocator something to allocate between:
+     trade in …").
+   - **Book:** the whole book's net exposure to any one instrument is capped at
+     20% of NAV, however many different-looking strategies it is spread across.
++  - **Established crowds** (loop 3): agents whose books have pointed the same
++    way (cosine ≥ 0.8) on each of the last 5 days, one rebalance cycle, are one
++    signal run under several names, not two independent ideas that met for a
++    day. On arena research seeds 1201–1400, a skilled stock picker's spells in
++    a clone cluster lasted a median of 1 day (90th percentile 2, longest 11);
++    herders' and trend followers' 90th percentiles were 33 and 20 days. An
++    established crowd's concentrated exposure is capped at half the clone limit
++    (5% of NAV; half is the ladder's own cut factor). Every agent that proposes a
++    book counts, funded or not, because crowding is a property of the trade,
++    but only funded agents are cut. The check runs after the clone and book
++    limits, on the capital they left, so it only ever adds a cut: no other limit
++    changes.
+   - A crowding cut stays in force until the agent's book stops resembling the
+     crowded book. The cap is not lifted just because its twin got stopped out.
+ 
+@@ -156,7 +168,7 @@ drawdown against the risk that agent runs, which a per-agent stop-loss cannot.
+ 
+ The numbers below come from `npm run demo:swarm` at the current code (after
+ loop 2: one-year Sharpe scores, risk-scaled ladder with its 40% ceiling,
+-stop-outs by `close`), using the coffee thesis as of
++stop-outs by `close`; and the established-crowd limit), using the coffee thesis as of
+ 2026-09-25, 260 simulated trading days and 20 market seeds. The two books share
+ agents, gate, leverage and initial capital; they differ in the center book's
+ cross-agent allocation and crowding limits and its risk-scaled ladder.
+@@ -175,20 +187,22 @@ short **BROS**.
+ 
+ | | per-agent guardrails | center book |
+ |---|---:|---:|
+-| loss in the unwind | −4.9% | **−2.5%** |
+-| max drawdown | 7.9% | **5.6%** (smaller on **17/20** seeds) |
+-| peak crowded (SBUX) exposure | 51.5% of NAV | **15.3%** |
+-| Sharpe | 0.50 | 0.50 (higher on only 10/20 seeds) |
+-| total return | **+5.5%** | +2.8% |
++| loss in the unwind | −4.9% | **−1.6%** |
++| max drawdown | 7.9% | **5.1%** (smaller on **17/20** seeds) |
++| peak crowded (SBUX) exposure | 51.5% of NAV | **13.2%** |
++| Sharpe | **0.50** | 0.47 (higher on only 10/20 seeds) |
++| total return | **+5.5%** | +2.4% |
+ 
+ On day 1 the center book flags "4 agents across 3 pods running one trade in
+ SBUX: 48.0% of NAV > 10% limit". The three Tiger Cubs are joined by the rogue
+ agent, whose clipped book is also long SBUX. Per-agent guardrails never raise
+-it, because no single agent breached anything.
++it, because no single agent breached anything. On day 5 the four have held that
++book together for a full rebalance cycle: "4 agents across 3 pods holding one
++trade in SBUX for 5+ days (established crowd): 10.0% of NAV > 5% limit".
+ 
+ **If the research is wrong** (catalysts carry no edge), the center book still has
+-the smaller max drawdown on **16/20** seeds: 5.6% vs 8.3% mean. Sharpe goes from
+-0.17 to 0.35, and total return from +2.8% to +1.9%. Crowding control doesn't
++the smaller max drawdown on **17/20** seeds: 5.3% vs 8.3% mean. Sharpe goes from
++0.17 to 0.37, and total return from +2.8% to +1.9%. Crowding control doesn't
+ depend on the thesis being right.
+ 
+ **Ablation (mean over the same 20 seeds):**
+@@ -196,11 +210,11 @@ depend on the thesis being right.
+ | variant | max DD | unwind | Sharpe | return |
+ |---|---:|---:|---:|---:|
+ | per-agent guardrails | 7.9% | −4.9% | 0.50 | +5.5% |
+-| center book (all on) | 5.6% | −2.5% | 0.50 | +2.8% |
++| center book (all on) | 5.1% | −1.6% | 0.47 | +2.4% |
+ | − crowding limits | 15.4% | −12.1% | 0.32 | +5.0% |
+-| − drawdown cut rung | 5.6% | −2.6% | 0.54 | +3.1% |
+-| − risk-scaled ladder (fixed 10%/20% rungs) | 5.1% | −1.9% | 0.40 | +2.2% |
+-| crowding limits only | 4.2% | −2.8% | 0.46 | +2.3% |
++| − drawdown cut rung | 5.1% | −1.8% | 0.50 | +2.6% |
++| − risk-scaled ladder (fixed 10%/20% rungs) | 4.9% | −1.5% | 0.37 | +2.0% |
++| crowding limits only | 3.5% | −2.0% | 0.40 | +1.7% |
+ 
+ What this says, plainly:
+ 
+@@ -210,11 +224,11 @@ What this says, plainly:
+   nothing.** Sharpe-weighting pays the crowd for its run-up: max drawdown rises
+   to 15.4% vs 7.9% for equal weights. This is the case for a book-level risk
+   engine rather than a leaderboard.
+-- **The cost is return.** The center book gives up about 2.7 points of return in
++- **The cost is return.** The center book gives up about 3.1 points of return in
+   the edge-on case, because it refuses to let the fund's single best idea become
+   half its NAV.
+ - **The drawdown-cut rung does not earn its keep on this market.** Removing it
+-  raises Sharpe from 0.50 to 0.54. It stays in the default because it's standard
++  raises Sharpe from 0.47 to 0.50. It stays in the default because it's standard
+   pod-shop practice and costs little drawdown, but the data doesn't support it
+   here. The stop-out rung (now a `close`) stays either way. Since loop 1 the
+   rungs are risk-scaled. The cut still fires (about 9 times per arena world on
+@@ -224,18 +238,28 @@ What this says, plainly:
+   (−0.03..+0.27). That is not enough to change the default. It is optional:
+   leave `ddCut` unset for a stop-only ladder.
+ - **The risk-scaled ladder (loop 1) trades drawdown for Sharpe here.** With
+-  fixed 10%/20% rungs the center book's mean max drawdown is 5.1% (Sharpe 0.40);
+-  risk-scaled, 5.6% (Sharpe 0.50). It was adopted because it raised fund utility
++  fixed 10%/20% rungs the center book's mean max drawdown is 4.9% (Sharpe 0.37);
++  risk-scaled, 5.1% (Sharpe 0.47). It was adopted because it raised fund utility
+   on sealed arena worlds, where the center book's mean max drawdown is still
+   above the per-agent baseline's; see [`LOOPS.md`](LOOPS.md).
++- **The established-crowd limit (loop 3) costs this example return.** The
++  Tiger Cubs' hotel is the one idea with an edge here, and from day 5 it is held
++  at 5% of NAV instead of 10%: unwind loss −2.5% → −1.6%, max drawdown 5.6% →
++  5.1% and peak crowded exposure 15.3% → 13.2% of NAV, but Sharpe 0.50 → 0.47
++  and return +2.8% → +2.4%. With no edge, Sharpe rises (0.35 → 0.37). On arena
++  research worlds, where a crowd's run-up and its unwind roughly cancel, it
++  lowered the center book's mean max drawdown by 0.11 points (seeds 1201–1400,
++  paired 90% CI −0.16..−0.07) and 0.21 (5900–6049, −0.29..−0.12) and the loss
++  in the crowd's unwind by about 0.2 points, with no loss of fund utility
++  (+0.09 and +0.06 points).
+ - **Loop 2's one-year scores do not help this example.** On sealed arena worlds
+   they raised utility and lowered drawdown; on these 20 coffee markets the
+   center book's mean Sharpe fell from 0.61 to 0.50 and its max drawdown rose
+   from 5.0% to 5.6%. The markets are one scenario, a crowded trade that unwinds;
+   the arena's 200-world blocks are the yardstick.
+ - **The headline seed (7)** is shown as-is rather than a cherry-picked one. On it
+-  the center book has the lower drawdown (5.5% vs 6.6%) and unwind loss, and the
+-  higher Sharpe (1.22 vs 1.08), but the lower return (+7.4% vs +9.3%).
++  the center book has the lower drawdown (4.8% vs 6.6%) and unwind loss, and the
++  higher Sharpe (1.15 vs 1.08), but the lower return (+6.4% vs +9.3%).
+ 
+ ## Limits
+ 
+diff --git a/packages/swarm/src/allocator.test.ts b/packages/swarm/src/allocator.test.ts
+index 1b3fe10..96cf40b 100644
+--- a/packages/swarm/src/allocator.test.ts
++++ b/packages/swarm/src/allocator.test.ts
+@@ -247,6 +247,159 @@ test("crowding: book-level limit catches concentration spread across different-l
+   assert.ok(Math.abs(b.scale - 0.5) < 1e-9);
+ });
+ 
++const tenurePolicy = { crowdSimilarity: 0.8, crowdMaxShare: 0.1, bookMaxShare: 1, crowdTenure: 3, crowdTenureCut: 0.5 };
++
++test("crowding: a crowd that has held together for crowdTenure ticks is held to the tighter limit; a one-day overlap is not", () => {
++  const a = { COFFEE: 1 };
++  const b = { COFFEE: 0.9, TEA: -0.1 };
++  // 2 × (1M + 0.9M) = 3.8M = 7.6% of a 50M NAV: inside the 10% clone limit,
++  // over an established crowd's 5%.
++  const scan = (recentA: Record<string, number>[], recentB: Record<string, number>[]) =>
++    scanCrowding(
++      [
++        { name: "a.pod1", capital: 1_000_000, weights: a, recent: recentA },
++        { name: "b.pod2", capital: 1_000_000, weights: b, recent: recentB },
++        { name: "c.pod3", capital: 1_000_000, weights: { GOLD: 1 }, recent: [{ GOLD: 1 }, { GOLD: 1 }] },
++      ],
++      50_000_000,
++      2,
++      tenurePolicy,
++    );
++
++  const held = scan([a, a], [b, b]);
++  assert.deepEqual(held.clusters, [["a.pod1", "b.pod2"]]);
++  assert.deepEqual(held.crowds, [["a.pod1", "b.pod2"]]);
++  assert.equal(held.breaches.length, 1);
++  const cut = held.breaches[0]!;
++  assert.equal(cut.kind, "CROWD");
++  assert.equal(cut.instrument, "COFFEE");
++  assert.equal(cut.limit, 0.05);
++  assert.ok(Math.abs(3_800_000 * cut.scale - 2_500_000) < 1, "cut back exactly to 5% of NAV");
++  assert.deepEqual(cut.contributors, ["a.pod1", "b.pod2"]);
++
++  // The same books today, but a held GOLD two ticks ago: a coincidence, not a crowd.
++  const met = scan([{ GOLD: 1 }, a], [b, b]);
++  assert.deepEqual(met.clusters, [["a.pod1", "b.pod2"]]);
++  assert.deepEqual(met.crowds, []);
++  assert.deepEqual(met.breaches, [], "7.6% is inside the clone limit");
++  // Too little history to call it established.
++  assert.deepEqual(scan([a], [b]).crowds, []);
++  assert.deepEqual(scan([], []).crowds, []);
++  // Off unless both knobs are set: the old checks alone.
++  const off = scanCrowding(
++    [
++      { name: "a.pod1", capital: 1_000_000, weights: a, recent: [a, a] },
++      { name: "b.pod2", capital: 1_000_000, weights: b, recent: [b, b] },
++    ],
++    50_000_000,
++    2,
++    { ...tenurePolicy, crowdTenureCut: 1 },
++  );
++  assert.deepEqual(off.crowds, []);
++  assert.deepEqual(off.breaches, []);
++});
++
++test("crowding: an unfunded agent still makes a trade crowded, but only funded members are cut", () => {
++  const book = { COFFEE: 1 };
++  const scan = scanCrowding(
++    [
++      { name: "funded", capital: 1_000_000, weights: book, recent: [book, book] },
++      { name: "unfunded", capital: 0, weights: { COFFEE: 0.8, TEA: 0.1 }, recent: [book, book] },
++      { name: "gone", capital: 0, weights: {}, recent: [book, book] },
++    ],
++    30_000_000,
++    2,
++    tenurePolicy,
++  );
++  assert.deepEqual(scan.clusters, [], "one funded book is no clone cluster");
++  assert.deepEqual(scan.crowds, [["funded", "unfunded"]], "an agent proposing no book (e.g. revoked) is in no crowd");
++  const cut = scan.breaches.find((b) => b.kind === "CROWD")!;
++  assert.deepEqual(cut.contributors, ["funded"]);
++  // 2M = 6.7% of NAV → back to 5% = 1.5M.
++  assert.ok(Math.abs(2_000_000 * cut.scale - 1_500_000) < 1);
++});
++
++test("crowding: the established-crowd check only ever adds a cut (random books, capital and histories)", () => {
++  const names = ["A", "B", "C", "D", "E"];
++  const templates = [{ A: 1 }, { A: 0.9, B: -0.1 }, { B: 0.5, C: -0.5 }, { C: 1 }, { A: 0.3, B: 0.3, C: 0.2, D: -0.2 }];
++  let crowdCuts = 0;
++  for (let seed = 1; seed <= 400; seed++) {
++    const u = mulberry32(seed);
++    const pick = () => {
++      const t = templates[Math.floor(u() * templates.length)]!;
++      const w: Record<string, number> = {};
++      for (const [k, v] of Object.entries(t)) w[k] = v * (0.8 + 0.4 * u());
++      if (u() < 0.2) w[names[Math.floor(u() * names.length)]!] = u() - 0.5;
++      return w;
++    };
++    const n = 2 + Math.floor(u() * 6);
++    const agents = Array.from({ length: n }, (_, i) => {
++      const weights = u() < 0.1 ? {} : pick();
++      const sticky = u() < 0.6; // a sticky agent held today's book for its whole history
++      const recent = Array.from({ length: Math.floor(u() * 4) }, () => (sticky ? weights : pick()));
++      return { name: `ag${i}`, capital: u() < 0.25 ? 0 : 1e6 * (0.2 + 3 * u()), weights, recent };
++    });
++    const nav = 1e7 * (0.5 + u());
++    const policy = { ...tenurePolicy, crowdMaxShare: 0.05 + 0.1 * u(), bookMaxShare: 0.1 + 0.3 * u() };
++    const withTenure = scanCrowding(agents, nav, 2, policy);
++    const without = scanCrowding(agents, nav, 2, { ...policy, crowdTenure: undefined, crowdTenureCut: undefined });
++
++    // The CLONES and BOOK checks are exactly what they were.
++    assert.deepEqual(withTenure.clusters, without.clusters);
++    assert.deepEqual(withTenure.breaches.filter((b) => b.kind !== "CROWD"), without.breaches, `seed ${seed}`);
++    assert.ok(without.breaches.every((b) => b.kind !== "CROWD"));
++    // No agent keeps more capital; unfunded agents are never cut.
++    const kept = (scan: typeof without, name: string) =>
++      scan.breaches.reduce((m, b) => (b.contributors.includes(name) ? m * b.scale : m), 1);
++    for (const a of agents) {
++      assert.ok(kept(withTenure, a.name) <= kept(without, a.name) + 1e-12, `seed ${seed}: ${a.name} kept more`);
++      if (a.capital === 0) assert.ok(withTenure.breaches.every((b) => !b.contributors.includes(a.name)));
++    }
++    // Every CROWD cut is on an established crowd, and brings its exposure (on
++    // the capital every cut before it left) back exactly to its limit.
++    for (const [i, b] of withTenure.breaches.entries()) {
++      if (b.kind !== "CROWD") continue;
++      crowdCuts++;
++      assert.ok(withTenure.crowds.some((c) => c.join() === b.members.join()));
++      assert.ok(Math.abs(b.limit - policy.crowdTenureCut * policy.crowdMaxShare) < 1e-12);
++      let exposure = 0;
++      for (const m of b.members) {
++        const a = agents.find((x) => x.name === m)!;
++        const before = withTenure.breaches.slice(0, i + 1).reduce((s, x) => (x.contributors.includes(m) ? s * x.scale : s), 1);
++        exposure += a.capital * before * 2 * (a.weights[b.instrument] ?? 0);
++      }
++      if (b.scale > 0) assert.ok(Math.abs(Math.abs(exposure) - b.limit * nav) < 1e-6 * nav, `seed ${seed}: crowd not at its limit`);
++    }
++    // Crowds are exactly the groups linked by pairs whose books pointed the same
++    // way today and at each of the last `crowdTenure − 1` ticks (checked here
++    // independently of the implementation).
++    const heldTogether = (x: (typeof agents)[number], y: (typeof agents)[number]) => {
++      const bx = [...x.recent, x.weights];
++      const by = [...y.recent, y.weights];
++      if (bx.length < policy.crowdTenure || by.length < policy.crowdTenure) return false;
++      if (Object.keys(x.weights).length === 0 || Object.keys(y.weights).length === 0) return false;
++      for (let k = 1; k <= policy.crowdTenure; k++) {
++        if (cosineSimilarity(bx[bx.length - k]!, by[by.length - k]!) < policy.crowdSimilarity) return false;
++      }
++      return true;
++    };
++    const crowdOf = (name: string) => withTenure.crowds.findIndex((c) => c.includes(name));
++    for (const x of agents) {
++      for (const y of agents) {
++        if (x !== y && heldTogether(x, y)) assert.ok(crowdOf(x.name) >= 0 && crowdOf(x.name) === crowdOf(y.name), `seed ${seed}`);
++      }
++      const c = crowdOf(x.name);
++      if (c >= 0) {
++        assert.ok(
++          withTenure.crowds[c]!.some((n) => n !== x.name && heldTogether(x, agents.find((a) => a.name === n)!)),
++          `seed ${seed}: ${x.name} is in a crowd it has not held together with anyone`,
++        );
++      }
++    }
++  }
++  assert.ok(crowdCuts > 20, `the property was exercised (${crowdCuts} crowd cuts)`);
++});
++
+ test("gate: off-mandate dropped, gross clipped, revoked trades nothing", () => {
+   const tree = new DelegationTree();
+   const FAR = 4_000_000_000;
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index f4109e1..049ac2f 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -26,6 +26,10 @@
+  *     exposure to any one instrument exceeds `crowdMaxShare` of NAV, every
+  *     member contributing to it is scaled down until it doesn't. The whole
+  *     book's net exposure to any one instrument is capped too (`bookMaxShare`).
++ *     A crowd that has held together for `crowdTenure` ticks straight is
++ *     ESTABLISHED — one trade run under several names, not two independent
++ *     signals meeting for a day — and its limit is cut to
++ *     `crowdTenureCut × crowdMaxShare`. That only ever adds a cut.
+  *     No single agent ever breached a limit — that is the point.
+  */
+ 
+@@ -110,6 +114,22 @@ export interface CenterBookPolicy {
+   crowdMaxShare: number;
+   /** Max net exposure of the WHOLE book to one instrument, as a share of NAV. */
+   bookMaxShare: number;
++  /**
++   * Ticks two agents' books must have pointed the same way (cosine ≥
++   * `crowdSimilarity` at every one of them, this tick included) before their
++   * overlap is an ESTABLISHED crowd. Independent signals meet by coincidence
++   * and part again within a day or two; agents that have run one book for a
++   * whole rebalance cycle share the signal, so they will also share the exit.
++   * Measured on the books they proposed, funded or not: a trade is crowded
++   * whoever the fund happens to give capital to.
++   */
++  crowdTenure: number;
++  /**
++   * An established crowd's limit as a fraction of `crowdMaxShare` (in (0, 1];
++   * 1 = no extra cut). The cut is applied after the clone and book limits,
++   * on what they left, so it never loosens either.
++   */
++  crowdTenureCut: number;
+ }
+ 
+ /**
+@@ -149,6 +169,10 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
+     crowdSimilarity: 0.8,
+     crowdMaxShare: 0.1,
+     bookMaxShare: 0.2,
++    // One rebalance cycle (`rebalanceEvery`), and the ladder's own cut
++    // (`cutFactor`): an established crowd is sized like an agent in drawdown.
++    crowdTenure: 5,
++    crowdTenureCut: 0.5,
+   };
+ }
+ 
+@@ -372,14 +396,24 @@ export interface CrowdInput {
+   capital: number;
+   /** Tradeable weights this tick (post-gate). */
+   weights: Weights;
++  /**
++   * The books the agent proposed (post-gate) at the ticks before this one,
++   * oldest first: positions up to now, never after. Only the last
++   * `crowdTenure − 1` are read, to tell an established crowd from a
++   * coincidence. Absent = no history, so no established crowd.
++   */
++  recent?: readonly Weights[];
+ }
+ 
+ export interface CrowdBreach {
+   /**
+    * CLONES: a cluster of agents running near-identical books.
+    * BOOK:   the whole book's net exposure to one instrument, whoever holds it.
++   * CROWD:  an ESTABLISHED crowd — agents whose books have pointed the same way
++   *         for `crowdTenure` ticks straight — held to `crowdTenureCut` of the
++   *         clone limit, on the capital the CLONES and BOOK cuts left.
+    */
+-  kind: "CLONES" | "BOOK";
++  kind: "CLONES" | "BOOK" | "CROWD";
+   /** Agents in the group, in input order. */
+   members: string[];
+   instrument: string;
+@@ -391,20 +425,27 @@ export interface CrowdBreach {
+   limit: number;
+   /** Multiplier applied to each contributing member's capital. */
+   scale: number;
+-  /** Members whose capital is scaled (same sign as the group's exposure). */
++  /** Funded members whose capital is scaled (same sign as the group's exposure). */
+   contributors: string[];
+ }
+ 
+ export interface CrowdScan {
+-  /** Every cluster of ≥ 2 similar books, breaching or not. */
++  /** Every cluster of ≥ 2 similar funded books, breaching or not. */
+   clusters: string[][];
++  /**
++   * Every established crowd (≥ 2 agents, funded or not, whose books have
++   * pointed the same way for `crowdTenure` ticks straight), breaching or not.
++   */
++  crowds: string[][];
++  /** In the order they must be applied: CLONES, then BOOK, then CROWD. */
+   breaches: CrowdBreach[];
+ }
+ 
+ /**
+  * If `members`' combined exposure to their largest instrument exceeds
+  * `limitShare` of NAV, return the uniform capital scale on the same-direction
+- * contributors that brings it back to the limit.
++ * contributors that brings it back to the limit. Only funded members
++ * contribute: an unfunded member holds no exposure to cut.
+  */
+ function concentrationBreach(
+   kind: CrowdBreach["kind"],
+@@ -431,7 +472,7 @@ function concentrationBreach(
+ 
+   const [instrument, e] = worst;
+   const dir = Math.sign(e);
+-  const contributors = members.filter((m) => Math.sign(m.weights[instrument] ?? 0) === dir);
++  const contributors = members.filter((m) => m.capital > 0 && Math.sign(m.weights[instrument] ?? 0) === dir);
+   // Only the contributors shrink, so solve for the scale on THEIR share.
+   const contributed = contributors.reduce(
+     (s, m) => s + m.capital * leverage * (m.weights[instrument] ?? 0),
+@@ -451,63 +492,106 @@ function concentrationBreach(
+   };
+ }
+ 
++/** Connected components (size ≥ 2) of the graph on 0..n−1 with edges `linked(i, j)`, in input order. */
++function components(n: number, linked: (i: number, j: number) => boolean): number[][] {
++  const parent = Array.from({ length: n }, (_, i) => i);
++  const find = (i: number): number => {
++    while (parent[i] !== i) {
++      parent[i] = parent[parent[i]!]!;
++      i = parent[i]!;
++    }
++    return i;
++  };
++  for (let i = 0; i < n; i++) {
++    for (let j = i + 1; j < n; j++) if (linked(i, j)) parent[find(i)] = find(j);
++  }
++  const groups = new Map<number, number[]>();
++  for (let i = 0; i < n; i++) {
++    const root = find(i);
++    const g = groups.get(root);
++    if (g) g.push(i);
++    else groups.set(root, [i]);
++  }
++  return [...groups.values()].filter((g) => g.length >= 2);
++}
++
+ /**
+- * Two book-level checks no per-agent limit can make:
++ * Three book-level checks no per-agent limit can make:
+  *
+- *  - CLONES: cluster agents whose proposed books point the same way (cosine
+- *    similarity ≥ `crowdSimilarity`, union-find) and cap each cluster's
+- *    concentrated exposure at `crowdMaxShare` of NAV. This is the check that
+- *    names names: "these three agents in three pods are one trade".
++ *  - CLONES: cluster funded agents whose proposed books point the same way
++ *    (cosine similarity ≥ `crowdSimilarity`, union-find) and cap each
++ *    cluster's concentrated exposure at `crowdMaxShare` of NAV. This is the
++ *    check that names names: "these three agents in three pods are one trade".
+  *  - BOOK: cap the whole book's net exposure to any single instrument at
+  *    `bookMaxShare`, however many different-looking strategies it is spread
+  *    across (a trend agent riding the crowd's run-up is crowding too).
++ *  - CROWD: agents whose books have pointed the same way at every one of the
++ *    last `crowdTenure` ticks (this one included) are an ESTABLISHED crowd:
++ *    one signal run under several names, which will unwind as one. Its
++ *    concentrated exposure is capped at `crowdTenureCut × crowdMaxShare`.
++ *    Two independent signals that meet on a name for a day are not. Every
++ *    agent that proposes a book counts, funded or not — crowding is a
++ *    property of the trade — but only funded members are cut.
++ *
++ * The CROWD check runs last, on the capital the CLONES and BOOK cuts left, so
++ * those two are exactly what they would be without it, and it can only lower
++ * what an agent is left with. With `crowdTenure` unset (or `crowdTenureCut`
++ * ≥ 1) it is off.
+  */
+ export function scanCrowding(
+   agents: readonly CrowdInput[],
+   nav: number,
+   leverage: number,
+-  policy: Pick<CenterBookPolicy, "crowdSimilarity" | "crowdMaxShare" | "bookMaxShare">,
++  policy: Pick<CenterBookPolicy, "crowdSimilarity" | "crowdMaxShare" | "bookMaxShare"> &
++    Partial<Pick<CenterBookPolicy, "crowdTenure" | "crowdTenureCut">>,
+ ): CrowdScan {
++  const similar = (a: Weights, b: Weights) => cosineSimilarity(a, b) >= policy.crowdSimilarity;
+   const active = agents.filter((a) => a.capital > 0 && Object.keys(a.weights).length > 0);
+-  const parent = active.map((_, i) => i);
+-  const find = (i: number): number => {
+-    while (parent[i] !== i) {
+-      parent[i] = parent[parent[i]!]!;
+-      i = parent[i]!;
+-    }
+-    return i;
+-  };
+-  for (let i = 0; i < active.length; i++) {
+-    for (let j = i + 1; j < active.length; j++) {
+-      if (cosineSimilarity(active[i]!.weights, active[j]!.weights) >= policy.crowdSimilarity) {
+-        parent[find(i)] = find(j);
+-      }
+-    }
+-  }
+-  const groups = new Map<number, CrowdInput[]>();
+-  active.forEach((a, i) => {
+-    const root = find(i);
+-    const g = groups.get(root);
+-    if (g) g.push(a);
+-    else groups.set(root, [a]);
+-  });
+ 
+   const clusters: string[][] = [];
+   const breaches: CrowdBreach[] = [];
+-  for (const members of groups.values()) {
+-    if (members.length < 2) continue;
++  for (const g of components(active.length, (i, j) => similar(active[i]!.weights, active[j]!.weights))) {
++    const members = g.map((i) => active[i]!);
+     clusters.push(members.map((m) => m.name));
+     const b = concentrationBreach("CLONES", members, nav, leverage, policy.crowdMaxShare);
+     if (b) breaches.push(b);
+   }
+ 
+-  // Book-level check runs on capital AFTER the clone cuts above are applied, so
+-  // it only bites for concentration the clone check didn't already remove.
++  // Each later check runs on the capital the cuts before it left, so it only
++  // bites for concentration they didn't already remove, and the book can apply
++  // the scales in order (they compound). Clusters are disjoint, so no agent is
++  // in two CLONES breaches.
+   const scaled = new Map<string, number>();
+   for (const b of breaches) for (const c of b.contributors) scaled.set(c, b.scale);
+-  const post = active.map((a) => ({ ...a, capital: a.capital * (scaled.get(a.name) ?? 1) }));
+-  const book = concentrationBreach("BOOK", post, nav, leverage, policy.bookMaxShare);
+-  if (book) breaches.push(book);
++  const after = (xs: readonly CrowdInput[]) => xs.map((a) => ({ ...a, capital: a.capital * (scaled.get(a.name) ?? 1) }));
++  const record = (b: CrowdBreach) => {
++    breaches.push(b);
++    for (const c of b.contributors) scaled.set(c, (scaled.get(c) ?? 1) * b.scale);
++  };
++  const book = concentrationBreach("BOOK", after(active), nav, leverage, policy.bookMaxShare);
++  if (book) record(book);
++
++  const crowds: string[][] = [];
++  const tenure = Math.floor(policy.crowdTenure ?? 0);
++  const cut = policy.crowdTenureCut ?? 1;
++  if (tenure >= 1 && cut < 1) {
++    // Each agent's books at the last `tenure` ticks, oldest first, this one last.
++    const proposing = agents.filter((a) => Object.keys(a.weights).length > 0);
++    const books = proposing.map((a) => [...(tenure > 1 ? (a.recent ?? []).slice(-(tenure - 1)) : []), a.weights]);
++    const heldTogether = (i: number, j: number) => {
++      const a = books[i]!;
++      const b = books[j]!;
++      if (a.length < tenure || b.length < tenure) return false;
++      for (let k = 1; k <= tenure; k++) if (!similar(a[a.length - k]!, b[b.length - k]!)) return false;
++      return true;
++    };
++    const now = after(proposing);
++    for (const g of components(proposing.length, heldTogether)) {
++      crowds.push(g.map((i) => proposing[i]!.name));
++      const b = concentrationBreach("CROWD", g.map((i) => now[i]!), nav, leverage, cut * policy.crowdMaxShare);
++      if (b) record(b);
++    }
++  }
+ 
+-  return { clusters, breaches };
++  return { clusters, crowds, breaches };
+ }
+diff --git a/packages/swarm/src/book.test.ts b/packages/swarm/src/book.test.ts
+index 226afc2..cca7a54 100644
+--- a/packages/swarm/src/book.test.ts
++++ b/packages/swarm/src/book.test.ts
+@@ -88,6 +88,39 @@ test("clones across pods are caught as a crowd; per-agent guardrails never see t
+   assert.ok(c.crashWindowReturn > n.crashWindowReturn, `unwind: center ${c.crashWindowReturn} vs naive ${n.crashWindowReturn}`);
+ });
+ 
++test("an established crowd is cut to the tighter limit before the unwind, never before it has held together", async () => {
++  const policy = defaultCenterBookPolicy();
++  const on = await runBook(market, genericSwarm(), policy);
++  const off = await runBook(market, genericSwarm(), { ...policy, crowdTenureCut: 1 });
++  const { startTick, crashTick } = market.config.crowd;
++  const established = (b: typeof on) =>
++    b.decisions.filter((d) => d.kind === "CROWDING_CUT" && d.detail.includes("(established crowd)"));
++  assert.equal(established(off).length, 0, "switched off, the check never fires");
++  const first = established(on).find((d) => d.detail.includes("one trade in MEME") && d.t >= startTick);
++  assert.ok(first, "the herd holding MEME together is an established crowd");
++  // The herders' fallback books differ, so they only point the same way from
++  // the day the viral signal appears: no earlier than crowdTenure days in.
++  assert.ok(first!.t >= startTick + policy.crowdTenure - 1, `established on day ${first!.t}, before it had held together`);
++  assert.ok(first!.t < crashTick, "…and cut before the unwind");
++  assert.match(first!.detail, /> 5% limit/);
++  const s = { on: summarize(on, market), off: summarize(off, market) };
++  assert.ok(s.on.crashWindowReturn > s.off.crashWindowReturn, `unwind: ${s.on.crashWindowReturn} vs ${s.off.crashWindowReturn}`);
++});
++
++test("point-in-time: cutting off the market's future changes no decision taken before the cut", async () => {
++  const policy = defaultCenterBookPolicy();
++  const full = await runBook(market, genericSwarm(), policy);
++  const { startTick, crashTick } = market.config.crowd;
++  // Cuts through the crowd forming, becoming established, and unwinding.
++  const cuts = [startTick - 3, startTick + 1, startTick + 3, startTick + 5, startTick + 8, crashTick - 20, crashTick, crashTick + 3];
++  for (const cut of cuts) {
++    const trunc = await runBook({ ...market, ticks: market.ticks.slice(0, cut) }, genericSwarm(), policy);
++    assert.deepEqual(trunc.decisions, full.decisions.filter((d) => d.t < cut), `decisions differ before day ${cut}`);
++    assert.deepEqual(trunc.nav, full.nav.slice(0, cut));
++  }
++  assert.ok(full.decisions.some((d) => d.t < crashTick && d.detail.includes("(established crowd)")));
++});
++
+ test("risk-scaled stops: the center book never revokes an agent sooner than its own stop-loss would", async () => {
+   const policy = defaultCenterBookPolicy();
+   const naive = await runBook(market, genericSwarm(), defaultNaivePolicy());
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index ac72223..ca98756 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -445,6 +445,9 @@ export async function runBook(
+   // crowded book — NOT merely until the crowd shrinks to one member, or the last
+   // clone standing would be re-sized straight back into the same trade.
+   const crowdCaps = new Map<string, { cap: number; book: Weights }>();
++  // The books each agent proposed (post-gate) at the last `crowdTenure − 1`
++  // ticks, oldest first: how long a crowd has held together.
++  const recentBooks = new Map<string, Weights[]>();
+   const history: Observation["history"][number][] = [];
+   const nav: number[] = [];
+   const bookReturns: number[] = [];
+@@ -532,11 +535,21 @@ export async function runBook(
+     /* 4) Book-level crowding check on the proposed books (center only). */
+     if (center) {
+       const scan = scanCrowding(
+-        agents.map((a, i) => ({ name: a.name, capital: capitalOf(a), weights: gated[i]!.weights })),
++        agents.map((a, i) => ({
++          name: a.name,
++          capital: capitalOf(a),
++          weights: gated[i]!.weights,
++          recent: recentBooks.get(a.name),
++        })),
+         currentNav,
+         center.leverage,
+         center,
+       );
++      agents.forEach((a, i) => {
++        const past = recentBooks.get(a.name) ?? [];
++        past.push(gated[i]!.weights);
++        recentBooks.set(a.name, center.crowdTenure > 1 ? past.slice(-(center.crowdTenure - 1)) : []);
++      });
+       agents.forEach((a, i) => {
+         const held = crowdCaps.get(a.name);
+         if (held && cosineSimilarity(gated[i]!.weights, held.book) < center.crowdSimilarity) {
+@@ -548,8 +561,9 @@ export async function runBook(
+         const targets = new Map<string, bigint>();
+         for (const name of b.contributors) {
+           const i = agents.findIndex((a) => a.name === name);
+-          // Breaches apply in order and a BOOK breach is solved on capital after
+-          // the CLONES cuts, so scaling the live budget compounds correctly.
++          // Breaches apply in order and each is solved on the capital the ones
++          // before it left (CLONES, then BOOK, then CROWD), so scaling the live
++          // budget compounds correctly.
+           const cut = capitalOf(agents[i]!) * b.scale;
+           const prior = crowdCaps.get(name);
+           crowdCaps.set(name, { cap: prior ? Math.min(prior.cap, cut) : cut, book: gated[i]!.weights });
+@@ -565,7 +579,10 @@ export async function runBook(
+           detail:
+             (b.kind === "CLONES"
+               ? `${plural(b.members.length, "agent")} across ${plural(podCount(b.members), "pod")} running one trade in ${b.instrument}`
+-              : `book net ${b.instrument} exposure (${plural(b.contributors.length, "agent")} across ${plural(podCount(b.contributors), "pod")})`) +
++              : b.kind === "CROWD"
++                ? `${plural(b.members.length, "agent")} across ${plural(podCount(b.members), "pod")} holding one trade in ` +
++                  `${b.instrument} for ${center.crowdTenure}+ days (established crowd)`
++                : `book net ${b.instrument} exposure (${plural(b.contributors.length, "agent")} across ${plural(podCount(b.contributors), "pod")})`) +
+             `: ${(b.share * 100).toFixed(1)}% of NAV > ${(b.limit * 100).toFixed(0)}% limit → ` +
+             `contributors scaled ×${b.scale.toFixed(2)}`,
+         });

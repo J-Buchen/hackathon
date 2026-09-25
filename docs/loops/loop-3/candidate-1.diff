@@ -1,0 +1,1113 @@
+diff --git a/README.md b/README.md
+index 9daf2a4..0f8a927 100644
+--- a/README.md
++++ b/README.md
+@@ -129,6 +129,10 @@ the mandate tree:
+   `tree.close`: the agent's capital and every sub-mandate it handed out go back
+   to its pod. The book audits the tree's reservation and close invariants before
+   and after every tick.
++- **The reservation is the binding limit.** Every agent's trade is sized from
++  its mandate's *available* authority in the tree (budget − its own spend − what
++  it handed to sub-mandates) × leverage, not from a number the book keeps, and
++  each order is audited against the tree before it is marked.
+ - **Crowding control.** Agents in different pods running the same trade are cut
+   back to a book-level limit, even when each is inside its own mandate.
+ 
+@@ -309,6 +313,7 @@ You can also run any layer in isolation:
+ | `@allowance/core` — invariants | `packages/core/src/tree.test.ts` | `audit()` is empty for any tree built through the API and flags over-commitment (children + spend > budget, incl. an unserialized overspend), broadened merchants/purposes/expiry, negative budgets and broken links; `isClosed` separates a close (no unspent authority left) from a bare revoke (authority stranded); nothing can be delegated anywhere inside a closed subtree. |
+ | `@allowance/swarm` — close | `packages/swarm/src/close.test.ts` | With PMs holding sub-mandates that pay every tick, the tree is checked from outside at every tick under three policies: children ≤ parent, available ≥ 0, sub-mandates hold exactly their ppm slice of the PM (never more), a closed subtree's budgets are frozen and it can never pay, delegate or grow; every stop-out is exactly one `close` freeing budget − spent into the pod; shares are validated in the ppm they are cut in; the book's audit stops a broken tree before the tick trades (and a mid-tick break at that tick's end); spent authority is a floor no resize crosses, and a grow the fund cannot fund is clipped, never refused. |
+ | `@allowance/lab` — close in the arena | `packages/lab/src/arena-close.test.ts` | On randomized arena rosters with desks that spend every tick, center book and guardrails both run to the end on a sound tree, every stop-out is one `close` of the agent with its desks, and no move is refused. |
++| `@allowance/swarm` — reservation binds | `packages/swarm/src/reserve.test.ts`, `packages/lab/src/arena-reserve.test.ts` | Every order is checked from outside at the trade, on books where a PM's budget overstates what it may trade (desks, its own spend, an outside grant) and on randomized arena rosters: it is sized on no more than the mandate's available authority, its gross notional is within available × leverage, a closed PM trades nothing, and the marked PnL is exactly the audited order's; an order inflated for one PM (tree untouched) stops the book at the trade naming that PM; orders are sized after the crowding cuts; the book's reallocations and cuts are made on the tree's budgets. |
+ | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
+ | `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+ | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index fae7dd0..cd107c4 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -26,6 +26,7 @@ has limits. It wins through the **center book**:
+ | capital allocation | the node's **budget**: `tree.resize(node, budget)` |
+ | allowed instruments | the node's **allowlist**, attenuated fund ⊇ pod ⊇ PM |
+ | a PM's own sub-agents (execution, data) | **sub-mandates**: children of the PM node, each reserved as a ppm `share` of its budget when granted and resized with it |
++| what a PM may trade | its node's **available** authority × leverage: budget − its own spend − what it handed to sub-mandates (`sizeOrder` in the gate) |
+ | drawdown cut | `resize` to `cutFactor` × capital |
+ | stop-out | **`close`**: the PM and every sub-mandate shrink to what they spent and are revoked, in one operation; the unspent authority is back in the pod |
+ | audit trail | the same ordered event log as payments (`RESIZE`, `REVOKE`) |
+@@ -39,9 +40,21 @@ targets become ceilings instead of refused moves. `close` is why a stop-out
+ can't leave authority behind: the old stop-out was "resize to 0, then revoke",
+ and a PM that had delegated sub-budgets couldn't be resized to 0 at all.
+ 
+-**Invariants, checked twice a tick.** The book audits its tree
+-(`bookViolations`) before each tick trades and again at its end, and throws
+-`BookInvariantError` on any failure:
++**The reservation is the binding limit.** Every order is sized by the gate from
++the PM's *available* authority in the tree at the moment of the trade (after the
++tick's reallocation and crowding cuts), never from a capital number the book
++keeps. A slice reserved for an execution or data desk is not also trading
++capital, and a closed PM (available 0) trades nothing. Before this, a PM that
++had handed 30% of its budget to a desk still traded 100% of it. On the arena's
++rosters (no desks, no PM spend) available authority equals the budget, so the
++arena's numbers are unchanged to the bit.
++
++**Invariants, checked at three points of every tick.** The book audits its tree
++(`bookViolations`) before each tick trades and again at its end, and in
++between it audits every order it is about to mark (`tradeViolations`): no
++PM's gross notional exceeds its available authority × leverage, a closed PM
++trades nothing, and nothing off its allowlist is held. It throws
++`BookInvariantError` on any failure. The tree invariants:
+ 
+ - no node has spent plus delegated more than it holds (children ≤ parent,
+   `available` ≥ 0), and no budget is negative;
+@@ -54,7 +67,13 @@ and a PM that had delegated sub-budgets couldn't be resized to 0 at all.
+ `packages/swarm/src/close.test.ts` checks these from the outside at every tick
+ of books whose PMs hold spending sub-mandates. It also shows that each stop-out
+ is one `close` that frees exactly budget − spent into the pod, and that a closed
+-subtree can never pay, delegate or grow again.
++subtree can never pay, delegate or grow again. `packages/swarm/src/reserve.test.ts`
++and `packages/lab/src/arena-reserve.test.ts` check every order from the outside at
++the trade: sized on no more than available authority, gross notional within
++available × leverage, nothing for a closed PM, and the marked PnL exactly the
++audited order's. They run books in which the PM's budget overstates what it may
++trade (desks, its own spend, an outside grant), and an order inflated for one PM
++while the tree is untouched stops the book at the trade, naming that PM.
+ 
+ ---
+ 
+diff --git a/package.json b/package.json
+index 517ba90..cea4a56 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/lab/package.json b/packages/lab/package.json
+index da5f86b..ec7d1ce 100644
+--- a/packages/lab/package.json
++++ b/packages/lab/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts",
++    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-reserve.test.ts",
+     "lab": "tsx src/cli.ts"
+   },
+   "dependencies": {
+diff --git a/packages/lab/src/arena-reserve.test.ts b/packages/lab/src/arena-reserve.test.ts
+new file mode 100644
+index 0000000..07379cf
+--- /dev/null
++++ b/packages/lab/src/arena-reserve.test.ts
+@@ -0,0 +1,128 @@
++/**
++ * (R) The reservation binds on randomized arena rosters (clones under two
++ * names, herders, a rogue, crowd crashes). Every order is checked from the
++ * outside at the moment it is handed over for marking: it is sized on no more
++ * than its mandate's available authority (budget − own spend − handed down),
++ * its gross notional is at most that × leverage, a closed agent puts on
++ * nothing, and what the book marks is exactly that order.
++ *
++ * With desks that hold a slice of every agent's budget and pay for something
++ * every tick, the budget overstates what an agent may trade; without them (the
++ * rosters the arena scores), available authority IS the budget for every live
++ * agent, which is why sizing from the tree leaves the arena's numbers
++ * unchanged.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { formatAmount, pay, type DelegationTree, type PaymentAdapters } from "@allowance/core";
++import {
++  defaultCenterBookPolicy,
++  defaultNaivePolicy,
++  orderNotional,
++  runBook,
++  tickToUnix,
++  TRADE_SLACK,
++  type AllocationPolicy,
++  type SizedOrder,
++  type SwarmSpec,
++} from "@allowance/swarm";
++import { makeWorld, type World } from "./arena";
++
++const usdc = (units: bigint) => Number(formatAmount(units));
++
++const allowAll: PaymentAdapters = {
++  identity: { verify: async () => ({ ok: true }) },
++  screening: { screen: async () => ({ approved: true }) },
++  settlement: {
++    settle: async (req) => ({
++      settled: true,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: req.amount,
++      amountOut: req.amount,
++    }),
++  },
++};
++
++async function deskSpend(t: number, tree: DelegationTree): Promise<void> {
++  for (const n of tree.listNodes()) {
++    const desk = n.name.split(".")[0];
++    if ((desk !== "exec" && desk !== "data") || tree.isRevokedInChain(n.name)) continue;
++    const amount = desk === "exec" ? 500_000000n : 50_000000n;
++    if (tree.available(n.name) < amount) continue;
++    const r = await pay(tree, { node: n.name, merchant: n.mandate.allowedMerchants![0]!, amount }, allowAll, { now: tickToUnix(t) });
++    assert.equal(r.outcome, "SETTLED");
++  }
++}
++
++/** Run one book, checking every order at the trade; returns how often the budget overstated authority. */
++async function check(world: World, spec: SwarmSpec, policy: AllocationPolicy, desks: boolean) {
++  const seen: { authority: number; notional: Record<string, number> }[][] = [];
++  let overstated = 0;
++  let live = 0;
++  const book = await runBook(world.market, spec, policy, {
++    onTick: desks ? deskSpend : undefined,
++    onTrade: (t, tree, orders: readonly SizedOrder[]) => {
++      seen.push(
++        orders.map((o) => {
++          const node = tree.requireNode(o.node);
++          const handedDown = tree.childrenOf(o.node).reduce((s, c) => s + c.mandate.budget, 0n);
++          const available = usdc(node.mandate.budget - node.mandate.spentDirect - handedDown);
++          const gross = Object.values(o.weights).reduce((s, w) => s + Math.abs(o.authority * o.leverage * w), 0);
++          if (tree.isRevokedInChain(o.node)) {
++            assert.equal(gross, 0, `t=${t}: closed ${o.node} trades`);
++            assert.deepEqual(o.weights, {});
++          } else {
++            live++;
++            assert.ok(o.authority <= available, `t=${t}: ${o.node} sized on ${o.authority} > available ${available}`);
++            assert.ok(gross <= available * policy.leverage * (1 + TRADE_SLACK), `t=${t}: ${o.node} trades ${gross}`);
++            if (usdc(node.mandate.budget) > available + 1) overstated++;
++            // Without desks or spend, available authority is the budget: the old size, to the unit.
++            if (!desks) assert.equal(o.authority, usdc(node.mandate.budget), `t=${t}: ${o.node}`);
++          }
++          return { authority: o.authority, notional: orderNotional(o) };
++        }),
++      );
++    },
++  });
++  const T = world.market.ticks.length;
++  assert.equal(seen.length, T);
++  for (let t = 0; t < T; t++) {
++    book.agents.forEach((a, i) => {
++      const s = seen[t]![i]!;
++      assert.equal(a.capital[t], s.authority);
++      let pnl = 0;
++      for (const [k, n] of Object.entries(s.notional)) pnl += n * (world.market.ticks[t]!.returns[k] ?? 0);
++      assert.ok(Math.abs(a.pnl[t]! - pnl) <= 1e-9 * Math.max(1, Math.abs(pnl)), `t=${t}: ${a.name} marked ${a.pnl[t]} vs ${pnl}`);
++    });
++  }
++  return { overstated, live, stopped: book.agents.filter((a) => a.ladder === "stopped").length };
++}
++
++let overstated = 0;
++let stopped = 0;
++for (const seed of [7, 8, 9, 10, 11, 12]) {
++  test(`arena world ${seed}: every order is within its mandate's available authority × leverage, with and without desks`, async () => {
++    const world = makeWorld(seed);
++    for (const policy of [defaultCenterBookPolicy(), defaultNaivePolicy()]) {
++      const withDesks = world.swarm();
++      for (const a of withDesks.agents) {
++        a.subMandates = [
++          { label: "exec", share: 0.2 },
++          { label: "data", share: 0.01, instruments: [a.instruments[0]!] },
++        ];
++      }
++      const d = await check(world, withDesks, policy, true);
++      assert.ok(d.overstated > 0.9 * d.live, `desks reserve a slice of every live agent (${d.overstated}/${d.live})`);
++      overstated += d.overstated;
++      stopped += d.stopped;
++      await check(world, world.swarm(), policy, false);
++    }
++  });
++}
++
++test("those worlds had budgets overstating authority, and closed agents", () => {
++  assert.ok(overstated >= 10_000, `live orders whose budget overstated their authority: ${overstated}`);
++  assert.ok(stopped >= 30, `stop-outs: ${stopped}`);
++});
+diff --git a/packages/swarm/package.json b/packages/swarm/package.json
+index a3126f2..7f0c3a8 100644
+--- a/packages/swarm/package.json
++++ b/packages/swarm/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/example.test.ts"
++    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/reserve.test.ts src/example.test.ts"
+   },
+   "dependencies": {
+     "@allowance/core": "*"
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index ac72223..12739aa 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -17,6 +17,9 @@
+  *                           handed out shrink to what they spent and are revoked, in one
+  *                           operation; the unspent authority is back in the pod); the
+  *                           drawdown rungs are risk-scaled in the center book
++ *   - trading size        = available × leverage   (available = the budget − what the node
++ *                           spent itself − what it handed down; sized by `sizeOrder` in the
++ *                           gate, never from a number the book keeps)
+  * so every allocator action lands in the same audited event log as payments.
+  *
+  * The tree's invariants (`bookViolations`) are checked twice a tick: before the
+@@ -24,9 +27,14 @@
+  * has acted) and at its end. Children never exceed their parent, nothing is
+  * over-committed, the root still holds the AUM, every revoked mandate is
+  * closed (no authority stranded under a dead node), every stopped agent is
+- * closed and every live one is not. A violation throws `BookInvariantError`:
+- * no tick trades on a tree that failed the check, and a break made during a
+- * tick is caught before the next one starts.
++ * closed and every live one is not. Between the two, every order the tick is
++ * about to mark is checked against the tree as it then stands
++ * (`tradeViolations`): no agent's gross notional exceeds its available
++ * authority × leverage, a closed agent trades nothing, and nothing off its
++ * allowlist is held. A violation throws `BookInvariantError`: no tick trades
++ * on a tree that failed the check, no order is marked that exceeds its
++ * reservation, and a break made during a tick is caught before the next one
++ * starts.
+  *
+  * Money and authority are kept separate on purpose: PnL accrues to the fund's
+  * NAV ledger here, while the tree holds how much each agent is *allowed* to run.
+@@ -41,7 +49,7 @@ import {
+   type CenterBookPolicy,
+   type LadderState,
+ } from "./allocator";
+-import { preTradeCheck, type GateViolation } from "./gate";
++import { orderNotional, orderPnl, preTradeCheck, sizeOrder, type GateViolation, type SizedOrder } from "./gate";
+ import { cosineSimilarity } from "./stats";
+ import { SIM_START, type Market } from "./market";
+ import type { Observation, Strategy, Weights } from "./strategies";
+@@ -130,7 +138,10 @@ export interface AgentResult {
+   style: string;
+   /** Attributable per-unit-of-capital returns (the strategy's own track record). */
+   unitReturns: number[];
+-  /** Capital (USDC) the agent ran each tick. */
++  /**
++   * Capital (USDC) the agent ran each tick: the authority its order was sized
++   * on, i.e. its mandate's available authority at the trade (0 once closed).
++   */
+   capital: number[];
+   /** Realized PnL (USDC) each tick. */
+   pnl: number[];
+@@ -293,12 +304,14 @@ export function applyTargets(
+ 
+ /**
+  * Thrown by `runBook` when the tree breaks one of the book's invariants, at
+- * tick `t`: at its `"start"` (before it trades) or at its `"end"`.
++ * tick `t`: at its `"start"` (before it trades), at the `"trade"` (an order
++ * about to be marked breaks its mandate, see `tradeViolations`) or at its
++ * `"end"`.
+  */
+ export class BookInvariantError extends Error {
+   constructor(
+     readonly t: number,
+-    readonly at: "start" | "end",
++    readonly at: "start" | "trade" | "end",
+     readonly violations: readonly string[],
+   ) {
+     super(`book invariant broken at the ${at} of tick ${t}: ${violations.join("; ")}`);
+@@ -342,6 +355,67 @@ export function bookViolations(
+   return out;
+ }
+ 
++/**
++ * Relative slack on the notional bound in `tradeViolations`: the gate leaves
++ * Σ|w| unclipped up to 1 + 1e-9, and the sums are floating point. On $20M of
++ * notional that is 20 cents; nothing larger passes.
++ */
++export const TRADE_SLACK = 1e-8;
++
++/**
++ * (R) at the trade: the orders a tick is about to mark, checked against the
++ * tree as it stands at that moment (after every allocator and crowding write
++ * of the tick), as a list of violations (empty when sound). `runBook` checks
++ * it every tick, after sizing and before anything is marked:
++ *
++ *  - OVER_RESERVATION  an order's gross notional exceeds its mandate's
++ *                      available authority × `leverage` (the policy's gross
++ *                      leverage; the gate keeps Σ|w| ≤ 1). The reservation, not
++ *                      any number the book keeps, bounds what an agent trades.
++ *  - DEAD_TRADES       its mandate (or an ancestor) is revoked or expired and
++ *                      it still trades: a closed agent trades nothing.
++ *  - OFF_MANDATE       it holds an instrument outside its node's allowlist.
++ *  - NOT_FINITE        a non-finite authority, leverage or notional (NaN would
++ *                      pass every comparison above).
++ *  - UNKNOWN_NODE      the order names no node of the tree.
++ *
++ * The notional bound is checked up to `TRADE_SLACK`.
++ */
++export function tradeViolations(
++  tree: DelegationTree,
++  orders: readonly SizedOrder[],
++  opts: { leverage: number; now: number },
++): string[] {
++  const out: string[] = [];
++  for (const o of orders) {
++    if (!tree.getNode(o.node)) {
++      out.push(`UNKNOWN_NODE ${o.node}: no such mandate`);
++      continue;
++    }
++    const notional = Object.entries(orderNotional(o));
++    if (!Number.isFinite(o.authority) || !Number.isFinite(o.leverage) || notional.some(([, n]) => !Number.isFinite(n))) {
++      out.push(`NOT_FINITE ${o.node}: authority ${o.authority}, leverage ${o.leverage}`);
++      continue;
++    }
++    const gross = notional.reduce((s, [, n]) => s + Math.abs(n), 0);
++    if (tree.isRevokedInChain(o.node) || tree.isExpiredInChain(o.node, opts.now)) {
++      if (gross > 0) out.push(`DEAD_TRADES ${o.node}: its mandate is dead, yet it trades ${gross.toFixed(2)} USDC gross`);
++      continue;
++    }
++    const available = toUsdc(tree.available(o.node));
++    if (gross > available * opts.leverage * (1 + TRADE_SLACK)) {
++      out.push(
++        `OVER_RESERVATION ${o.node}: gross notional ${gross.toFixed(2)} > available ${available.toFixed(2)} × leverage ${opts.leverage}`,
++      );
++    }
++    const allowed = tree.requireNode(o.node).mandate.allowedMerchants;
++    for (const [k, n] of notional) {
++      if (n !== 0 && allowed !== undefined && !allowed.includes(k)) out.push(`OFF_MANDATE ${o.node}: holds ${k}`);
++    }
++  }
++  return out;
++}
++
+ /* ------------------------------------------------------------------ */
+ /* Run                                                                */
+ /* ------------------------------------------------------------------ */
+@@ -355,6 +429,17 @@ export interface RunBookOptions {
+    * held to the book's invariants before the tick trades.
+    */
+   onTick?: (t: number, tree: DelegationTree) => void | Promise<void>;
++  /**
++   * Called every tick once the orders are sized from the tree (after the
++   * crowding check), just before they are audited and marked, with one order
++   * per agent in roster order: the seam through which an execution layer
++   * outside the book receives the orders, and through which a test can watch
++   * (or tamper with) them. Whatever it does to them is held to
++   * `tradeViolations`, against the tree as it then stands, before anything is
++   * marked; what is marked is exactly these orders. What it does to the tree
++   * is held to `bookViolations` at the tick's end, like any mid-tick change.
++   */
++  onTrade?: (t: number, tree: DelegationTree, orders: readonly SizedOrder[]) => void | Promise<void>;
+ }
+ 
+ export async function runBook(
+@@ -450,14 +535,28 @@ export async function runBook(
+   const bookReturns: number[] = [];
+   const crowdExposure: number[] = [];
+   let currentNav = spec.aum;
+-  // A closed mandate runs no capital: what is left of its budget is only the
+-  // record of what its subtree spent.
+-  const capitalOf = (a: AgentResult) =>
++  // The allocator's lever: the agent's budget in the tree, 0 once its mandate
++  // is closed (what is left of the budget is then only the record of what its
++  // subtree spent). Reallocation bands, crowding cuts and the cut rung are
++  // decided on it. It never sizes a trade: every order is sized by the gate
++  // from the mandate's AVAILABLE authority and audited against the tree.
++  const budgetOf = (a: AgentResult) =>
+     tree.isRevokedInChain(a.name) ? 0 : toUsdc(tree.requireNode(a.name).mandate.budget);
++  const size = (gated: readonly { weights: Weights }[], now: number): SizedOrder[] =>
++    agents.map((a, i) => sizeOrder(tree, a.name, gated[i]!.weights, { leverage: policy.leverage, now }));
+   const audit = (t: number, at: "start" | "end") => {
+     const violations = bookViolations(tree, root, agents);
+     if (violations.length > 0) throw new BookInvariantError(t, at, violations);
+   };
++  const auditTrade = (t: number, orders: readonly SizedOrder[], now: number) => {
++    if (orders.length !== agents.length || agents.some((a, i) => orders[i]?.node !== a.name)) {
++      throw new BookInvariantError(t, "trade", [
++        `ORDERS_MISMATCH: ${orders.length} orders for ${agents.length} agents, or not one per agent in roster order`,
++      ]);
++    }
++    const violations = tradeViolations(tree, orders, { leverage: policy.leverage, now });
++    if (violations.length > 0) throw new BookInvariantError(t, "trade", violations);
++  };
+ 
+   for (let t = 0; t < T; t++) {
+     const tick = market.ticks[t]!;
+@@ -484,7 +583,7 @@ export async function runBook(
+       for (const s of scores) {
+         const agent = agents.find((a) => a.name === s.name)!;
+         if (agent.ladder === "stopped") continue;
+-        const current = capitalOf(agent);
++        const current = budgetOf(agent);
+         const moved = current === 0 ? (s.target > 0 ? Infinity : 0) : Math.abs(s.target - current) / current;
+         if (moved < center.rebalanceBand) continue;
+         targets.set(s.name, toUnits(s.target));
+@@ -531,8 +630,10 @@ export async function runBook(
+ 
+     /* 4) Book-level crowding check on the proposed books (center only). */
+     if (center) {
++      // Exposure is measured on what each agent would trade now: its gated
++      // weights sized from the tree as it stands before any cut.
+       const scan = scanCrowding(
+-        agents.map((a, i) => ({ name: a.name, capital: capitalOf(a), weights: gated[i]!.weights })),
++        size(gated, now).map((o) => ({ name: o.node, capital: o.authority, weights: o.weights })),
+         currentNav,
+         center.leverage,
+         center,
+@@ -550,7 +651,7 @@ export async function runBook(
+           const i = agents.findIndex((a) => a.name === name);
+           // Breaches apply in order and a BOOK breach is solved on capital after
+           // the CLONES cuts, so scaling the live budget compounds correctly.
+-          const cut = capitalOf(agents[i]!) * b.scale;
++          const cut = budgetOf(agents[i]!) * b.scale;
+           const prior = crowdCaps.get(name);
+           crowdCaps.set(name, { cap: prior ? Math.min(prior.cap, cut) : cut, book: gated[i]!.weights });
+           targets.set(name, toUnits(cut));
+@@ -572,21 +673,25 @@ export async function runBook(
+       }
+     }
+ 
+-    /* 5) Mark to market. -------------------------------------------- */
++    /* 5) Size every order from the tree, audit it, mark it. --------- */
++    // Sized after the crowding cuts, from each mandate's available authority
++    // as it now stands. No order is marked before it passes the audit, and
++    // what is marked is exactly the audited order.
++    const orders = size(gated, now);
++    await options.onTrade?.(t, tree, orders);
++    auditTrade(t, orders, now);
+     let tickPnl = 0;
+     let crowdNotional = 0;
+     const crowdName = market.config.crowd.instrument;
+     agents.forEach((a, i) => {
+       const g = gated[i]!;
++      const order = orders[i]!;
+       let unit = 0;
+       for (const [k, w] of Object.entries(g.clipped)) unit += policy.leverage * w * (tick.returns[k] ?? 0);
+-      const capital = capitalOf(a);
+-      let live = 0;
+-      for (const [k, w] of Object.entries(g.weights)) live += policy.leverage * w * (tick.returns[k] ?? 0);
+-      const pnl = capital * live;
+-      crowdNotional += capital * policy.leverage * (g.weights[crowdName] ?? 0);
++      const pnl = orderPnl(order, tick.returns);
++      crowdNotional += order.authority * order.leverage * (order.weights[crowdName] ?? 0);
+       a.unitReturns.push(unit);
+-      a.capital.push(capital);
++      a.capital.push(order.authority);
+       a.pnl.push(pnl);
+       tickPnl += pnl;
+     });
+@@ -614,7 +719,7 @@ export async function runBook(
+       if (next === a.ladder) continue;
+       const pct = (x: number | undefined) => `${((x ?? 0) * 100).toFixed(0)}%`;
+       const why = rungs.scale > 1 ? ` (rungs risk-scaled ×${rungs.scale.toFixed(2)}: the agent runs ${pct(rungs.vol)} vol)` : "";
+-      const capital = capitalOf(a);
++      const capital = budgetOf(a);
+       if (next === "stopped") {
+         // Stop-out: ONE tree.close takes back the agent's capital and every
+         // sub-mandate it handed out (each shrinks to what it spent, then the
+diff --git a/packages/swarm/src/gate.ts b/packages/swarm/src/gate.ts
+index 4bd7bde..2640598 100644
+--- a/packages/swarm/src/gate.ts
++++ b/packages/swarm/src/gate.ts
+@@ -7,13 +7,20 @@
+  *                  a subset of the pod's and the fund's lists)
+  *  - gross         at most `maxGross` × capital
+  *  - liveness      a revoked or expired node (or ancestor) trades nothing
++ *  - size          `sizeOrder` turns the clipped weights into notional from the
++ *                  node's AVAILABLE authority in the tree (its budget, minus
++ *                  what it has spent itself, minus what it has handed down to
++ *                  sub-mandates) × leverage. The tree, not the book's own
++ *                  accounting, decides how much an agent can put at risk: a
++ *                  slice reserved for a sub-mandate is not also trading
++ *                  capital, and a closed mandate (available 0) trades nothing.
+  *
+  * This is the table-stakes layer every agent-trading product ships. It is
+  * necessary and it is not enough: every check here looks at ONE agent. The
+  * center book (allocator.ts / book.ts) is what looks across all of them.
+  */
+ 
+-import type { DelegationTree } from "@allowance/core";
++import { formatAmount, type DelegationTree } from "@allowance/core";
+ import type { Weights } from "./strategies";
+ 
+ export type GateViolation =
+@@ -77,3 +84,70 @@ export function preTradeCheck(
+   }
+   return { weights: clipped, clipped, violations };
+ }
++
++/* ------------------------------------------------------------------ */
++/* Size: the reservation is the binding limit                         */
++/* ------------------------------------------------------------------ */
++
++/** One agent's order for one tick: its gated weights, sized from its mandate. */
++export interface SizedOrder {
++  /** Full node name of the agent. */
++  node: string;
++  /**
++   * USDC the order is sized on: the mandate's AVAILABLE authority when it was
++   * sized (0 when the node or an ancestor is revoked or expired).
++   */
++  authority: number;
++  /** Gross leverage the authority is run at. */
++  leverage: number;
++  /** Signed weights (Σ|w| ≤ the gate's `maxGross`); empty when the mandate is dead. */
++  weights: Weights;
++}
++
++export interface SizeOptions {
++  /** Gross leverage: notional = authority × leverage × weight. */
++  leverage: number;
++  /** Evaluation time in unix seconds, for expiry. */
++  now: number;
++}
++
++/**
++ * Size an agent's gated weights from the tree: notional = available × leverage
++ * × weight, where available = budget − own spend − handed down. Nothing the
++ * caller believes about the agent's capital enters: the only number that sizes
++ * the trade is read from the agent's mandate at the moment of sizing. A revoked
++ * or expired mandate (or ancestor) is sized at zero, with no weights.
++ */
++export function sizeOrder(tree: DelegationTree, nodeName: string, weights: Weights, opts: SizeOptions): SizedOrder {
++  if (tree.isRevokedInChain(nodeName) || tree.isExpiredInChain(nodeName, opts.now)) {
++    return { node: nodeName, authority: 0, leverage: opts.leverage, weights: {} };
++  }
++  const available = tree.available(nodeName);
++  return {
++    node: nodeName,
++    authority: available > 0n ? Number(formatAmount(available)) : 0,
++    leverage: opts.leverage,
++    weights: { ...weights },
++  };
++}
++
++/** Signed notional (USDC) per instrument: authority × leverage × weight. */
++export function orderNotional(order: SizedOrder): Weights {
++  const out: Weights = {};
++  for (const [k, w] of Object.entries(order.weights)) out[k] = order.authority * order.leverage * w;
++  return out;
++}
++
++/** Σ |notional|: the gross exposure (USDC) the order puts on. */
++export function grossNotional(order: SizedOrder): number {
++  let gross = 0;
++  for (const n of Object.values(orderNotional(order))) gross += Math.abs(n);
++  return gross;
++}
++
++/** What the order earns (USDC) on one tick's returns: authority × Σ leverage × w × r. */
++export function orderPnl(order: SizedOrder, returns: Readonly<Record<string, number>>): number {
++  let perUnit = 0;
++  for (const [k, w] of Object.entries(order.weights)) perUnit += order.leverage * w * (returns[k] ?? 0);
++  return order.authority * perUnit;
++}
+diff --git a/packages/swarm/src/reserve.test.ts b/packages/swarm/src/reserve.test.ts
+new file mode 100644
+index 0000000..da96fd0
+--- /dev/null
++++ b/packages/swarm/src/reserve.test.ts
+@@ -0,0 +1,502 @@
++/**
++ * (R) The reservation is the binding risk limit. Every agent's notional is
++ * sized from its mandate's AVAILABLE authority in the tree (budget − its own
++ * spend − what it handed down) × leverage, never from a number the book keeps,
++ * and every order is audited against the tree before it is marked.
++ *
++ * The scenario these tests run is one where the book's own capital number for
++ * an agent (its budget) overstates what the agent may trade, while the tree
++ * is sound: the agent has handed slices of its budget to desks, pays a vendor
++ * out of its own mandate, and is handed an outside sub-mandate mid-run. Sized
++ * from its budget (as the book did before), it would trade authority that is
++ * reserved for someone else.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { DelegationTree, formatAmount, pay, type PaymentAdapters } from "@allowance/core";
++import { defaultCenterBookPolicy, defaultNaivePolicy, type AllocationPolicy } from "./allocator";
++import { BookInvariantError, runBook, tickToUnix, TRADE_SLACK, tradeViolations, type SwarmSpec } from "./book";
++import { grossNotional, orderNotional, orderPnl, sizeOrder, type SizedOrder } from "./gate";
++import { generateMarket, genericMarketConfig, type Market } from "./market";
++import { HerdStrategy, MeanReversionStrategy, NoiseStrategy, TrendStrategy, type Strategy, type Weights } from "./strategies";
++
++const FUND = "fund.eth";
++const usdc = (units: bigint) => Number(formatAmount(units));
++const U = 1_000000n; // one USDC in units
++
++/** Always-yes payment ports: these tests are about authority, not the adapters. */
++const allowAll: PaymentAdapters = {
++  identity: { verify: async () => ({ ok: true }) },
++  screening: { screen: async () => ({ approved: true }) },
++  settlement: {
++    settle: async (req) => ({
++      settled: true,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: req.amount,
++      amountOut: req.amount,
++    }),
++  },
++};
++
++/* ------------------------------------------------------------------ */
++/* Unit: the gate sizes from the tree                                 */
++/* ------------------------------------------------------------------ */
++
++const E = 10_000;
++/** fund 1000 → pod 600 → a 300 (desk 100, spent 20 itself) and b 200. */
++async function smallTree() {
++  const tree = new DelegationTree();
++  tree.fundRoot({ principal: "p", rootName: FUND, mandate: { budget: 1_000n * U, allowedMerchants: ["X", "Y", "Z"], expiry: E } });
++  tree.delegate(FUND, "pod", { budget: 600n * U, allowedMerchants: ["X", "Y", "Z"], expiry: E });
++  const POD = `pod.${FUND}`;
++  tree.delegate(POD, "a", { budget: 300n * U, allowedMerchants: ["X", "Y"], expiry: E });
++  tree.delegate(POD, "b", { budget: 200n * U, allowedMerchants: ["X", "Y"], expiry: E });
++  const A = `a.${POD}`;
++  const B = `b.${POD}`;
++  tree.delegate(A, "desk", { budget: 100n * U, allowedMerchants: ["X"], expiry: E });
++  assert.equal((await pay(tree, { node: A, merchant: "X", amount: 20n * U }, allowAll, { now: 1 })).outcome, "SETTLED");
++  return { tree, POD, A, B };
++}
++
++test("sizeOrder: notional is the AVAILABLE authority × leverage — a desk's slice and the agent's own spend are not trading capital", async () => {
++  const { tree, POD, A, B } = await smallTree();
++  const w: Weights = { X: 0.5, Y: -0.5 };
++  const o = sizeOrder(tree, A, w, { leverage: 2, now: 1 });
++  // Budget 300, spent 20, handed down 100: 180 is what a may still put at risk.
++  assert.equal(o.authority, 180);
++  assert.deepEqual(orderNotional(o), { X: 180, Y: -180 });
++  assert.equal(grossNotional(o), 360, "= available × leverage, not budget × leverage (600)");
++  assert.ok(Math.abs(orderPnl(o, { X: 0.01, Y: -0.02 }) - 180 * 2 * (0.5 * 0.01 + 0.5 * 0.02)) < 1e-12);
++  w.X = 5;
++  assert.equal(o.weights.X, 0.5, "the order holds its own copy of the weights");
++  // A sibling with nothing handed down trades its whole budget.
++  assert.equal(sizeOrder(tree, B, { X: 1 }, { leverage: 2, now: 1 }).authority, 200);
++
++  // Dead mandates are sized at zero with no weights: expired…
++  assert.deepEqual(sizeOrder(tree, A, { X: 1 }, { leverage: 2, now: E + 1 }), { node: A, authority: 0, leverage: 2, weights: {} });
++  // …closed…
++  tree.close(A);
++  assert.deepEqual(sizeOrder(tree, A, { X: 1 }, { leverage: 2, now: 1 }), { node: A, authority: 0, leverage: 2, weights: {} });
++  assert.equal(sizeOrder(tree, B, { X: 1 }, { leverage: 2, now: 1 }).authority, 200);
++  // …or under a closed ancestor.
++  tree.close(POD);
++  assert.equal(sizeOrder(tree, B, { X: 1 }, { leverage: 2, now: 1 }).authority, 0);
++});
++
++test("tradeViolations: an order sized from any number but the tree's available authority is named, and nothing else is", async () => {
++  const { tree, A, B } = await smallTree();
++  const opts = { leverage: 2, now: 1 };
++  const a = sizeOrder(tree, A, { X: 0.5, Y: -0.5 }, opts);
++  const b = sizeOrder(tree, B, { X: 1 }, opts);
++  assert.deepEqual(tradeViolations(tree, [a, b], opts), [], "orders sized from the tree are sound");
++
++  // a sized from its BUDGET (the book's own capital number before this change): named, b is not.
++  assert.deepEqual(tradeViolations(tree, [{ ...a, authority: 300 }, b], opts), [
++    `OVER_RESERVATION ${A}: gross notional 600.00 > available 180.00 × leverage 2`,
++  ]);
++  // Inflated by 1.5× for one agent, or run at more than the policy's leverage.
++  assert.deepEqual(
++    tradeViolations(tree, [a, { ...b, authority: 300 }], opts).map((v) => v.split(":")[0]),
++    [`OVER_RESERVATION ${B}`],
++  );
++  assert.deepEqual(
++    tradeViolations(tree, [{ ...a, leverage: 3 }, b], opts).map((v) => v.split(":")[0]),
++    [`OVER_RESERVATION ${A}`],
++  );
++  // The bound is tight: exactly at it passes, past the slack fails.
++  assert.deepEqual(tradeViolations(tree, [{ ...a, weights: { X: 1 } }], opts), []);
++  assert.deepEqual(tradeViolations(tree, [{ ...a, weights: { X: 1 + 10 * TRADE_SLACK } }], opts).length, 1);
++  // Off the allowlist, non-finite, or not a node at all.
++  assert.deepEqual(tradeViolations(tree, [{ ...a, weights: { Z: 0.1 } }], opts), [`OFF_MANDATE ${A}: holds Z`]);
++  assert.deepEqual(
++    tradeViolations(tree, [{ ...a, authority: Number.NaN }], opts).map((v) => v.split(":")[0]),
++    [`NOT_FINITE ${A}`],
++  );
++  assert.deepEqual(tradeViolations(tree, [{ ...a, node: `ghost.${FUND}` }], opts), [`UNKNOWN_NODE ghost.${FUND}: no such mandate`]);
++
++  // A closed agent trades nothing: any notional at all is named…
++  tree.close(A);
++  assert.deepEqual(
++    tradeViolations(tree, [{ ...a, authority: 1 }, b], opts).map((v) => v.split(":")[0]),
++    [`DEAD_TRADES ${A}`],
++  );
++  // …weights on zero authority put nothing on, and the re-sized order is empty.
++  assert.deepEqual(tradeViolations(tree, [{ ...a, authority: 0 }], opts), []);
++  assert.deepEqual(tradeViolations(tree, [sizeOrder(tree, A, { X: 1 }, opts), b], opts), []);
++  // An expired mandate is dead too.
++  assert.deepEqual(
++    tradeViolations(tree, [b], { ...opts, now: E + 1 }).map((v) => v.split(":")[0]),
++    [`DEAD_TRADES ${B}`],
++  );
++});
++
++/* ------------------------------------------------------------------ */
++/* The book: a budget that overstates the agent's authority           */
++/* ------------------------------------------------------------------ */
++
++const TURN = 80;
++/** The seed-7 generic market, with GOLD scripted to run up until TURN and then slide (a stop-out). */
++function scriptedMarket(): Market {
++  const m = generateMarket(genericMarketConfig(7));
++  m.ticks.forEach((tick, t) => {
++    tick.returns.GOLD = t < TURN ? 0.004 + (t % 2 === 0 ? 0.002 : -0.002) : -0.02;
++  });
++  return m;
++}
++const market = scriptedMarket();
++const T = market.ticks.length;
++
++class LongGold implements Strategy {
++  readonly style = "long-gold";
++  decide(): Weights {
++    return { GOLD: 0.5 };
++  }
++}
++
++const DESKED = `desked.systematic.${FUND}`;
++const DOOMED = `doomed.systematic.${FUND}`;
++const PLAIN = `plain.macro.${FUND}`;
++const GRANT = 50;
++
++function spec(): SwarmSpec {
++  const all = [...market.instruments];
++  return {
++    principal: "alice",
++    fund: FUND,
++    aum: 10_000_000,
++    pods: [
++      { label: "systematic", instruments: all },
++      { label: "macro", instruments: all },
++    ],
++    agents: [
++      {
++        label: "desked",
++        pod: "systematic",
++        instruments: all,
++        strategy: new TrendStrategy(30),
++        subMandates: [
++          { label: "exec", share: 0.3 },
++          { label: "data", share: 0.02, instruments: ["GOLD"] },
++        ],
++      },
++      { label: "doomed", pod: "systematic", instruments: all, strategy: new LongGold(), subMandates: [{ label: "exec", share: 0.25 }] },
++      { label: "plain", pod: "macro", instruments: all, strategy: new MeanReversionStrategy(3) },
++      { label: "herd-a", pod: "macro", instruments: all, strategy: new HerdStrategy(20) },
++      { label: "herd-b", pod: "systematic", instruments: all, strategy: new HerdStrategy(25) },
++      { label: "noise", pod: "macro", instruments: all, strategy: new NoiseStrategy(5) },
++    ],
++  };
++}
++
++/**
++ * What happens to the tree outside the book, every tick: the desks pay for
++ * execution and data, the desked agent pays a vendor out of its own mandate,
++ * and at GRANT its operator hands a vendor a quarter of what it has left (a
++ * sub-mandate the book does not manage). All of it goes through the tree's
++ * own API, so the tree stays sound; only the agent's budget stops being what
++ * it may trade.
++ */
++async function outside(t: number, tree: DelegationTree): Promise<void> {
++  const now = tickToUnix(t);
++  const spend = async (node: string, amount: bigint) => {
++    if (tree.isRevokedInChain(node) || tree.available(node) < amount) return;
++    const r = await pay(tree, { node, merchant: "GOLD", amount }, allowAll, { now });
++    assert.equal(r.outcome, "SETTLED");
++  };
++  for (const n of tree.listNodes()) {
++    if (n.name.startsWith("exec.")) await spend(n.name, 5_000n * U);
++    if (n.name.startsWith("data.")) await spend(n.name, 1_000n * U);
++  }
++  await spend(DESKED, 1_000n * U);
++  if (t === GRANT) {
++    tree.delegate(DESKED, "vendor", { budget: tree.available(DESKED) / 4n, allowedMerchants: ["GOLD"], expiry: tickToUnix(T + 30) });
++  }
++}
++
++interface Seen {
++  authority: number;
++  notional: Weights;
++  dead: boolean;
++}
++
++/**
++ * Run the scenario and check every order from the outside at the moment it is
++ * handed over for marking, restating the bound independently of the book: an
++ * order is sized on no more than available = budget − spent − Σ children's
++ * budgets, its gross notional is at most available × leverage, and a dead
++ * mandate puts on nothing. Also counts how often the budget overstated the
++ * available authority, and how often sizing from it would have broken the
++ * notional bound.
++ */
++async function watchTrades(policy: AllocationPolicy) {
++  const seen: Seen[][] = [];
++  let overstated = 0;
++  let breaches = 0;
++  let worst = 0;
++  const book = await runBook(market, spec(), policy, {
++    onTick: outside,
++    onTrade: (t, tree, orders) => {
++      assert.equal(t, seen.length);
++      const row: Seen[] = [];
++      for (const o of orders) {
++        const node = tree.requireNode(o.node);
++        const handedDown = tree.childrenOf(o.node).reduce((s, c) => s + c.mandate.budget, 0n);
++        const available = node.mandate.budget - node.mandate.spentDirect - handedDown;
++        const dead = tree.isRevokedInChain(o.node);
++        const weightGross = Object.values(o.weights).reduce((s, w) => s + Math.abs(w), 0);
++        const gross = Object.values(o.weights).reduce((s, w) => s + Math.abs(o.authority * o.leverage * w), 0);
++        assert.equal(o.leverage, policy.leverage, `t=${t}: ${o.node} runs the policy's leverage`);
++        if (dead) {
++          assert.deepEqual(o.weights, {}, `t=${t}: closed ${o.node} holds a book`);
++          assert.equal(o.authority, 0, `t=${t}: closed ${o.node} holds authority`);
++        } else {
++          assert.ok(o.authority <= usdc(available), `t=${t}: ${o.node} sized on ${o.authority} > available ${usdc(available)}`);
++          const limit = usdc(available) * policy.leverage;
++          assert.ok(gross <= limit * (1 + TRADE_SLACK), `t=${t}: ${o.node} trades ${gross} > available × leverage ${limit}`);
++          if (node.mandate.budget > available + U) overstated++;
++          const byBudget = usdc(node.mandate.budget) * policy.leverage * weightGross;
++          if (byBudget > limit * (1 + 1e-6)) {
++            breaches++;
++            worst = Math.max(worst, byBudget - limit);
++          }
++        }
++        row.push({ authority: o.authority, notional: orderNotional(o), dead });
++      }
++      seen.push(row);
++    },
++  });
++  return { book, seen, overstated, breaches, worst };
++}
++
++const policies: [string, AllocationPolicy][] = [
++  ["center book", defaultCenterBookPolicy()],
++  ["center book without a cut rung", { ...defaultCenterBookPolicy(), ddCut: undefined, cutFactor: undefined, ddRecover: undefined }],
++  ["per-agent guardrails", defaultNaivePolicy()],
++];
++
++for (const [label, policy] of policies) {
++  test(`${label}: no agent ever trades more than its available authority × leverage, though its budget says more; a closed agent trades nothing`, async () => {
++    const { book, seen, overstated, breaches, worst } = await watchTrades(policy);
++    assert.equal(seen.length, T, "every tick's orders were handed over");
++    const tree = book.tree;
++
++    // The scenario bites: the book's capital number (the budget) overstated
++    // what agents may trade, often, and sizing from it would have put real
++    // money beyond the reservation.
++    assert.ok(overstated >= 300, `live orders whose budget overstated their available authority: ${overstated}`);
++    assert.ok(breaches >= 200, `…of which budget-sizing would breach available × leverage: ${breaches}`);
++    assert.ok(worst >= 500_000, `by up to ${worst.toFixed(0)} USDC of notional`);
++    assert.ok(tree.requireNode(DESKED).mandate.spentDirect > 0n, "the agent paid out of its own mandate");
++    assert.ok(tree.getNode(`vendor.${DESKED}`), "an outside sub-mandate was granted");
++
++    // What is marked is exactly what was audited: capital = the order's
++    // authority, PnL = Σ notional × return, NAV = Σ PnL.
++    let nav = book.startNav;
++    for (let t = 0; t < T; t++) {
++      let tickPnl = 0;
++      book.agents.forEach((a, i) => {
++        const s = seen[t]![i]!;
++        assert.equal(a.capital[t], s.authority, `t=${t}: ${a.name} ran the audited authority`);
++        let pnl = 0;
++        for (const [k, n] of Object.entries(s.notional)) pnl += n * (market.ticks[t]!.returns[k] ?? 0);
++        assert.ok(Math.abs(a.pnl[t]! - pnl) <= 1e-9 * Math.max(1, Math.abs(pnl)), `t=${t}: ${a.name} marked ${a.pnl[t]} vs audited ${pnl}`);
++        tickPnl += a.pnl[t]!;
++      });
++      nav += tickPnl;
++      assert.ok(Math.abs(book.nav[t]! - nav) <= 1e-6, `t=${t}: NAV is the sum of the marked orders`);
++    }
++
++    // The stop-out: from the tick after its close, the doomed agent's orders are empty.
++    const stop = book.decisions.find((d) => d.kind === "STOP_OUT" && d.node === DOOMED);
++    assert.ok(stop, "the doomed agent is stopped out");
++    const i = book.agents.findIndex((a) => a.name === DOOMED);
++    for (let t = stop.t + 1; t < T; t++) {
++      assert.equal(seen[t]![i]!.dead, true);
++      assert.deepEqual(seen[t]![i]!.notional, {});
++      assert.equal(book.agents[i]!.pnl[t], 0);
++    }
++    assert.ok(stop.t + 1 < T - 50, "and there were many ticks after it");
++  });
++}
++
++/* ------------------------------------------------------------------ */
++/* The audit: a corrupted size never reaches the mark                 */
++/* ------------------------------------------------------------------ */
++
++/**
++ * Run the scenario with `tamper` applied to the orders at one tick, and
++ * return what the book threw. The tree is checked sound (the core audit) at
++ * the moment of tampering: only the order's number is wrong.
++ */
++async function tampered(
++  policy: AllocationPolicy,
++  tamper: (t: number, tree: DelegationTree, orders: SizedOrder[]) => boolean,
++): Promise<{ error: unknown; at: number | null }> {
++  let at: number | null = null;
++  try {
++    await runBook(market, spec(), policy, {
++      onTick: outside,
++      onTrade: (t, tree, orders) => {
++        if (at !== null) return;
++        if (tamper(t, tree, orders as SizedOrder[])) {
++          assert.deepEqual(tree.audit(), [], "the tree itself is sound");
++          at = t;
++        }
++      },
++    });
++  } catch (error) {
++    return { error, at };
++  }
++  return { error: null, at };
++}
++
++const index = (name: string) => spec().agents.findIndex((a) => `${a.label}.${a.pod}.${FUND}` === name);
++
++test("a book capital number inflated for one agent (the tree untouched) stops the book at the trade, naming that agent", async () => {
++  for (const [, policy] of policies) {
++    // The desked agent sized from its budget, as the book sized every agent before.
++    const fromBudget = await tampered(policy, (t, tree, orders) => {
++      if (t !== 60) return false;
++      orders[index(DESKED)]!.authority = usdc(tree.requireNode(DESKED).mandate.budget);
++      return true;
++    });
++    assert.equal(fromBudget.at, 60);
++    assert.ok(fromBudget.error instanceof BookInvariantError, String(fromBudget.error));
++    assert.equal(fromBudget.error.t, 60);
++    assert.equal(fromBudget.error.at, "trade");
++    assert.deepEqual(fromBudget.error.violations.map((v) => v.split(":")[0]), [`OVER_RESERVATION ${DESKED}`]);
++
++    // An agent with nothing handed down, inflated 1.5×.
++    const inflated = await tampered(policy, (t, _tree, orders) => {
++      const o = orders[index(PLAIN)]!;
++      if (t < 40 || grossNotional(o) === 0) return false;
++      o.authority *= 1.5;
++      return true;
++    });
++    assert.ok(inflated.error instanceof BookInvariantError);
++    assert.equal(inflated.error.t, inflated.at);
++    assert.deepEqual(inflated.error.violations.map((v) => v.split(":")[0]), [`OVER_RESERVATION ${PLAIN}`]);
++
++    // A closed agent handed its old book back.
++    const revived = await tampered(policy, (_t, tree, orders) => {
++      if (!tree.isRevokedInChain(DOOMED)) return false;
++      orders[index(DOOMED)]!.authority = 1_000_000;
++      orders[index(DOOMED)]!.weights = { GOLD: 0.5 };
++      return true;
++    });
++    assert.ok(revived.error instanceof BookInvariantError);
++    assert.ok(revived.at !== null && revived.at > TURN);
++    assert.deepEqual(revived.error.violations.map((v) => v.split(":")[0]), [`DEAD_TRADES ${DOOMED}`]);
++
++    // One agent's order dropped.
++    const dropped = await tampered(policy, (t, _tree, orders) => {
++      if (t !== 10) return false;
++      orders.pop();
++      return true;
++    });
++    assert.ok(dropped.error instanceof BookInvariantError);
++    assert.match(dropped.error.violations[0]!, /^ORDERS_MISMATCH/);
++
++    // Control: a hook that only looks runs the book to the end.
++    const untouched = await tampered(policy, () => false);
++    assert.equal(untouched.error, null);
++  }
++});
++
++test("orders are sized after the crowding cuts: a crowd-cut agent trades its cut authority on the very tick it is cut", async () => {
++  const policy = defaultCenterBookPolicy();
++  // Available authority once the tick's outside spending is done (before the
++  // book acts), and the authority each order was sized on.
++  const before = new Map<string, number>();
++  const sized = new Map<string, number>();
++  const key = (t: number, node: string) => `${t} ${node}`;
++  const book = await runBook(market, spec(), policy, {
++    onTick: async (t, tree) => {
++      await outside(t, tree);
++      for (const n of tree.listNodes()) before.set(key(t, n.name), usdc(tree.available(n.name)));
++    },
++    onTrade: (t, _tree, orders) => {
++      for (const o of orders) sized.set(key(t, o.node), o.authority);
++    },
++  });
++  const rebalances = (t: number) => t >= policy.warmup && (t - policy.warmup) % policy.rebalanceEvery === 0;
++  const cuts = book.decisions.filter((d) => d.kind === "CROWDING_CUT" && !rebalances(d.t));
++  assert.ok(cuts.length >= 5, `crowding cuts on ticks without a reallocation: ${cuts.length}`);
++  for (const d of cuts) {
++    for (const name of d.node.split(", ")) {
++      const was = before.get(key(d.t, name))!;
++      const now = sized.get(key(d.t, name))!;
++      assert.ok(now < was, `t=${d.t}: ${name} traded ${now}, not the ${was} it held before the cut`);
++    }
++  }
++});
++
++test("the book decides on the tree's numbers: every REALLOCATE starts from the budget the tree held, and every CUT halves it in the tree", async () => {
++  const policy = defaultCenterBookPolicy();
++  const key = (t: number, node: string) => `${t} ${node}`;
++  // Budgets once the tick's outside activity is done (before the book acts), and at the trade.
++  const atTick = new Map<string, number>();
++  const atTrade = new Map<string, number>();
++  const book = await runBook(market, spec(), policy, {
++    onTick: async (t, tree) => {
++      await outside(t, tree);
++      for (const n of tree.listNodes()) atTick.set(key(t, n.name), usdc(n.mandate.budget));
++    },
++    onTrade: (t, tree, orders) => {
++      for (const o of orders) atTrade.set(key(t, o.node), usdc(tree.requireNode(o.node).mandate.budget));
++    },
++  });
++
++  const moves = book.decisions.filter((d) => d.kind === "REALLOCATE");
++  assert.equal(new Set(moves.map((d) => d.node)).size, book.agents.length, "every agent was reallocated");
++  for (const d of moves) {
++    const from = Number(/^(\d+) → /.exec(d.detail)![1]);
++    const held = atTick.get(key(d.t, d.node))!;
++    assert.ok(Math.abs(from - held) <= 0.5, `t=${d.t}: ${d.node} reallocated from ${from}, but the tree held ${held}`);
++  }
++
++  // An agent with no sub-mandates has no floor: its cut budget is exactly
++  // cutFactor × what the tree held at the trade.
++  let checked = 0;
++  for (const d of book.decisions.filter((x) => x.kind === "CUT" && x.t + 1 < T)) {
++    if (book.tree.childrenOf(d.node).length > 0) continue;
++    const before = atTrade.get(key(d.t, d.node))!;
++    const after = atTick.get(key(d.t + 1, d.node))!;
++    assert.ok(Math.abs(after - before * policy.cutFactor!) <= 1e-6, `t=${d.t}: ${d.node} cut from ${before} to ${after}`);
++    checked++;
++  }
++  assert.ok(checked >= 2, `cuts checked: ${checked}`);
++});
++
++test("the trade audit reads the tree as it stands at the trade: a cut made after sizing stops the stale order; a bare revoke there is caught at the tick's end", async () => {
++  // An outside risk officer halves an agent through the tree's own API after
++  // its order was sized: the tree is sound, the order now exceeds it.
++  const halved = await tampered(defaultCenterBookPolicy(), (t, tree, orders) => {
++    if (t < 40 || grossNotional(orders[index(PLAIN)]!) === 0) return false;
++    tree.resize(PLAIN, tree.requireNode(PLAIN).mandate.budget / 2n);
++    return true;
++  });
++  assert.ok(halved.error instanceof BookInvariantError);
++  assert.equal(halved.error.at, "trade");
++  assert.deepEqual(halved.error.violations.map((v) => v.split(":")[0]), [`OVER_RESERVATION ${PLAIN}`]);
++
++  // A desk revoked without being closed at the trade (its agent's order is
++  // still within its reservation) is a mid-tick break of the tree, caught at
++  // that tick's end like any other.
++  let at = -1;
++  await assert.rejects(
++    runBook(market, spec(), defaultNaivePolicy(), {
++      onTick: outside,
++      onTrade: (t, tree) => {
++        if (t !== 40) return;
++        tree.revoke(`exec.${DESKED}`);
++        at = t;
++      },
++    }),
++    (e: unknown) =>
++      e instanceof BookInvariantError && e.t === 40 && e.at === "end" && e.violations.some((v) => v.startsWith(`NOT_CLOSED exec.${DESKED}`)),
++  );
++  assert.equal(at, 40);
++});
