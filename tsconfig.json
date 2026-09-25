@@ -5,6 +5,7 @@
     { "path": "packages/core" },
     { "path": "packages/adapters" },
     { "path": "packages/swarm" },
+    { "path": "packages/lab" },
     { "path": "services/orchestrator" }
   ]
 }
