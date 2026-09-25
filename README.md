@@ -1,5 +1,31 @@
 # Allowance
 
+> **The allocation and risk layer for capital run by AI agents.**
+
+A multi-manager fund where the PMs are AI agents. Each agent trades inside a
+mandate that can only shrink, carries a track record bound to a verified human
+operator, and the allocator moves capital to the best risk-adjusted agents,
+spots when "independent" agents are one trade, and cuts them — a stop-out closes
+the agent's whole subtree in one operation. Four guarantees; the allocator makes
+the decisions, and each one lands as one operation on one mandate tree:
+
+- **(R) Reserved:** capital is reserved per agent at grant (`delegate`).
+- **(A) Adjusted:** reservations are resized from risk-adjusted records (`resize`).
+- **(G) Grouped:** agents that are one trade (overlapping positions) are cut as a
+  group, by one factor in one pass. The allocator groups by positions only: each
+  agent's operator is recorded, and the fund console flags cuts whose members
+  share one after the run, but the allocator does not read operator identity yet.
+- **(C) Closed:** a stop-out closes the subtree (`DelegationTree.close`), returning
+  the agent's capital and every sub-mandate it handed out to its pod in one
+  operation (since loop 2). The AgentHire demo shows a close on a live subtree
+  that was still paying for work.
+
+`npm run demo:fund` builds the fund console's data from one showcase **virtual
+world** (simulated prices, agents and operators; no market data). The mechanism
+underneath is the attenuating-delegation primitive described next.
+
+## The mandate primitive
+
 > **Give your AI agents an allowance, not your wallet.**
 > An attenuating-delegation protocol for autonomous AI-agent payments.
 
@@ -63,6 +89,14 @@ npm run dev:web      # opens the dashboard that renders the snapshot
   `apps/web/public/demo-snapshot.json`.
 - `npm run dev:web` serves the React dashboard that visualizes the spend tree
   and the event ledger from that snapshot.
+- `npm run demo:fund` runs the **fund console** data: the current center book vs
+  per-agent guardrails on one showcase virtual world from the arena, picked by a
+  fixed rule (the smallest research seed ≥ 1 with a crowd, an operator running
+  two agents and ≥ 2 skilled pickers). It writes `apps/web/public/fund-snapshot.json`
+  with per-agent series, the decision log, group cuts (one-trade vs book-wide,
+  with shared operators flagged after the run), stop-outs (one `close` each, with the amount freed),
+  the mandate tree at every decision tick and a summary of the sealed loop
+  results in `docs/loops/` (only merged, confirmed changes are plotted).
 - `npm run demo:swarm` runs the **center book** (below): a Tiger-Cub fund of
   agents, head-to-head vs per-agent guardrails, a 20-seed sweep and an
   ablation. It writes `apps/web/public/swarm-snapshot.json`.
@@ -299,7 +333,7 @@ test to force a green run — fix the code instead.
 packages/core         @allowance/core         pure domain: types, attenuation, tree, payment engine (zero runtime deps)
 packages/adapters     @allowance/adapters     sponsor ports: deterministic mock + real-integration stub
 packages/swarm        @allowance/swarm        the center book: agent swarm, allocator, Tiger-Cub process, coffee thesis
-services/orchestrator @allowance/orchestrator x402 flow + demo runners (demo, demo:swarm, demo:agenthire)
+services/orchestrator @allowance/orchestrator x402 flow + demo runners (demo, demo:fund, demo:swarm, demo:agenthire)
 scripts/              agenthire-up.sh / agenthire-down.sh (local keyless AgentHire), agenthire-audit.ts (shadow audit)
 apps/web              allowance-web           Vite + React dashboard of the spend tree + event ledger
 contracts             solidity (Hardhat)      Uniswap v4 hook / settlement guard enforcing the cap on-chain

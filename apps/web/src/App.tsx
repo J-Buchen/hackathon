@@ -12,8 +12,12 @@ import Lenis from "lenis";
 import type { Snapshot } from "./types";
 import { parseSnapshot } from "./snapshot";
 import { DashboardSkeleton } from "./components/DashboardSkeleton";
+import { FundConsoleSkeleton } from "./components/FundConsoleSkeleton";
+import { SectionBoundary } from "./components/SectionBoundary";
 import { parseSwarmSnapshot, type SwarmSnapshot } from "./swarm/types";
 import { parseAgentHireSummary, type AgentHireSummary } from "./agenthire";
+import { parseFundSnapshot, type FundSnapshot } from "./fund/types";
+import { isConsoleAlias, parseConsoleHash } from "./fund/hash";
 import "./styles.css";
 
 // Code-split the live dashboard: it renders only below the fold AND only after
@@ -24,6 +28,8 @@ const Dashboard = lazy(() => import("./Dashboard"));
 // The center-book section is its own lazy chunk with its own snapshot, so the
 // payment dashboard never waits on it (and vice versa).
 const CenterBook = lazy(() => import("./swarm/CenterBook"));
+// The fund console (the product demo) is its own lazy chunk and snapshot too.
+const FundConsole = lazy(() => import("./fund/FundConsole"));
 
 const REPO_URL = "https://github.com/J-Buchen/hackathon";
 const EASE = [0.16, 1, 0.3, 1] as const;
@@ -40,7 +46,10 @@ function useSmoothScroll() {
   const prefersReduced = useReducedMotion();
   useEffect(() => {
     if (prefersReduced) return;
-    const lenis = new Lenis({ duration: 1.15, smoothWheel: true });
+    // allowNestedScroll: a wheel over a scrollable panel (the decision log,
+    // wide tables) scrolls that panel until it reaches its end, instead of
+    // Lenis taking the event and moving the page.
+    const lenis = new Lenis({ duration: 1.15, smoothWheel: true, allowNestedScroll: true });
     let raf = 0;
     const loop = (time: number) => {
       lenis.raf(time);
@@ -52,6 +61,88 @@ function useSmoothScroll() {
       lenis.destroy();
     };
   }, [prefersReduced]);
+}
+
+/* -------------------------------------------------------------------------- */
+/* In-page and deep links                                                      */
+/* -------------------------------------------------------------------------- */
+/*
+ * The page renders after the browser's own fragment scroll, and the console's
+ * panels exist only once its data loads, so a deep link (/#fc-evidence) would
+ * otherwise stay at the top. Three pieces:
+ *   1. On load, jump to the hash target, and again each time the page's height
+ *      changes (a section above it finished loading) until the reader scrolls,
+ *      clicks or types, or 5 s pass.
+ *   2. Console aliases (#fc-log-rebalance, #fc-tree-grant …) have no element of
+ *      their own: scroll to the panel they name. FundConsole sets the log
+ *      filter or the replay from the same hash.
+ *   3. A click on a link to the CURRENT hash fires no hashchange; replay it so
+ *      the console re-applies its state.
+ * The sticky nav is cleared by `scroll-padding-top` on html (styles.css).
+ */
+function useHashNavigation() {
+  useEffect(() => {
+    const targetOf = (hash: string) => {
+      const h = parseConsoleHash(hash);
+      return h ? document.getElementById(h.id) : null;
+    };
+    const smooth = (): ScrollBehavior =>
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+
+    let settling = window.location.hash.length > 1;
+    // Re-jump when the page's height changes (a section above the target
+    // loaded) or when new elements appear (the target itself was rendered: the
+    // console's skeleton reserves its height, so its arrival resizes nothing).
+    const ro = new ResizeObserver(() => jump());
+    const mo = new MutationObserver(() => jump());
+    const jump = () => {
+      if (settling) targetOf(window.location.hash)?.scrollIntoView({ behavior: "instant", block: "start" });
+    };
+    const stopSettling = () => {
+      settling = false;
+      ro.disconnect();
+      mo.disconnect();
+    };
+    let raf = 0;
+    if (settling) {
+      ro.observe(document.body);
+      mo.observe(document.getElementById("root") ?? document.body, { childList: true, subtree: true });
+      raf = requestAnimationFrame(jump);
+    }
+    const timer = window.setTimeout(stopSettling, 5000);
+    const passive = { passive: true } as const;
+    window.addEventListener("wheel", stopSettling, passive);
+    window.addEventListener("touchstart", stopSettling, passive);
+    window.addEventListener("pointerdown", stopSettling, passive);
+    window.addEventListener("keydown", stopSettling);
+
+    const onHashChange = () => {
+      stopSettling();
+      if (isConsoleAlias(window.location.hash)) targetOf(window.location.hash)?.scrollIntoView({ behavior: smooth(), block: "start" });
+    };
+    window.addEventListener("hashchange", onHashChange);
+
+    const onClick = (e: MouseEvent) => {
+      const a = e.target instanceof Element ? e.target.closest("a[href^='#']") : null;
+      const href = a?.getAttribute("href");
+      if (href && href.length > 1 && href === window.location.hash) {
+        window.setTimeout(() => window.dispatchEvent(new HashChangeEvent("hashchange")), 0);
+      }
+    };
+    document.addEventListener("click", onClick);
+
+    return () => {
+      stopSettling();
+      cancelAnimationFrame(raf);
+      window.clearTimeout(timer);
+      window.removeEventListener("wheel", stopSettling);
+      window.removeEventListener("touchstart", stopSettling);
+      window.removeEventListener("pointerdown", stopSettling);
+      window.removeEventListener("keydown", stopSettling);
+      window.removeEventListener("hashchange", onHashChange);
+      document.removeEventListener("click", onClick);
+    };
+  }, []);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -94,6 +185,7 @@ function ScrollProgress() {
 export function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
   useSmoothScroll();
+  useHashNavigation();
 
   useEffect(() => {
     let cancelled = false;
@@ -128,10 +220,10 @@ export function App() {
     // strict LazyMotion: features load lazily via domAnimation, and `strict`
     // throws if any full `motion.*` component sneaks back onto the critical path.
     <LazyMotion features={domAnimation} strict>
-      {/* Keyboard bypass: lets tab/AT users jump straight to the live dashboard
-          instead of tabbing through the hero + 5 marketing sections. Visually
-          hidden until focused (see .skip-link), then drops into view top-left. */}
-      <a href="#main" className="skip-link">Skip to dashboard</a>
+      {/* Keyboard bypass: lets tab/AT users jump past the nav straight into the
+          page content. Visually hidden until focused (see .skip-link), then
+          drops into view top-left. */}
+      <a href="#main" className="skip-link">Skip to content</a>
       <div className="grain" aria-hidden="true" />
       <ScrollProgress />
       <Nav />
@@ -141,6 +233,14 @@ export function App() {
           (<nav>) and SiteFooter (<footer>) stay OUTSIDE as their own landmarks. */}
       <main id="main" tabIndex={-1}>
       <Hero />
+      <Guarantees />
+      <FundConsoleSection />
+
+      <CenterBookSection />
+
+      <AgentHireSection />
+
+      <UnderTheHood />
       <Problem />
       <Attenuation />
       <EnsWow />
@@ -149,10 +249,10 @@ export function App() {
       <section className="section" id="dashboard">
         <div className="container">
           <Reveal className="dash-head">
-            <span className="overline">Live snapshot</span>
-            <h2 className="h2">
-              The whole story, <span className="hl">on-screen</span>.
-            </h2>
+            <span className="overline">The primitive, live · agent payments</span>
+            <h3 className="h2 h2-sub">
+              The same tree, <span className="hl">spending money</span>.
+            </h3>
             <p className="lede">
               Rendered straight from <code>demo-snapshot.json</code> — the exact output of{" "}
               <code>npm run demo</code>. Watch the budget attenuate down the tree, and every
@@ -173,21 +273,97 @@ export function App() {
             </div>
           )}
           {state.status === "ready" && (
-            <Suspense fallback={<DashboardSkeleton />}>
-              <Dashboard snapshot={state.snapshot} />
-            </Suspense>
+            <SectionBoundary what="the payment dashboard" hint={<>Reload the page. If it keeps failing, run <code>npm run demo</code> at the repo root to regenerate its data.</>}>
+              <Suspense fallback={<DashboardSkeleton />}>
+                <Dashboard snapshot={state.snapshot} panelHeading="h4" />
+              </Suspense>
+            </SectionBoundary>
           )}
         </div>
       </section>
-
-      <CenterBookSection />
-
-      <AgentHireSection />
 
       <Sponsors />
       </main>
       <SiteFooter />
     </LazyMotion>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Fund console — the product, on one virtual world (npm run demo:fund)        */
+/* -------------------------------------------------------------------------- */
+type FundLoad =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "empty" }
+  | { status: "ready"; snapshot: FundSnapshot };
+
+function FundConsoleSection() {
+  const [state, setState] = useState<FundLoad>({ status: "loading" });
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/fund-snapshot.json")
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} loading fund-snapshot.json`);
+        return r.json() as Promise<unknown>;
+      })
+      .then((raw) => parseFundSnapshot(raw))
+      .then((snapshot) => {
+        if (cancelled) return;
+        // A parseable file with no agents or no NAV has nothing to show: say so
+        // instead of rendering empty panels (DESIGN.md §11.1).
+        if (snapshot.agents.length === 0 || snapshot.books.center.nav.length === 0) setState({ status: "empty" });
+        else setState({ status: "ready", snapshot });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled)
+          setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return (
+    <section className="section section-console" id="fund-console">
+      <div className="container">
+        <Reveal className="dash-head">
+          <span className="overline">Fund console · virtual world</span>
+          <h2 className="h2">
+            AI PMs, one allocator, <span className="hl">one mandate tree</span>.
+          </h2>
+          <p className="lede">
+            A simulated year in one virtual world: AI agents from different operators trade virtual stocks while a crowd
+            piles into one name and unwinds. The same roster runs twice on the same prices, once under the allocator and once with
+            per-agent guardrails only. Every number below is simulated.
+          </p>
+        </Reveal>
+        {state.status === "loading" && <FundConsoleSkeleton />}
+        {state.status === "error" && (
+          <div className="notice notice-error">
+            Could not load <code>/fund-snapshot.json</code>: {state.message}
+            <div className="notice-hint">
+              Run <code>npm run demo:fund</code> at the repo root to generate it, then reload.
+            </div>
+          </div>
+        )}
+        {state.status === "empty" && (
+          <div className="notice">
+            The fund snapshot has no agents or no NAV to show.
+            <div className="notice-hint">
+              Run <code>npm run demo:fund</code> at the repo root to regenerate it, then reload.
+            </div>
+          </div>
+        )}
+        {state.status === "ready" && (
+          <SectionBoundary what="the fund console" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:fund</code> at the repo root to regenerate <code>fund-snapshot.json</code>.</>}>
+            <Suspense fallback={<FundConsoleSkeleton />}>
+              <FundConsole snapshot={state.snapshot} />
+            </Suspense>
+          </SectionBoundary>
+        )}
+      </div>
+    </section>
   );
 }
 
@@ -225,7 +401,7 @@ function CenterBookSection() {
     <section className="section section-alt" id="center-book">
       <div className="container">
         <Reveal className="dash-head">
-          <span className="overline">From one agent to a fund of them</span>
+          <span className="overline">Worked example · one trend, three Tiger Cubs</span>
           <h2 className="h2">
             Tiger Cub agents, and the <span className="hl">center book</span> that stops them becoming
             one trade.
@@ -248,9 +424,11 @@ function CenterBookSection() {
           </div>
         )}
         {state.status === "ready" && (
-          <Suspense fallback={<DashboardSkeleton />}>
-            <CenterBook snapshot={state.snapshot} />
-          </Suspense>
+          <SectionBoundary what="the center book" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:swarm</code> at the repo root to regenerate its data.</>}>
+            <Suspense fallback={<DashboardSkeleton />}>
+              <CenterBook snapshot={state.snapshot} />
+            </Suspense>
+          </SectionBoundary>
         )}
       </div>
     </section>
@@ -349,9 +527,11 @@ function AgentHireSection() {
           </div>
         )}
         {state.status === "ready" && (
-          <Suspense fallback={<DashboardSkeleton />}>
-            <Dashboard snapshot={state.snapshot} stageLabels={AGENTHIRE_STAGES} />
-          </Suspense>
+          <SectionBoundary what="the AgentHire run" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:agenthire</code> at the repo root to regenerate its data.</>}>
+            <Suspense fallback={<DashboardSkeleton />}>
+              <Dashboard snapshot={state.snapshot} stageLabels={AGENTHIRE_STAGES} />
+            </Suspense>
+          </SectionBoundary>
         )}
       </div>
     </section>
@@ -369,13 +549,15 @@ function Nav() {
         Allowance
       </div>
       <div className="nav-links">
-        <a href="#problem" className="nav-hide-sm">The problem</a>
-        <a href="#how" className="nav-hide-sm">How it works</a>
-        <a href="#dashboard">Dashboard</a>
-        <a href="#center-book" className="nav-hide-sm">Center book</a>
+        <a href="#guarantees" className="nav-hide-sm">Guarantees</a>
+        <a href="#fund-console">Fund console</a>
+        <a href="#fc-evidence" className="nav-hide-sm nav-hide-md">Evidence</a>
         <a href="#agenthire" className="nav-hide-sm">AgentHire</a>
-        <span className="nav-pill">
-          <span className="dot" /> live · x402
+        <a href="#under-the-hood" className="nav-hide-sm nav-hide-md">Under the hood</a>
+        <span className="nav-pill" title="Virtual-world demo: every fund number on this page is simulated">
+          <span className="dot" aria-hidden="true" /> <span className="nav-pill-long">virtual-world demo</span>
+          {/* Visually hidden below 360px (the dot stays), still read aloud. */}
+          <span className="nav-pill-short">virtual world</span>
         </span>
       </div>
     </nav>
@@ -423,34 +605,228 @@ function Hero() {
     <section className="hero" ref={ref}>
       <m.div className="hero-glow" style={{ y: prefersReduced ? 0 : glowY }} />
       <div className="hero-coins" aria-hidden="true">
-        <Coin progress={scrollYProgress} size={120} top="16%" left="72%" drift={140} />
-        <Coin progress={scrollYProgress} size={64} top="60%" left="84%" drift={90} />
-        <Coin progress={scrollYProgress} size={38} top="34%" left="60%" drift={220} />
-        <Coin progress={scrollYProgress} size={80} top="74%" left="8%" drift={60} />
+        <Coin progress={scrollYProgress} size={84} top="9%" left="86%" drift={140} />
+        <Coin progress={scrollYProgress} size={44} top="82%" left="91%" drift={90} />
+        <Coin progress={scrollYProgress} size={56} top="86%" left="3%" drift={60} />
       </div>
 
       <m.div
         className="container hero-inner"
         style={prefersReduced ? undefined : { y, opacity }}
       >
-        <span className="overline">Attenuating delegation for agent payments</span>
-        <h1 className="display">
-          Give your AI agents an <span className="hl">allowance</span>, not your wallet.
-        </h1>
-        <p className="lede">
-          Autonomous agents spawn sub-agents that spend money. Allowance hands each one a
-          budget that can only ever <em>shrink</em> as it's passed down — identity-gated,
-          compliance-screened, settled in any token, and fully audited.
-        </p>
-        <div className="btn-row">
-          <a className="btn btn-primary" href="#dashboard">See it live ↓</a>
-          <a className="btn btn-ghost" href={REPO_URL} target="_blank" rel="noreferrer">
-            View the code
-          </a>
+        <div className="hero-copy">
+          <span className="overline">The allocation and risk layer for capital run by AI agents</span>
+          <h1 className="display display-product">
+            A multi-manager fund where the <span className="hl">PMs are AI agents</span>.
+          </h1>
+          <p className="lede">
+            Each agent trades inside a mandate that can only shrink, and carries a track record
+            bound to a verified human operator. The allocator moves capital to the best
+            risk-adjusted agents, spots when "independent" agents are one trade, and cuts them.
+            A stop-out closes the agent's whole subtree in one operation.
+          </p>
+          <div className="btn-row">
+            <a className="btn btn-primary" href="#fund-console">Open the fund console ↓</a>
+            <a className="btn btn-ghost" href={REPO_URL} target="_blank" rel="noreferrer">
+              View the code
+            </a>
+          </div>
         </div>
+        <HeroVisual />
       </m.div>
 
       <div className="scroll-hint">scroll ↓</div>
+    </section>
+  );
+}
+
+/* A static, number-free sketch of the product: the mandate tree on Day 34 of
+   the console's virtual world, when one group cut hit picker-0 and desk-0
+   (overlapping books; they also share an operator) and herd-1 had already been
+   stopped out (Day 30). Names, pods, operators and states match the console;
+   the bars are illustrative. */
+function HeroVisual() {
+  const rows: Array<{ pod?: string; agent?: string; op?: string; w?: number; tone?: "hl" | "closed" }> = [
+    { pod: "alpha" },
+    { agent: "picker-0", op: "op-8", w: 0.72, tone: "hl" },
+    { agent: "trend-2", op: "op-2", w: 0.5 },
+    { pod: "beta" },
+    { agent: "desk-0", op: "op-8", w: 0.62, tone: "hl" },
+    { agent: "herd-1", op: "op-6", w: 0, tone: "closed" },
+  ];
+  return (
+    <figure className="hero-card" aria-label="Illustration: a fund's mandate tree with a group cut and a stopped-out agent">
+      <div className="hc-head">
+        <span className="hc-root">
+          <span className="hc-kind">Fund</span> fund.eth
+        </span>
+        <span className="hc-tag">illustration</span>
+      </div>
+      <ul className="hc-rows">
+        {rows.map((r, i) =>
+          r.pod ? (
+            <li key={i} className="hc-pod">
+              <span className="hc-kind">Pod</span> {r.pod}
+            </li>
+          ) : (
+            <li key={i} className={`hc-agent${r.tone ? ` is-${r.tone}` : ""}`}>
+              <span className="hc-name">{r.agent}</span>
+              <span className="hc-op">{r.op}</span>
+              <span className="hc-bar" aria-hidden="true">
+                <span className="hc-fill" style={{ transform: `scaleX(${r.w ?? 0})` }} />
+              </span>
+              <span className="hc-state">{r.tone === "closed" ? "⦸ stopped" : "● live"}</span>
+            </li>
+          ),
+        )}
+      </ul>
+      <figcaption className="hc-notes">
+        <span className="hc-note">
+          <span className="hero-proof-k">G</span>
+          <span>
+            picker-0 and desk-0 held overlapping positions, one trade under two names, so the allocator cut them
+            together. They also share op-8.
+          </span>
+        </span>
+        <span className="hc-note">
+          <span className="hero-proof-k hero-proof-stop" aria-hidden="true">⦸</span>
+          <span>
+            herd-1 hit its loss limit: its mandate was resized to zero and revoked, and the capital went back to the
+            fund. A stop-out, not a penalty.
+          </span>
+        </span>
+      </figcaption>
+    </figure>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* The four guarantees (R / A / G / C)                                         */
+/* -------------------------------------------------------------------------- */
+function Guarantees() {
+  const items = [
+    {
+      k: "R",
+      h: "Reserved at grant",
+      p: "Every agent's capital is set aside from the fund the moment it is granted, so no agent can ever trade money that was promised to another.",
+      op: "delegate",
+      how: "A child's budget is carved from its parent's available balance; a grant the parent cannot back is rejected before the agent exists.",
+      see: "#fc-tree-grant",
+      seeLabel: "See the reservations at grant",
+    },
+    {
+      k: "A",
+      h: "Resized by risk-adjusted record",
+      p: "Capital follows each agent's own attributable, risk-adjusted track record, and a drawdown is judged against the risk that agent actually runs.",
+      op: "resize",
+      how: "Every rebalance and every drawdown cut is one resize of the agent's mandate: it grows only from the parent's available balance and never shrinks below what is committed.",
+      see: "#fc-log-rebalance",
+      seeLabel: "See the rebalances",
+    },
+    {
+      k: "G",
+      h: "One trade, one cut",
+      p: "When \"independent\" agents are really the same bet, the allocator treats them as one position and cuts them together, whatever names they trade under.",
+      op: "group resize",
+      how: "The crowding scan groups agents whose books overlap and scales every contributor by one factor in one pass. It groups by positions: each agent's operator is recorded and flagged on the cuts after the run, but the allocator does not read it yet.",
+      see: "#fc-log-group",
+      seeLabel: "See the group cuts",
+    },
+    {
+      k: "C",
+      h: "A stop-out closes the subtree",
+      p: "A stop-out is a loss limit, not a punishment: one operation shuts the agent's mandate and everything it delegated, and hands the unspent capital back up the tree.",
+      op: "close",
+      how: "DelegationTree.close shrinks every descendant to what it spent (deepest first), revokes the node, and returns the freed amount to the parent. The center book stops every agent out this way (since loop 2), and the AgentHire run closes a live subtree that was still paying for work.",
+      see: "#agenthire",
+      seeLabel: "See a close on a live subtree",
+    },
+  ];
+  return (
+    <section className="section section-alt" id="guarantees">
+      <div className="container">
+        <Reveal>
+          <span className="overline">The four guarantees</span>
+          <h2 className="h2">
+            Guardrails on one agent are table stakes. <span className="hl">These hold across all of them.</span>
+          </h2>
+          <p className="lede">
+            An allocator's promises are only as good as what enforces them. The allocator decides; each decision below lands
+            as a single operation on one mandate tree, so it holds whether the agent behaves or not.
+          </p>
+        </Reveal>
+        <div className="guarantees">
+          {items.map((g, i) => (
+            <Reveal key={g.k} delay={i * 0.06}>
+              <article className="guarantee">
+                <div className="guarantee-top">
+                  <span className="guarantee-k" aria-hidden="true">{g.k}</span>
+                  <h3>
+                    <span className="sr-only">({g.k}) </span>
+                    {g.h}
+                  </h3>
+                </div>
+                <p className="guarantee-p">{g.p}</p>
+                <div className="guarantee-how">
+                  <span className="guarantee-how-label">Mechanism</span>
+                  <code>{g.op}</code>
+                  <p>{g.how}</p>
+                </div>
+                <a className="guarantee-see" href={g.see}>
+                  {g.seeLabel} →
+                </a>
+              </article>
+            </Reveal>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Under the hood — the mandate primitive                                      */
+/* -------------------------------------------------------------------------- */
+/* A chapter divider: everything after it (up to the sponsors) is one chapter
+   about the primitive, so those sections use h3 headings a step lighter. */
+const UNDER_THE_HOOD = [
+  { href: "#problem", label: "Why a tree" },
+  { href: "#how", label: "Attenuation" },
+  { href: "#ens", label: "ENS names are the tree" },
+  { href: "#pipeline", label: "The payment pipeline" },
+  { href: "#dashboard", label: "The primitive, live" },
+];
+
+function UnderTheHood() {
+  return (
+    <section className="section under-hood" id="under-the-hood" aria-labelledby="under-the-hood-h">
+      <div className="container">
+        <Reveal className="uth">
+          <div className="uth-copy">
+            <span className="overline">Under the hood · the mandate primitive</span>
+            <h2 className="h2 uth-h" id="under-the-hood-h">
+              One data structure <span className="hl">carries out all four</span>.
+            </h2>
+            <p className="uth-lede">
+              The allocator decides; an attenuating delegation tree carries each decision out. A mandate's budget and
+              scope can only narrow as it is passed down, any node can be revoked, and every write is audited. It started
+              as spend control for agents that pay each other, and those payments run on the same tree.
+            </p>
+          </div>
+          <nav className="uth-index" aria-label="In this chapter">
+            <ol>
+              {UNDER_THE_HOOD.map((s, i) => (
+                <li key={s.href}>
+                  <a href={s.href}>
+                    <span className="uth-n" aria-hidden="true">{String(i + 1).padStart(2, "0")}</span>
+                    {s.label}
+                  </a>
+                </li>
+              ))}
+            </ol>
+          </nav>
+        </Reveal>
+      </div>
     </section>
   );
 }
@@ -463,11 +839,11 @@ function Problem() {
     <section className="section section-alt" id="problem">
       <div className="container">
         <Reveal>
-          <span className="overline">The unsolved niche</span>
-          <h2 className="h2">
+          <span className="overline">Why a tree · agents that pay agents</span>
+          <h3 className="h2 h2-sub">
             An orchestrator hires a researcher. The researcher hires a scraper. The scraper
             pays an API.
-          </h2>
+          </h3>
           <p className="lede">
             Money now flows through chains of agents. Today you get two terrible options —
             and nothing in between.
@@ -476,7 +852,7 @@ function Problem() {
         <div className="card-2">
           <Reveal delay={0.05}>
             <div className="bad-card">
-              <h3>Give every agent your wallet</h3>
+              <h4>Give every agent your wallet</h4>
               <p>
                 One compromised, jailbroken, or hallucinating agent drains everything. No cap,
                 no scope, no undo.
@@ -485,7 +861,7 @@ function Problem() {
           </Reveal>
           <Reveal delay={0.12}>
             <div className="bad-card">
-              <h3>Approve every payment by hand</h3>
+              <h4>Approve every payment by hand</h4>
               <p>
                 Safe, but it defeats the entire point of autonomy. You become the bottleneck
                 for your own agents.
@@ -520,9 +896,9 @@ function Attenuation() {
       <div className="container">
         <Reveal>
           <span className="overline">How it works · attenuation</span>
-          <h2 className="h2">
+          <h3 className="h2 h2-sub">
             Money only ever flows <span className="hl">down and narrower</span>.
-          </h2>
+          </h3>
           <p className="lede">
             A child's budget is always a slice of its parent's <em>remaining</em> balance —
             and its allowlist can only be a subset. Try to broaden it and the delegation is
@@ -573,14 +949,14 @@ function Attenuation() {
 /* -------------------------------------------------------------------------- */
 function EnsWow() {
   return (
-    <section className="section section-alt">
+    <section className="section section-alt" id="ens">
       <div className="container wow">
         <Reveal>
           <div>
             <span className="overline">The wow</span>
-            <h2 className="h2">
+            <h3 className="h2 h2-sub">
               ENSv2's name hierarchy <span className="hl">is</span> the delegation tree.
-            </h2>
+            </h3>
             <p className="lede">
               A name already encodes who-is-boss-of-whom. We store each agent's mandate —
               budget, scope, expiry — as resolver records on its subname. The naming tree and
@@ -621,13 +997,13 @@ function Pipeline() {
     { n: "05", h: "Enforce on-chain", tag: "Uniswap v4 hook", block: false, p: "A v4 hook mirrors the same cap on-chain: a swap that exceeds the node's remaining allowance reverts." },
   ];
   return (
-    <section className="section">
+    <section className="section" id="pipeline">
       <div className="container">
         <Reveal>
           <span className="overline">The payment pipeline</span>
-          <h2 className="h2">
+          <h3 className="h2 h2-sub">
             Five gates before a single cent <span className="hl">moves</span>.
-          </h2>
+          </h3>
         </Reveal>
         <div className="pipeline">
           {steps.map((s, i) => (
@@ -635,7 +1011,7 @@ function Pipeline() {
               <div className="pstep">
                 <div className="pnum">{s.n}</div>
                 <div className="pbody">
-                  <h3>{s.h}</h3>
+                  <h4>{s.h}</h4>
                   <p>{s.p}</p>
                 </div>
                 <span className={`ptag ${s.block ? "ptag-block" : ""}`}>{s.tag}</span>
@@ -691,7 +1067,8 @@ function SiteFooter() {
         <div>
           <div className="footer-brand">◈ Allowance</div>
           <div className="footer-tag">
-            Attenuating delegation for autonomous agent payments — built at ETHGlobal.
+            The allocation and risk layer for capital run by AI agents, built on attenuating
+            delegation. Built at ETHGlobal. Fund results shown are from simulated virtual worlds.
           </div>
         </div>
         <div className="footer-note">

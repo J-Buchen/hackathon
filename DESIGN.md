@@ -472,6 +472,14 @@ enforces the cap at swap time (a view-style `beforeSwap` check against
 - IDKit failure path (§8 has success): call `MockPrincipalVerifier.verify` with a
   failing proof and log that funding was refused — do **not** call `fundRoot`.
 - May also host the x402 payment flow; keep the demo runnable with `npm run demo`.
+- `src/fund-demo.ts` (`npm run demo:fund`, library in `src/fund.ts`) runs the
+  current center book and the per-agent-guardrails baseline on one showcase
+  virtual world (`makeWorld(seed)`, seed chosen by the published rule in
+  `SHOWCASE_RULE`, research seeds only) and writes
+  `apps/web/public/fund-snapshot.json` (schema `fund-snapshot/1`, mirrored and
+  validated by `apps/web/src/fund/types.ts`). It never changes the allocator: it
+  reads `runBook`'s result and reads the tree's budgets at each tick boundary
+  through the public `DelegationTree` API.
 - `src/agenthire-demo.ts` (`npm run demo:agenthire`) runs the AgentHire story
   LIVE against a local keyless AgentHire (`scripts/agenthire-up.sh`; base URL from
   `AGENTHIRE_URL`). It also depends on `@allowance/swarm` (`nextLadderState`) and
@@ -606,6 +614,26 @@ The `#dashboard` section is a small state machine over the async
 The fetch validates untrusted JSON against the frozen §7 schema via
 `parseSnapshot` **at the boundary** (App.tsx), so malformed/stale input lands in
 `error` with a precise path-tagged message instead of crashing downstream.
+
+The `#fund-console` section follows the same contract over
+`fund-snapshot.json`: a console-shaped loading skeleton
+(`FundConsoleSkeleton`, block heights measured per breakpoint so the ready
+state does not shift the page), `.notice-error` with the `npm run demo:fund`
+hint (validated by `parseFundSnapshot`, including every `policy` field the
+console reads), an empty notice when the file has no agents or no NAV, and the
+lazy-loaded `FundConsole` chunk when ready. Everything it shows is labelled as a
+simulated virtual world.
+
+Every lazy section (payment dashboard, fund console, center book, AgentHire)
+sits inside a `SectionBoundary`: a render error replaces that section with the
+same `.notice-error` instead of unmounting the page.
+
+In-page links clear the sticky nav (`scroll-padding-top` on `html`), deep links
+(`/#fc-evidence`) are re-applied as lazy sections load (App.tsx
+`useHashNavigation`), and console aliases (`#fc-log-rebalance`,
+`#fc-log-group`, `#fc-tree-grant`) scroll to their panel and set the log filter
+or the replay (`fund/hash.ts`). Nested scrollers (the decision log, wide tables)
+take the wheel before Lenis does (`allowNestedScroll`).
 
 ### 11.2 Motion-performance rules (already in force)
 

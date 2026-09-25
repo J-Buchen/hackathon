@@ -1,5 +1,7 @@
 {
  "loop": 2,
+ "title": "One-year Sharpe scores (A) and stop-out by one close of the agent's subtree (C)",
+ "note": "Also lowered the center book's max drawdown on block B (−0.32 pp [−0.50, −0.15]), to 7.75%, still above per-agent guardrails' 6.88%. A crowding change that won +3.35 pp on block A was stopped by the risk guard: it raised max drawdown 2.48 pp.",
  "head": "370e0b8894b561ac3a40bd87cf9dbb892411e2f5",
  "blocks": {
   "A": {

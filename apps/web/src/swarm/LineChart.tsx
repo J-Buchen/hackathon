@@ -1,4 +1,4 @@
-import { useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 /**
  * Minimal, dependency-free SVG line chart for the center-book section.
@@ -8,6 +8,9 @@ import { useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent
  * direct end labels, a crosshair that snaps to the nearest tick with ONE tooltip
  * listing every series, keyboard access (←/→ on the focused chart), and a data
  * table fallback so no value is gated behind hover.
+ *
+ * The viewBox tracks the plot's rendered width (ResizeObserver), so axis and
+ * label text keep their size on a phone instead of scaling down with the SVG.
  */
 
 export interface Series {
@@ -42,8 +45,9 @@ interface Props {
   tableStep?: number;
 }
 
-const W = 760;
-const PAD = { top: 16, right: 92, bottom: 30, left: 64 };
+const WIDE = 760;
+const PAD_WIDE = { top: 16, right: 92, bottom: 30, left: 64 };
+const PAD_NARROW = { top: 16, right: 58, bottom: 30, left: 48 };
 
 function niceTicks(min: number, max: number, count = 4): number[] {
   const span = max - min || Math.abs(max) || 1;
@@ -68,6 +72,23 @@ export function LineChart({
 }: Props) {
   const [hover, setHover] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(WIDE);
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(([entry]) => {
+      const w = Math.round(entry?.contentRect.width ?? 0);
+      // Draw at the true width (never below 300), so 11px text stays 11px.
+      if (w > 0) setW(Math.max(300, w));
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const PAD = W < 560 ? PAD_NARROW : PAD_WIDE;
+  // Keep a sensible aspect as the width changes: flatter than the design box
+  // on phones, a little taller on wide panels.
+  const h = Math.round(Math.min(height * 1.3, Math.max(height * 0.85, (W / WIDE) * height)));
   const id = useId();
   const n = Math.max(...series.map((s) => s.values.length));
 
@@ -87,12 +108,12 @@ export function LineChart({
     hi += pad;
     const ticks = niceTicks(lo, hi);
     const x = (i: number) => PAD.left + (i / Math.max(1, n - 1)) * (W - PAD.left - PAD.right);
-    const y = (v: number) => PAD.top + (1 - (v - lo) / (hi - lo)) * (height - PAD.top - PAD.bottom);
+    const y = (v: number) => PAD.top + (1 - (v - lo) / (hi - lo)) * (h - PAD.top - PAD.bottom);
     const paths = series.map((s) =>
       s.values.map((v, i) => `${i === 0 ? "M" : "L"}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(""),
     );
     return { lo, hi, ticks, x, y, paths };
-  }, [series, n, height, baseline]);
+  }, [series, n, h, baseline, W, PAD]);
 
   const onMove = (e: PointerEvent<SVGSVGElement>) => {
     const svg = svgRef.current;
@@ -106,8 +127,8 @@ export function LineChart({
     if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
     e.preventDefault();
     const step = e.shiftKey ? 10 : 1;
-    setHover((h) => {
-      const cur = h ?? n - 1;
+    setHover((prev) => {
+      const cur = prev ?? n - 1;
       return Math.max(0, Math.min(n - 1, cur + (e.key === "ArrowRight" ? step : -step)));
     });
   };
@@ -139,10 +160,10 @@ export function LineChart({
           </span>
         ))}
       </div>
-      <div className="chart-plot">
+      <div className="chart-plot" ref={plotRef}>
         <svg
           ref={svgRef}
-          viewBox={`0 0 ${W} ${height}`}
+          viewBox={`0 0 ${W} ${h}`}
           role="img"
           aria-label={`${title}. Use left and right arrow keys to read values.`}
           aria-describedby={`${id}-tip`}
@@ -159,7 +180,7 @@ export function LineChart({
               x={geo.x(b.from)}
               y={PAD.top}
               width={Math.max(1, geo.x(b.to) - geo.x(b.from))}
-              height={height - PAD.top - PAD.bottom}
+              height={h - PAD.top - PAD.bottom}
             />
           ))}
           {geo.ticks.map((t) => (
@@ -174,13 +195,13 @@ export function LineChart({
             <line className="chart-baseline" x1={PAD.left} x2={W - PAD.right} y1={geo.y(baseline)} y2={geo.y(baseline)} />
           )}
           {[0, Math.floor((n - 1) / 2), n - 1].map((i) => (
-            <text key={i} className="chart-axis" x={geo.x(i)} y={height - 8} textAnchor="middle">
+            <text key={i} className="chart-axis" x={geo.x(i)} y={h - 8} textAnchor="middle">
               {xLabel(i)}
             </text>
           ))}
           {markers.map((m) => (
             <g key={`${m.at}-${m.label}`}>
-              <line className="chart-marker" x1={geo.x(m.at)} x2={geo.x(m.at)} y1={PAD.top} y2={height - PAD.bottom} />
+              <line className="chart-marker" x1={geo.x(m.at)} x2={geo.x(m.at)} y1={PAD.top} y2={h - PAD.bottom} />
               <text className="chart-marker-label" x={geo.x(m.at) + 4} y={PAD.top + 10}>
                 {m.label}
               </text>
@@ -204,7 +225,7 @@ export function LineChart({
           })}
           {hover !== null && (
             <g>
-              <line className="chart-crosshair" x1={geo.x(hover)} x2={geo.x(hover)} y1={PAD.top} y2={height - PAD.bottom} />
+              <line className="chart-crosshair" x1={geo.x(hover)} x2={geo.x(hover)} y1={PAD.top} y2={h - PAD.bottom} />
               {series.map((s) => (
                 <circle key={s.key} cx={geo.x(hover)} cy={geo.y(s.values[hover] ?? 0)} r={4} fill={s.color} className="chart-dot" />
               ))}

@@ -1,5 +1,7 @@
 {
  "loop": 1,
+ "title": "Risk-scaled drawdown ladder: an agent's drawdown is judged against the volatility it runs (stop at 1.5σ, 20% floor)",
+ "note": "Corrected after post-push verification: the stop now has a 40% ceiling so every agent can be stopped out. With it, the block-B gain is +4.47 pp [+3.55, +5.39]. This loop also raised the center book's mean max drawdown above per-agent guardrails' (block B 7.58% vs 6.73%).",
  "head": "f5b2d80",
  "headNote": "Not recorded by the loop-1 driver; re-derived by post-push verification (baselines reproduce bit for bit at f5b2d80).",
  "mergedAs": "d2151ed",

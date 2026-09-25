@@ -10,10 +10,11 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc -b",
-    "test": "node --import tsx --test src/flow.test.ts",
+    "test": "node --import tsx --test src/flow.test.ts src/fund.test.ts",
     "demo": "tsx src/demo.ts",
     "demo:swarm": "tsx src/swarm-demo.ts",
-    "demo:agenthire": "tsx src/agenthire-demo.ts"
+    "demo:agenthire": "tsx src/agenthire-demo.ts",
+    "demo:fund": "tsx src/fund-demo.ts"
   },
   "dependencies": {
     "@allowance/core": "*",

@@ -33,7 +33,7 @@ const KIND_LABEL: Record<Decision["kind"], string> = {
   REALLOCATE: "Reallocate",
   CUT: "Drawdown cut",
   RESTORE: "Restore",
-  STOP_OUT: "Stop-out · revoked",
+  STOP_OUT: "Stop-out · closed",
   CROWDING_CUT: "Crowding cut",
   GATE_CLIP: "Gate clip",
 };

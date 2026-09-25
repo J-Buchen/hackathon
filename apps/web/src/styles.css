@@ -52,11 +52,16 @@
 
   --container: 1180px;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  /* Height of the sticky nav (≈ 59.6px): in-page targets and sticky panel
+     headers sit below it. */
+  --nav-h: 60px;
 }
 
 * { box-sizing: border-box; }
 
-html { scroll-behavior: smooth; }
+/* scroll-padding: anchor jumps (#fc-log, #fc-evidence …) land below the sticky
+   nav instead of under it. */
+html { scroll-behavior: smooth; scroll-padding-top: calc(var(--nav-h) + 16px); }
 
 html, body, #root { margin: 0; min-height: 100%; }
 
@@ -224,7 +229,8 @@ a { color: inherit; }
   color: var(--text-dim);
 }
 
-.nav-links a { text-decoration: none; transition: color 0.2s ease; }
+.nav-links a { text-decoration: none; transition: color 0.2s ease; white-space: nowrap; }
+.nav-pill-short { display: none; }
 .nav-links a:hover { color: var(--gold-bright); }
 
 .nav-pill {
@@ -246,8 +252,33 @@ a { color: inherit; }
   box-shadow: 0 0 8px var(--gold);
 }
 
+/* Between the phone and desktop layouts the full link row plus the pill no
+   longer fits: keep the three main destinations. */
+@media (max-width: 900px) {
+  .nav-links a.nav-hide-md { display: none; }
+}
 @media (max-width: 640px) {
   .nav-links a.nav-hide-sm { display: none; }
+  .nav-pill-long { display: none; }
+  .nav-pill-short { display: inline; }
+  /* Decorative coins would sit on top of the stacked hero copy. */
+  .hero-coins { display: none; }
+}
+/* 320px reflow (WCAG 1.4.10): the pill keeps its dot and its accessible text,
+   but the words are visually hidden so the nav fits. */
+@media (max-width: 360px) {
+  .nav { gap: 10px; }
+  .nav-brand { font-size: 17px; }
+  .nav-pill { padding: 6px 7px; }
+  .nav-pill-short {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
 }
 
 /* ---------- Section scaffolding ---------- */
@@ -437,7 +468,7 @@ a { color: inherit; }
   font-weight: 800;
   margin-bottom: 16px;
 }
-.bad-card h3 { margin: 0 0 8px; font-size: 1.2rem; letter-spacing: -0.01em; }
+.bad-card h4 { margin: 0 0 8px; font-size: 1.2rem; letter-spacing: -0.01em; }
 .bad-card p { margin: 0; color: var(--text-dim); font-size: 0.98rem; }
 
 /* ---------- Attenuation viz ---------- */
@@ -536,7 +567,7 @@ a { color: inherit; }
   color: var(--gold);
   opacity: 0.85;
 }
-.pbody h3 { margin: 0 0 6px; font-size: 1.25rem; letter-spacing: -0.01em; }
+.pbody h4 { margin: 0 0 6px; font-size: 1.25rem; letter-spacing: -0.01em; }
 .pbody p { margin: 0; color: var(--text-dim); max-width: 60ch; }
 .ptag {
   font-size: 12px;
@@ -619,7 +650,7 @@ a { color: inherit; }
   flex-direction: column;
 }
 .panel-head { padding: 18px 20px 14px; border-bottom: 1px solid var(--border-soft); }
-.panel-head h2 { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
+.panel-head :is(h2, h3, h4) { margin: 0; font-size: 17px; letter-spacing: -0.01em; }
 .panel-sub { margin: 5px 0 0; font-size: 13px; color: var(--text-dim); }
 .panel-scroll { padding: 16px; overflow-x: auto; max-height: 620px; overflow-y: auto; }
 
@@ -865,12 +896,12 @@ a { color: inherit; }
 .cb-tile-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .cb-tile-value { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .cb-tile-value-dim { font-size: 15px; font-weight: 600; color: var(--text-dim); }
-.cb-tile-who { font-size: 11.5px; color: var(--text-faint); margin-left: auto; }
+.cb-tile-who { font-size: 11.5px; color: var(--text-faint); margin-left: auto; min-width: 0; overflow-wrap: anywhere; text-align: right; }
 
 /* Charts */
 .chart { margin: 0; }
 .chart-title { font-weight: 700; font-size: 15px; }
-.chart-legend { display: flex; flex-wrap: wrap; gap: 16px; margin: 8px 0 6px; font-size: 12.5px; color: var(--text-dim); }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 8px 0 6px; font-size: 12.5px; color: var(--text-dim); }
 .chart-legend-item { display: inline-flex; align-items: center; gap: 7px; }
 .chart-key { display: inline-block; width: 14px; height: 3px; border-radius: 2px; flex: none; }
 .chart-key-band { height: 10px; width: 14px; background: rgba(243, 177, 63, 0.1); border: 1px solid var(--border); }
@@ -928,7 +959,12 @@ a { color: inherit; }
 .cb-table tbody th { font-weight: 700; white-space: nowrap; }
 .cb-table .num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
 .cb-style { display: block; font-weight: 400; font-size: 11.5px; color: var(--text-faint); white-space: normal; }
-.cb-row-stopped { opacity: 0.6; }
+/* Stopped rows: tint the row and fade only the graphics. Text keeps its full
+   colour, since the status text IS the stop-out information (WCAG AA 4.5:1). */
+.cb-row-stopped,
+.fc-row-stopped { background: rgba(122, 108, 86, 0.08); }
+.cb-row-stopped svg,
+.fc-row-stopped svg { opacity: 0.55; }
 .cb-status { font-size: 12px; white-space: nowrap; }
 .cb-status-active { color: var(--text); }
 .cb-status-cut { color: var(--gold); }
@@ -991,3 +1027,674 @@ a { color: inherit; }
 .cb-log-scroll { max-height: 560px; }
 .cb-sources { font-size: 12px; color: var(--text-faint); margin: 8px 0 0; }
 .cb-sources a { color: var(--gold-bright); }
+
+/* ========================================================================== */
+/* Product hero, four guarantees, under-the-hood divider                       */
+/* ========================================================================== */
+.display-product { max-width: 15ch; font-size: clamp(2.3rem, 5vw, 4.1rem); line-height: 1.02; }
+.hero .lede { max-width: 58ch; font-size: clamp(1.02rem, 1.5vw, 1.2rem); }
+.hero-inner {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+  gap: clamp(28px, 4vw, 64px);
+  align-items: center;
+}
+@media (max-width: 980px) {
+  .hero-inner { grid-template-columns: 1fr; }
+  .hero-card { max-width: 520px; }
+}
+
+/* Hero illustration: the mandate tree in miniature. */
+.hero-card {
+  margin: 0;
+  padding: 18px 18px 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(34, 24, 13, 0.92), rgba(16, 11, 6, 0.92));
+  box-shadow: var(--shadow), var(--shadow-gold);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.hc-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.hc-root { font-family: var(--mono); font-weight: 800; font-size: 14px; }
+.hc-kind {
+  font-family: var(--sans);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 700;
+  margin-right: 4px;
+}
+.hc-tag {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+}
+.hc-rows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.hc-pod { font-weight: 800; font-size: 13px; margin-top: 4px; }
+.hc-agent {
+  display: grid;
+  grid-template-columns: 74px 44px minmax(0, 1fr) 64px;
+  align-items: center;
+  gap: 8px;
+  margin-left: 14px;
+  padding: 6px 8px;
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+  font-size: 12.5px;
+}
+.hc-agent.is-hl { border-color: var(--gold); background: var(--gold-bg); }
+/* Stopped: the bar is hatched and empty; the text keeps full contrast. */
+.hc-agent.is-closed { background: rgba(122, 108, 86, 0.08); }
+.hc-name { font-weight: 700; }
+.hc-op { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
+.is-hl .hc-op { color: var(--gold-bright); }
+.hc-bar { height: 8px; border-radius: 3px; background: var(--bg-1); border: 1px solid var(--border-soft); overflow: hidden; }
+.is-closed .hc-bar { background: repeating-linear-gradient(135deg, transparent 0 5px, rgba(122, 108, 86, 0.3) 5px 7px), var(--bg-1); }
+.hc-fill { display: block; height: 100%; background: linear-gradient(90deg, var(--gold-deep), var(--gold)); transform-origin: left center; }
+.hc-state { font-size: 11px; color: var(--text-dim); white-space: nowrap; text-align: right; }
+.is-closed .hc-state { color: var(--terra-bright); }
+.hc-notes { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-soft); padding-top: 12px; }
+.hc-note { display: flex; gap: 9px; align-items: flex-start; font-size: 12.5px; color: var(--text-dim); line-height: 1.45; }
+.hc-note .hero-proof-k { margin-top: 1px; }
+
+.hero-proof-k,
+.guarantee-k,
+.fc-log-g {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  border-radius: 50%;
+  background: radial-gradient(circle at 34% 30%, var(--gold-bright), var(--gold-deep) 80%);
+  color: #2a1c05;
+  font-weight: 900;
+  font-family: var(--mono);
+}
+.hero-proof-k { width: 22px; height: 22px; font-size: 11px; }
+.hero-proof-stop { background: var(--terra-bg); color: var(--terra-bright); border: 1px solid var(--terra); font-size: 12px; }
+
+.guarantees {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 44px;
+}
+@media (max-width: 860px) { .guarantees { grid-template-columns: 1fr; } }
+.guarantees > div { display: flex; }
+.guarantee {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 24px 24px 20px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--bg-elev), var(--bg-2));
+}
+.guarantee-top { display: flex; align-items: center; gap: 14px; }
+.guarantee-k { width: 40px; height: 40px; font-size: 18px; box-shadow: var(--shadow-gold); }
+.guarantee h3 { margin: 0; font-size: 1.22rem; letter-spacing: -0.01em; }
+.guarantee-p { margin: 0; color: var(--text); font-size: 1rem; line-height: 1.5; }
+.guarantee-how {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 10px;
+  align-items: baseline;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-1);
+  border: 1px solid var(--border-soft);
+}
+.guarantee-how-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+.guarantee-how code { justify-self: start; }
+.guarantee-how p { grid-column: 1 / -1; margin: 0; font-size: 13.5px; color: var(--text-dim); }
+.guarantee-see {
+  margin-top: auto;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--gold-bright);
+  text-decoration: none;
+}
+.guarantee-see:hover { text-decoration: underline; }
+
+/* Under the hood: a chapter divider, not a section. A band with the chapter's
+   heading and an index of the sections that follow; those use h3 headings a
+   step lighter (.h2-sub), and the gap after the band is tightened. */
+.under-hood {
+  padding: clamp(48px, 8vh, 96px) 0 clamp(32px, 5vh, 56px);
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, var(--bg-1), rgba(16, 11, 6, 0));
+  contain-intrinsic-size: auto 420px;
+}
+.under-hood + .section { padding-top: clamp(48px, 8vh, 104px); }
+.uth {
+  display: grid;
+  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr);
+  gap: clamp(24px, 4vw, 64px);
+  align-items: end;
+}
+@media (max-width: 860px) { .uth { grid-template-columns: 1fr; } }
+.uth-h { max-width: 18ch; }
+.uth-lede { margin: 0; color: var(--text-dim); font-size: clamp(1rem, 1.5vw, 1.15rem); line-height: 1.55; max-width: 62ch; }
+.uth-index ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; border-left: 2px solid var(--gold-deep); }
+.uth-index a {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 14px;
+  color: var(--text);
+  text-decoration: none;
+  font-weight: 600;
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+}
+.uth-index a:hover { background: var(--gold-bg); color: var(--gold-bright); }
+.uth-index a:focus-visible { outline: 2px solid var(--gold); outline-offset: 2px; }
+.uth-n { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
+.h2-sub { font-size: clamp(1.5rem, 3.3vw, 2.45rem); }
+
+/* ========================================================================== */
+/* Fund console                                                                */
+/* ========================================================================== */
+/* The console is tall; give content-visibility a closer guess of its height so
+   the scrollbar does not jump as it renders. */
+.section-console { contain-intrinsic-size: auto 3200px; }
+
+.fc { display: flex; flex-direction: column; gap: 20px; }
+
+.fc-world {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.fc-world > span {
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  white-space: nowrap;
+}
+.fc-world > .fc-sim {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--gold-bright);
+  border-color: var(--gold-deep);
+  background: var(--gold-bg);
+  font-weight: 700;
+}
+.fc-sim-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gold); }
+.fc-vw {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--gold-deep);
+  background: var(--gold-bg);
+  color: var(--gold-bright);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.fc-rule { margin: 0; font-size: 13.5px; color: var(--text-dim); max-width: 900px; }
+.fc-rule strong { color: var(--text); }
+
+.fc-kpis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 760px) { .fc-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.fc-kpi-single { display: flex; flex-direction: column; }
+.fc-kpi-value { font-size: 26px; font-weight: 800; margin-top: 6px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.fc-kpi-sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
+.fc-kpi-note { font-size: 11.5px; color: var(--text-faint); margin-top: 6px; line-height: 1.4; }
+.fc-kpi-note span { color: var(--gold-bright); }
+/* Narrow two-column tiles: the "allocator / guardrails only" caption goes
+   under its value instead of squeezing beside it. */
+@media (max-width: 560px) {
+  .fc-kpis .cb-tile-row { flex-wrap: wrap; row-gap: 0; }
+  .fc-kpis .cb-tile-who { flex-basis: 100%; margin-left: 22px; text-align: left; }
+}
+
+.fc-caption { margin: 0; padding: 0 20px 16px; font-size: 13px; color: var(--text-dim); }
+
+.fc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+@media (max-width: 980px) { .fc-grid { grid-template-columns: 1fr; } }
+
+/* --- Loading skeleton (components/FundConsoleSkeleton.tsx) ---------------- */
+/* Each block reserves the height the ready console renders for the committed
+   snapshot in that width band (measured at 1280 / 1024 / 860 / 700 / 560 /
+   390 / 360 / 320 px), so the swap to the ready state does not push the page
+   below it around (DESIGN.md §11.1). */
+.fcs {
+  --fcs-intro: 133px; --fcs-kpis: 276px; --fcs-chart: 493px;
+  --fcs-tree: 1155px; --fcs-log: 1155px; --fcs-agents: 780px; --fcs-evidence: 662px;
+}
+@media (max-width: 1179px) {
+  .fcs { --fcs-intro: 160px; --fcs-kpis: 290px; --fcs-chart: 483px; --fcs-tree: 1420px; --fcs-log: 1420px; }
+}
+@media (max-width: 980px) {
+  .fcs { --fcs-intro: 195px; --fcs-kpis: 300px; --fcs-chart: 430px; --fcs-tree: 1130px; --fcs-log: 790px; --fcs-agents: 795px; --fcs-evidence: 670px; }
+}
+@media (max-width: 760px) {
+  .fcs { --fcs-intro: 212px; --fcs-kpis: 416px; --fcs-chart: 396px; --fcs-tree: 1145px; --fcs-log: 810px; --fcs-agents: 800px; --fcs-evidence: 730px; }
+}
+@media (max-width: 640px) {
+  .fcs { --fcs-intro: 240px; --fcs-kpis: 416px; --fcs-chart: 400px; --fcs-tree: 1460px; --fcs-log: 756px; --fcs-agents: 800px; --fcs-evidence: 896px; }
+}
+@media (max-width: 560px) {
+  .fcs { --fcs-intro: 300px; --fcs-kpis: 500px; --fcs-chart: 435px; --fcs-tree: 1475px; --fcs-log: 780px; --fcs-agents: 805px; --fcs-evidence: 940px; }
+}
+@media (max-width: 420px) {
+  .fcs { --fcs-intro: 354px; --fcs-kpis: 555px; --fcs-chart: 465px; --fcs-tree: 1493px; --fcs-log: 794px; --fcs-agents: 820px; --fcs-evidence: 996px; }
+}
+@media (max-width: 360px) {
+  .fcs { --fcs-intro: 450px; --fcs-kpis: 571px; --fcs-chart: 476px; --fcs-tree: 1768px; --fcs-log: 851px; --fcs-evidence: 1060px; }
+}
+@media (max-width: 340px) {
+  .fcs { --fcs-intro: 471px; --fcs-kpis: 587px; --fcs-chart: 469px; --fcs-tree: 2122px; --fcs-agents: 840px; --fcs-evidence: 1162px; }
+}
+.fcs-intro { height: var(--fcs-intro); display: flex; flex-direction: column; gap: 14px; }
+.fcs-strip { height: 30px; width: min(100%, 880px); margin: 0; border-radius: 999px; }
+.fcs-rule { flex: 1; margin: 0; max-width: 900px; }
+.fcs .fc-kpis { height: var(--fcs-kpis); grid-auto-rows: 1fr; }
+.fcs .fcs-tile { height: auto; border-radius: var(--radius-sm); border-top-width: 1px; }
+.fcs-panel { padding: 18px 20px; }
+.fcs-fill { flex: 1; margin: 12px 0 0; border-radius: var(--radius-sm); }
+.fcs-chart { height: var(--fcs-chart); }
+.fcs-tree { height: var(--fcs-tree); }
+.fcs-log { height: var(--fcs-log); }
+.fcs-agents { height: var(--fcs-agents); }
+.fcs-evidence { height: var(--fcs-evidence); }
+
+/* --- Mandate tree -------------------------------------------------------- */
+/* overflow: clip (not hidden) keeps the rounded clip without making the panel
+   a scroll container, so the replay bar below can stick under the nav. */
+.fc-tree-panel { overflow: clip; }
+.fc-tree { padding: 0 18px 18px; display: flex; flex-direction: column; gap: 12px; }
+.fc-replay {
+  position: sticky;
+  top: var(--nav-h);
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0 -18px;
+  padding: 12px 18px 10px;
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border-soft);
+}
+.fc-replay-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.fc-replay-label { font-size: 13px; color: var(--text-dim); }
+.fc-replay-label strong { color: var(--text); font-family: var(--mono); }
+.fc-replay-hl { color: var(--gold-bright); }
+.fc-back {
+  flex: none;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--gold-deep);
+  background: var(--gold-bg);
+  color: var(--gold-bright);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.fc-back:hover { border-color: var(--gold); }
+/* Side by side, the log is right there: no need to jump back to it. */
+@media (min-width: 981px) { .fc-back { display: none; } }
+.fc-replay-row { display: flex; align-items: center; gap: 8px; }
+.fc-replay-row input[type="range"] { flex: 1; min-width: 0; accent-color: var(--gold); height: 28px; }
+.fc-step {
+  flex: none;
+  min-width: 34px;
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.fc-step:hover:not(:disabled) { border-color: var(--gold-deep); color: var(--gold-bright); }
+.fc-step:disabled { opacity: 0.4; cursor: default; }
+.fc-step-end { font-size: 12px; }
+
+.fc-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-dim); }
+.fc-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.fc-key { display: inline-block; width: 14px; height: 9px; border-radius: 2px; position: relative; }
+.fc-key-tick { width: 2px; height: 12px; background: var(--text); border-radius: 1px; }
+.fc-key-hl { border: 1px solid var(--gold); background: var(--gold-bg); }
+.fc-legend .fc-legend-scale { display: block; flex-basis: 100%; color: var(--text-faint); font-size: 11.5px; }
+.fc-close-line { color: var(--text-dim); }
+
+.fc-nodes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.fc-pod { margin-top: 8px; }
+.fc-pod-agents { position: relative; padding-left: 18px; }
+.fc-pod-agents::before {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 2px;
+  bottom: 12px;
+  width: 2px;
+  border-radius: 1px;
+  background: linear-gradient(180deg, var(--gold-deep), var(--border));
+}
+
+.fc-node {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) 108px;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  border: 1px solid transparent;
+  transition: border-color 0.2s ease, background 0.2s ease, opacity 0.2s ease;
+}
+.fc-depth-0 { background: var(--bg-elev-2); border-color: var(--border); padding: 10px 12px; }
+.fc-depth-1 { background: var(--bg-1); border-color: var(--border-soft); }
+.fc-node.is-hl { border-color: var(--gold); background: var(--gold-bg); }
+/* A selection scrolls the first ringed row into view (stacked layout): keep it
+   clear of the sticky replay bar as well as the nav. */
+.fc-tree .fc-node { scroll-margin-top: 104px; }
+/* A revoked agent: hatched empty bar and a muted border; its text stays at
+   full contrast (the status is the information). */
+.fc-node.is-closed:not(.is-hl) { border-color: var(--border-soft); border-style: dashed; }
+.fc-node.is-closed .fc-node-label { color: var(--text-dim); }
+.fc-node.is-absent { opacity: 0.3; }
+
+.fc-node-id { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.fc-node-label { font-weight: 800; font-size: 14px; white-space: nowrap; }
+.fc-depth-0 .fc-node-label { font-family: var(--mono); font-size: 14px; }
+.fc-node-kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 700;
+  margin-right: 2px;
+}
+.fc-node-meta { font-size: 11.5px; color: var(--text-faint); }
+.fc-node-badges { display: inline-flex; flex-wrap: wrap; gap: 5px; }
+.fc-node-amt { text-align: right; font-family: var(--mono); font-size: 13px; line-height: 1.25; white-space: nowrap; }
+.fc-node-amt strong { color: var(--text); }
+.fc-node-sub { display: block; font-size: 10.5px; color: var(--text-faint); font-family: var(--sans); }
+.fc-node-closed { font-size: 11.5px; color: var(--text-dim); font-family: var(--sans); }
+
+.fc-bar {
+  position: relative;
+  height: 12px;
+  border-radius: 4px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+.fc-bar-closed { background: repeating-linear-gradient(135deg, transparent 0 5px, rgba(122, 108, 86, 0.25) 5px 7px), var(--bg-1); }
+.fc-seg {
+  position: absolute;
+  inset: 0;
+  /* Placed and animated with transform only (translateX + scaleX from the left
+     edge; DESIGN.md §11.2), see MandateTree.tsx. */
+  transform-origin: left center;
+  transition: transform 0.45s var(--ease);
+  will-change: transform;
+}
+.fc-seg-available { background: linear-gradient(90deg, var(--gold-deep), var(--gold)); }
+/* Horizontal bands: a horizontal scale does not distort them. */
+.fc-seg-reserved { background: repeating-linear-gradient(180deg, var(--gold-deep) 0 2px, #5a3f14 2px 4px); }
+.fc-seg-spent { background: var(--terra); }
+.fc-grant-tick {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  opacity: 0.75;
+  border-radius: 1px;
+}
+
+.fc-op {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.fc-op-shared { border-color: var(--gold-deep); color: var(--text); background: var(--gold-bg); }
+.fc-op-count { color: var(--text-dim); font-family: var(--sans); }
+
+.fc-status { font-size: 12px; white-space: nowrap; color: var(--text); }
+.fc-status-cut { color: var(--gold-bright); }
+.fc-status-stopped { color: var(--terra-bright); }
+.fc-status-at { color: var(--text-faint); }
+
+/* --- Decision log -------------------------------------------------------- */
+.fc-log { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.fc-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-soft);
+}
+.fc-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.fc-filter:hover { border-color: var(--gold-deep); color: var(--text); }
+.fc-filter[aria-pressed="true"] { background: var(--gold-bg); border-color: var(--gold); color: var(--gold-bright); font-weight: 700; }
+.fc-filter-n { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.fc-filter[aria-pressed="true"] .fc-filter-n { color: var(--gold-bright); }
+
+/* On desktop the log fills whatever height the tree panel beside it sets:
+   the scroller is absolutely positioned, so the log's own length never
+   stretches the row. */
+.fc-log-fill { position: relative; flex: 1; min-height: 520px; }
+.fc-log-scroll { position: absolute; inset: 0; padding: 12px 16px 16px; overflow-y: auto; }
+@media (max-width: 980px) {
+  .fc-log-fill { min-height: 0; }
+  .fc-log-scroll { position: static; max-height: 620px; }
+}
+.fc-log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.fc-log-item {
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius-xs);
+  background: var(--bg-1);
+}
+.fc-log-group { border-left-color: var(--gold); }
+.fc-log-stopout { border-left-color: var(--terra); }
+.fc-log-ladder { border-left-color: var(--gold-deep); }
+.fc-log-grant { border-left-color: var(--gold-bright); }
+.fc-log-item.is-selected { border-color: var(--gold); background: var(--gold-bg); }
+.fc-log-select {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  width: 100%;
+  padding: 9px 11px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-xs);
+}
+.fc-log-select:hover .fc-log-kind { color: var(--gold-bright); }
+.fc-log-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
+.fc-log-g { width: 18px; height: 18px; font-size: 10px; }
+.fc-log-kind { font-weight: 700; }
+.fc-log-t { margin-left: auto; color: var(--text-faint); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.fc-log-body { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--text-dim); }
+.fc-log-body strong { color: var(--text); }
+.fc-log-detail { font-size: 12.5px; color: var(--text-dim); }
+.fc-members { display: flex; flex-wrap: wrap; gap: 4px; }
+.fc-member {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: var(--bg-elev);
+}
+.fc-member-shared { border-color: var(--gold); background: var(--gold-bg); }
+.fc-shared-note { font-size: 12.5px; color: var(--text); }
+.fc-shared-note span { color: var(--gold-bright); }
+.fc-shared-context { font-size: 12px; color: var(--text-faint); }
+.fc-moves { display: grid; gap: 3px; margin-top: 2px; }
+.fc-move { display: flex; justify-content: space-between; gap: 12px; font-family: var(--mono); font-size: 12px; }
+.fc-move-agent { color: var(--text); }
+.fc-moves-hint { font-size: 12px; color: var(--text-faint); }
+.fc-log-g-stop { background: var(--terra-bg); color: var(--terra-bright); border: 1px solid var(--terra); font-size: 11px; }
+.fc-filter-note { margin: 0; padding: 8px 16px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border-soft); background: var(--bg-1); }
+.fc-log-empty, .fc-evidence-empty { padding: 20px 0; }
+
+/* --- Agent table -------------------------------------------------------- */
+.fc-table th, .fc-table td { vertical-align: middle; }
+/* Where the tables no longer fit, they keep their row labels in view while
+   scrolling sideways, and a shadow on the right edge says there is more (an
+   opaque layer that scrolls with the content covers it at the end). */
+@media (max-width: 900px) {
+  .fc-sticky thead th:first-child,
+  .fc-sticky tbody th {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    background: var(--bg-elev);
+    box-shadow: inset -1px 0 0 var(--border-soft);
+  }
+  .fc-table-scroll {
+    background:
+      linear-gradient(to left, var(--bg-elev) 40%, rgba(25, 17, 8, 0)) right center / 32px 100% no-repeat local,
+      linear-gradient(to left, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0)) right center / 14px 100% no-repeat scroll;
+  }
+}
+.fc-spark { width: 96px; height: 26px; display: block; overflow: visible; }
+.fc-spark-base { stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.fc-baseline { white-space: nowrap; }
+.fc-baseline-pnl { font-family: var(--mono); font-size: 12px; color: var(--text-dim); margin-left: 4px; }
+
+/* --- Evidence ----------------------------------------------------------- */
+.fc-overline { margin-bottom: 6px; font-size: 11px; }
+.fc-evidence-body { padding: 16px 20px 20px; }
+.fc-evidence { display: flex; flex-direction: column; gap: 16px; }
+.fc-loops { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.fc-loop { padding: 12px 14px; border-radius: var(--radius-sm); border: 1px solid var(--border-soft); background: var(--bg-1); }
+.fc-loop-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.fc-loop-n { font-weight: 800; font-family: var(--mono); }
+.fc-loop-verdict { font-size: 12px; color: var(--text-dim); padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border); }
+.fc-loop-verdict.is-ok { color: var(--gold-bright); border-color: var(--gold-deep); background: var(--gold-bg); }
+.fc-loop-change { margin: 8px 0 0; font-size: 13.5px; color: var(--text-dim); }
+.fc-loop-change strong { color: var(--text); }
+.fc-loop-meta { margin: 6px 0 0; font-size: 12px; color: var(--text-faint); }
+.fc-loop-note { margin: 6px 0 0; font-size: 13px; line-height: 1.5; color: var(--text-dim); }
+.fc-forest-fig { display: flex; flex-direction: column; gap: 10px; }
+.fc-forest { display: flex; flex-direction: column; gap: 4px; }
+.fc-forest-row {
+  display: grid;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr) 150px;
+  align-items: center;
+  gap: 14px;
+}
+.fc-forest-id { display: flex; flex-direction: column; min-width: 0; }
+.fc-forest-label { font-weight: 700; font-size: 13px; }
+.fc-forest-sub { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.fc-forest-track { position: relative; height: 34px; }
+.fc-forest-grid { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border-soft); }
+.fc-forest-zero { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 1px dashed var(--text-faint); }
+.fc-forest-ci {
+  position: absolute;
+  top: 50%;
+  height: 12px;
+  margin-top: -6px;
+  border: 2px solid;
+  border-top: 0;
+  border-bottom: 0;
+  border-radius: 1px;
+}
+.fc-forest-ci::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 5px;
+  height: 2px;
+  background: #b8841f;
+}
+.fc-forest-dot {
+  position: absolute;
+  top: 50%;
+  width: 11px;
+  height: 11px;
+  margin: -5.5px 0 0 -5.5px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--bg-elev);
+}
+.fc-forest-val { display: flex; flex-direction: column; font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.fc-forest-val strong { color: var(--text); font-size: 14px; }
+.fc-forest-axis .fc-forest-track { height: 18px; }
+.fc-forest-tick {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+@media (max-width: 640px) {
+  .fc-forest-row { grid-template-columns: minmax(0, 1fr) 96px; gap: 4px 10px; }
+  .fc-forest-id { grid-column: 1 / -1; }
+  .fc-forest-axis > div:first-child { display: none; }
+}
+.fc-note { margin: 0; font-size: 13px; color: var(--text-dim); }
+.fc-evidence-table .num { white-space: nowrap; }
+
+@media (max-width: 640px) {
+  .fc-node { grid-template-columns: minmax(0, 1fr) 100px; gap: 6px 10px; }
+  .fc-node .fc-bar { grid-column: 1 / -1; grid-row: 2; }
+  .fc-tree { padding: 0 12px 14px; }
+  .fc-replay { margin: 0 -12px; padding: 10px 12px 8px; }
+  .fc-log-scroll { max-height: 560px; padding: 10px 12px 12px; }
+  .fc-filters { padding: 10px 12px; }
+  .fc-evidence-body { padding: 14px 12px 16px; }
+  .fc-caption { padding: 0 14px 14px; }
+}

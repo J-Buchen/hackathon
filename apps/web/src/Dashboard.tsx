@@ -59,10 +59,13 @@ function Reveal({
 function Dashboard({
   snapshot,
   stageLabels,
+  panelHeading: PanelHeading = "h2",
 }: {
   snapshot: Snapshot;
   /** Per-result stage tags for the event log (the defaults name the main demo's sponsors). */
   stageLabels?: Partial<Record<EventResult, string>>;
+  /** Heading level of the two panel titles, so they nest under the section's own heading. */
+  panelHeading?: "h2" | "h3" | "h4";
 }) {
   const roots = useMemo(() => buildTree(snapshot.nodes), [snapshot.nodes]);
 
@@ -139,7 +142,7 @@ function Dashboard({
       <div className="grid">
         <Reveal className="panel panel-tree" delay={0.05}>
           <div className="panel-head">
-            <h2>Delegation tree</h2>
+            <PanelHeading>Delegation tree</PanelHeading>
             <p className="panel-sub">
               Budget <strong>attenuates</strong> down the chain — each child's available
               balance is a slice of its parent's. Revoked subtrees are dimmed.
@@ -179,7 +182,7 @@ function Dashboard({
 
         <Reveal className="panel panel-events" delay={0.12}>
           <div className="panel-head">
-            <h2>Event log</h2>
+            <PanelHeading>Event log</PanelHeading>
             <p className="panel-sub">
               Every fund, delegation, payment, and revocation — with the exact reason each
               blocked payment was stopped.
