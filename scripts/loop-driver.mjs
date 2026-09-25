@@ -5,7 +5,8 @@
 //
 // Protocol (all on SEALED arena seeds, never seen by researchers):
 //   1. Each proposal that passed code review is applied to a fresh git
-//      worktree at HEAD; package tests must pass.
+//      worktree at HEAD; the typecheck and every test suite (npm test, lab,
+//      web) must pass.
 //   2. Selection: judged world-by-world vs HEAD on block A. A PERFORMANCE
 //      proposal (track allocator/tiger/both) wins if its target track's paired
 //      uplift has a 90% lower bound > 0 and the other track's mean change is
@@ -16,7 +17,10 @@
 //   3. Winners are combined (best first; any that no longer applies is dropped)
 //      and the combination must CONFIRM on a separate block B (target track
 //      lower bound > 0). Otherwise the best single winner is tried on B.
-//   4. Output: the diff to merge (or none) and every number, winners or not.
+//   4. Output: the diff to merge (or none) and every number, winners or not,
+//      including each book's max drawdown, the HEAD commit judged against, and
+//      every candidate's diff (docs/loops/loop-<L>/), so the report can be
+//      re-run from the repository alone.
 import { execFileSync, execSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -29,6 +33,9 @@ const B = { from: 10000 + L * 1000 + 500, count: 200 };
 const proposals = JSON.parse(readFileSync(proposalsFile, "utf8")).proposals ?? [];
 const root = `/tmp/loops/L${L}`;
 mkdirSync(root, { recursive: true });
+const HEAD = execSync("git rev-parse HEAD", { cwd: REPO }).toString().trim();
+const archive = join(REPO, "docs", "loops", `loop-${L}`);
+mkdirSync(archive, { recursive: true });
 
 const sh = (cmd, cwd) => execSync(cmd, { cwd, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 1 << 27 }).toString();
 function worktree(name, diffs) {
@@ -48,8 +55,9 @@ function worktree(name, diffs) {
 function testsPass(dir) {
   try {
     sh("npx tsc -b tsconfig.json", dir);
-    sh("npm -w @allowance/swarm run test", dir);
+    sh("npm test", dir);
     sh("npm -w @allowance/lab run test", dir);
+    sh("npm -w allowance-web run test", dir);
     return true;
   } catch { return false; }
 }
@@ -61,11 +69,18 @@ const target = (p) => (p.track === "both" ? ["allocator", "tiger"] : p.track ===
 const other = (p) => (p.track === "allocator" ? ["tiger"] : p.track === "tiger" ? ["allocator"] : p.track === "structure" ? ["allocator", "tiger"] : []);
 const neutral = (c) => ["allocator", "tiger"].every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002);
 
-const report = { loop: L, blocks: { A, B }, candidates: [], merged: null };
+const report = { loop: L, head: HEAD, blocks: { A, B }, candidates: [], merged: null };
+// Utility, Sharpe and max drawdown of each book, not just the paired uplift.
+const books = (s) => Object.fromEntries(["allocator", "tiger"].map((t) => [t, { utility: s[t].utility, sharpe: s[t].sharpe, maxDD: s[t].maxDD, baselineUtility: s[t].baseline, baselineMaxDD: s[t].baselineMaxDD }]));
 const live = [];
 for (const [k, p] of proposals.entries()) {
   const entry = { k, angle: p.angle, track: p.track, hypothesis: p.hypothesis, reviewOk: !!p.review?.ok, reviewProblems: p.review?.problems ?? [] };
   report.candidates.push(entry);
+  if (p.diff?.trim()) {
+    const f = join(archive, `candidate-${k}.diff`);
+    writeFileSync(f, p.diff.endsWith("\n") ? p.diff : p.diff + "\n");
+    entry.diffFile = `docs/loops/loop-${L}/candidate-${k}.diff`;
+  }
   if (!p.review?.ok || !p.diff?.trim()) { entry.status = "rejected-review"; continue; }
   const wt = worktree(`c${k}`, [p.diff]);
   if (wt.applied.length === 0) { entry.status = "does-not-apply"; continue; }
@@ -77,6 +92,7 @@ if (live.length) {
   res.candidates.forEach((c, i) => {
     const e = live[i].entry;
     e.blockA = { allocator: c.allocator, tiger: c.tiger };
+    e.booksA = books(c.summary);
     const p = live[i].p;
     if (p.track === "structure") {
       e.status = neutral(c) ? "winner-A" : "harms-A";
@@ -86,7 +102,7 @@ if (live.length) {
     const safe = other(p).every((t) => c[t].mean > -0.001);
     e.status = up && safe ? "winner-A" : "no-uplift-A";
   });
-  report.baselineA = res.baseline;
+  report.baselineA = { ...res.baseline, dir: undefined, books: books(res.baseline) };
 }
 const winners = live.filter((c) => c.entry.status === "winner-A")
   .sort((x, y) => {
@@ -105,17 +121,18 @@ const tryConfirm = (set, label) => {
   const ok =
     tracks.every((t) => c[t].lo > 0) &&
     ["allocator", "tiger"].filter((t) => !tracks.includes(t)).every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002);
-  return { ok, kept: kept.map((x) => x.k), blockB: { allocator: c.allocator, tiger: c.tiger }, baselineB: res.baseline, dir: wt.dir };
+  return { ok, kept: kept.map((x) => x.k), blockB: { allocator: c.allocator, tiger: c.tiger }, booksB: books(c.summary), baselineB: { ...res.baseline, dir: undefined, books: books(res.baseline) }, dir: wt.dir };
 };
 if (winners.length) {
   let conf = winners.length > 1 ? tryConfirm(winners, "combined") : null;
   if (!conf?.ok) conf = tryConfirm([winners[0]], "best");
   if (conf) {
-    report.confirmation = { ok: conf.ok, kept: conf.kept, blockB: conf.blockB, baselineB: conf.baselineB };
+    report.confirmation = { ok: conf.ok, kept: conf.kept, blockB: conf.blockB, booksB: conf.booksB, baselineB: conf.baselineB };
     if (conf.ok) {
       const diff = sh("git add -A && git diff --cached HEAD -- . ':(exclude)node_modules'", conf.dir);
       writeFileSync(join(root, "merge.diff"), diff);
-      report.merged = { kept: conf.kept, diffFile: join(root, "merge.diff") };
+      writeFileSync(join(archive, "merge.diff"), diff);
+      report.merged = { kept: conf.kept, diffFile: join(root, "merge.diff"), archived: `docs/loops/loop-${L}/merge.diff` };
     }
   }
 }

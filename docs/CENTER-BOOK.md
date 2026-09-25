@@ -96,7 +96,13 @@ Around them sit agents that give the allocator something to allocate between:
   track record:
   - cut to 50% capital at a 10% drawdown;
   - restore once it recovers to within 5% of its high-water mark;
-  - **stop out (revoke) at a 20% drawdown.**
+  - **stop out (revoke) at a 20% drawdown;**
+  - **risk-scaled** (loop 1): the rungs widen for an agent that runs more
+    volatility, so the stop sits at 1.5σ of the agent's annualized vol (σ
+    measured over the last 90 ticks up to its last high-water mark, so the losses
+    being judged cannot loosen their own stop), never below the fixed 20% and
+    **never above a 40% ceiling**, so every agent can still be stopped out. The
+    cut and restore rungs move in proportion (at most 20% and 10%).
 - **Crowding**, checked every day on the books agents *propose*, before they
   trade:
   - **Clones:** union-find over agents whose position vectors have cosine
@@ -109,15 +115,19 @@ Around them sit agents that give the allocator something to allocate between:
     crowded book. The cap is not lifted just because its twin got stopped out.
 
 The baseline ("per-agent guardrails") is what agent-trading products ship today.
-It uses the same agents, the same pre-trade gate, the same leverage and the same
-stop-out, with equal static capital and **nothing that looks across agents**.
+It uses the same agents, the same pre-trade gate and the same leverage, with
+equal static capital, each agent's own fixed 20% stop-loss, and **nothing that
+looks across agents**. The center book differs in what it sees across agents
+(allocation, crowding) and, since loop 1, in its ladder: it judges each agent's
+drawdown against the risk that agent runs, which a per-agent stop-loss cannot.
 
 ## Results
 
-The numbers below come from `npm run demo:swarm`, using the coffee thesis as of
+The numbers below come from `npm run demo:swarm` at the current code (loop-1
+risk-scaled ladder with its 40% ceiling), using the coffee thesis as of
 2026-09-25, 260 simulated trading days and 20 market seeds. The two books share
-agents, gate, leverage, initial capital and stop-out rule; they differ only in
-whether anything looks across the agents.
+agents, gate, leverage and initial capital; they differ in the center book's
+cross-agent allocation and crowding limits and its risk-scaled ladder.
 
 **The thesis.** All three Tiger-Cub PMs pick the same trade: long **SBUX**,
 short **BROS**.
@@ -133,11 +143,11 @@ short **BROS**.
 
 | | per-agent guardrails | center book |
 |---|---:|---:|
-| loss in the unwind | −4.9% | **−1.8%** |
-| max drawdown | 7.9% | **4.6%** (smaller on **19/20** seeds) |
-| peak crowded (SBUX) exposure | 51.5% of NAV | **17.2%** |
-| Sharpe | 0.50 | **0.56** (higher on only 10/20 seeds) |
-| total return | **+5.5%** | +2.9% |
+| loss in the unwind | −4.9% | **−2.4%** |
+| max drawdown | 7.9% | **5.0%** (smaller on **17/20** seeds) |
+| peak crowded (SBUX) exposure | 51.5% of NAV | **15.9%** |
+| Sharpe | 0.50 | **0.61** (higher on only 10/20 seeds) |
+| total return | **+5.5%** | +3.3% |
 
 On day 1 the center book flags "4 agents across 3 pods running one trade in
 SBUX: 48.0% of NAV > 10% limit". The three Tiger Cubs are joined by the rogue
@@ -145,8 +155,8 @@ agent, whose clipped book is also long SBUX. Per-agent guardrails never raise
 it, because no single agent breached anything.
 
 **If the research is wrong** (catalysts carry no edge), the center book still has
-the smaller max drawdown on **19/20** seeds: 4.7% vs 8.3% mean. Sharpe goes from
-0.17 to 0.48, and total return from +2.8% to +2.4%. Crowding control doesn't
+the smaller max drawdown on **17/20** seeds: 5.2% vs 8.3% mean. Sharpe goes from
+0.17 to 0.49, and total return from +2.8% to +2.7%. Crowding control doesn't
 depend on the thesis being right.
 
 **Ablation (mean over the same 20 seeds):**
@@ -154,10 +164,11 @@ depend on the thesis being right.
 | variant | max DD | unwind | Sharpe | return |
 |---|---:|---:|---:|---:|
 | per-agent guardrails | 7.9% | −4.9% | 0.50 | +5.5% |
-| center book (all on) | 4.6% | −1.8% | 0.56 | +2.9% |
-| − crowding limits | 12.0% | −8.5% | 0.30 | +4.1% |
-| − drawdown cut rung | 4.8% | −1.9% | 0.64 | +3.4% |
-| crowding limits only | 3.5% | −1.8% | 0.47 | +2.1% |
+| center book (all on) | 5.0% | −2.4% | 0.61 | +3.3% |
+| − crowding limits | 15.3% | −12.6% | 0.22 | +3.0% |
+| − drawdown cut rung | 5.1% | −2.5% | 0.64 | +3.5% |
+| − risk-scaled ladder (fixed 10%/20% rungs) | 4.6% | −1.8% | 0.56 | +2.9% |
+| crowding limits only | 4.2% | −2.8% | 0.46 | +2.3% |
 
 What this says, plainly:
 
@@ -165,17 +176,22 @@ What this says, plainly:
   comes from it.
 - **Performance-chasing allocation without crowding control is worse than doing
   nothing.** Sharpe-weighting pays the crowd for its run-up: max drawdown rises
-  to 12.0% vs 7.9% for equal weights. This is the case for a book-level risk
+  to 15.3% vs 7.9% for equal weights. This is the case for a book-level risk
   engine rather than a leaderboard.
-- **The cost is return.** The center book gives up about 2.6 points of return in
+- **The cost is return.** The center book gives up about 2.2 points of return in
   the edge-on case, because it refuses to let the fund's single best idea become
   half its NAV.
 - **The drawdown-cut rung does not earn its keep on this market.** Removing it
-  raises Sharpe from 0.56 to 0.64. It stays in the default because it's standard
+  raises Sharpe from 0.61 to 0.64. It stays in the default because it's standard
   pod-shop practice and costs little drawdown, but the data doesn't support it
   here. The stop-out rung (revocation) stays either way.
+- **The risk-scaled ladder (loop 1) trades drawdown for Sharpe here.** With
+  fixed 10%/20% rungs the center book's mean max drawdown is 4.6% (Sharpe 0.56);
+  risk-scaled, 5.0% (Sharpe 0.61). It was adopted because it raised fund utility
+  on sealed arena worlds, where it also leaves mean max drawdown above the
+  per-agent baseline's; see [`LOOPS.md`](LOOPS.md).
 - **The headline seed (7) is less flattering than the average.** On it the center
-  book has the lower drawdown and unwind loss, but also the lower Sharpe (0.60 vs
+  book has the lower drawdown and unwind loss, but also the lower Sharpe (0.91 vs
   1.08). The dashboard shows that seed as-is rather than a cherry-picked one.
 
 ## Limits

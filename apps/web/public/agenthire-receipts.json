@@ -1,9 +1,9 @@
 {
-  "asOf": 1790357618,
+  "asOf": 1790368622,
   "simulated": true,
   "settlementSimulated": true,
   "honesty": [
-    "AgentHire at http://127.0.0.1:5601 (loopback), settlement mode mock. 1 x402 payment(s) sent a signed permit: 1 answered status \"mock\" (realTx false, nothing moved on chain), 0 reported a real tx (not verified here), 0 UNCONFIRMED (charged to the mandate, not confirmed by AgentHire). 2 A2A hire(s) used AgentHire's simulation route /api/sim/trigger-direct.",
+    "AgentHire at http://127.0.0.1:5311 (loopback), settlement mode mock. 1 x402 payment(s) sent a signed permit: 1 answered status \"mock\" (realTx false, nothing moved on chain), 0 reported a real tx (not verified here), 0 UNCONFIRMED (charged to the mandate, not confirmed by AgentHire). 2 A2A hire(s) used AgentHire's simulation route /api/sim/trigger-direct.",
     "AgentHire's escrow is off-chain in live flows (completion and refunds are DB-only), so nothing here is escrow-protected.",
     "WebCrawler X's sub-hires (steps 4, 4b) and overspend attempts (step 5) were made by this demo acting for agent 5 (SIMULATED behaviour); AgentHire's WebCrawler X never contacted Allowance.",
     "Incidents are recorded Allowance-side in .agenthire/allowance-demo-incidents.json (a local JSON file, emptied at the start of each demo run). They were sent to AgentHire's /api/dispute/submit, which keyless only prints them to its server log (pending_review): nothing is stored on AgentHire's side, and AgentHire has no keyless incident route that does not slash.",
@@ -16,7 +16,7 @@
     "failed": 0
   },
   "agenthire": {
-    "base": "http://127.0.0.1:5601",
+    "base": "http://127.0.0.1:5311",
     "loopback": true,
     "pin": "ab317f2b831a9a832898b88759b496c28a435ed4",
     "mode": "mock",
@@ -31,7 +31,7 @@
     }
   },
   "signer": {
-    "payer": "0x829E6E87063E5F649CF85E26553ea6aCa37f6030",
+    "payer": "0x031afd71971C2aD47Ba99c5D5511Fa2f60068934",
     "source": "throwaway",
     "note": "throwaway in-memory wallets, no funds, keys never written"
   },
@@ -39,165 +39,165 @@
     {
       "node": "scraper.luckin-pm.fund.eth",
       "agentId": 5,
-      "micro": "39390",
+      "micro": "35310",
       "quote": {
         "agentId": 5,
-        "currentPrice": 0.03939,
-        "demand": 0.547,
+        "currentPrice": 0.03531,
+        "demand": 0.378,
         "maxPrice": 0.12,
         "minPrice": 0.03,
         "surgeActive": true,
-        "surgeMultiplier": 1.313,
-        "utilization": 0.497
+        "surgeMultiplier": 1.177,
+        "utilization": 0.328
       },
-      "at": 1790357598,
-      "baseUrl": "http://127.0.0.1:5601"
+      "at": 1790368602,
+      "baseUrl": "http://127.0.0.1:5311"
     },
     {
       "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
       "agentId": 6,
-      "micro": "3948",
+      "micro": "3543",
       "quote": {
         "agentId": 6,
-        "currentPrice": 0.003948,
-        "demand": 0.551,
+        "currentPrice": 0.003543,
+        "demand": 0.382,
         "maxPrice": 0.01,
         "minPrice": 0.003,
         "surgeActive": true,
-        "surgeMultiplier": 1.316,
-        "utilization": 0.501
+        "surgeMultiplier": 1.181,
+        "utilization": 0.332
       },
-      "at": 1790357598,
-      "baseUrl": "http://127.0.0.1:5601"
+      "at": 1790368602,
+      "baseUrl": "http://127.0.0.1:5311"
     },
     {
       "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
       "agentId": 3,
-      "micro": "64100",
+      "micro": "57350",
       "quote": {
         "agentId": 3,
-        "currentPrice": 0.0641,
-        "demand": 0.509,
+        "currentPrice": 0.05735,
+        "demand": 0.34,
         "maxPrice": 0.25,
         "minPrice": 0.05,
         "surgeActive": true,
-        "surgeMultiplier": 1.282,
-        "utilization": 0.459
+        "surgeMultiplier": 1.147,
+        "utilization": 0.29
       },
-      "at": 1790357598,
-      "baseUrl": "http://127.0.0.1:5601"
+      "at": 1790368602,
+      "baseUrl": "http://127.0.0.1:5311"
     },
     {
       "node": "spot-check.luckin-pm.fund.eth",
       "agentId": 5,
-      "micro": "39390",
+      "micro": "35310",
       "quote": {
         "agentId": 5,
-        "currentPrice": 0.03939,
-        "demand": 0.547,
+        "currentPrice": 0.03531,
+        "demand": 0.378,
         "maxPrice": 0.12,
         "minPrice": 0.03,
         "surgeActive": true,
-        "surgeMultiplier": 1.313,
-        "utilization": 0.497
+        "surgeMultiplier": 1.177,
+        "utilization": 0.328
       },
-      "at": 1790357598,
-      "baseUrl": "http://127.0.0.1:5601"
+      "at": 1790368602,
+      "baseUrl": "http://127.0.0.1:5311"
     },
     {
       "node": "second-buyer.eth",
       "agentId": 5,
-      "micro": "39390",
+      "micro": "35310",
       "quote": {
         "agentId": 5,
-        "currentPrice": 0.03939,
-        "demand": 0.547,
+        "currentPrice": 0.03531,
+        "demand": 0.378,
         "maxPrice": 0.12,
         "minPrice": 0.03,
         "surgeActive": true,
-        "surgeMultiplier": 1.313,
-        "utilization": 0.497
+        "surgeMultiplier": 1.177,
+        "utilization": 0.328
       },
-      "at": 1790357598,
-      "baseUrl": "http://127.0.0.1:5601"
+      "at": 1790368602,
+      "baseUrl": "http://127.0.0.1:5311"
     }
   ],
   "plan": {
-    "cap": "161157",
-    "main": "39390",
-    "pool": "121767",
+    "cap": "144305",
+    "main": "35310",
+    "pool": "108995",
     "subs": [
       {
         "key": "a6-via-a5",
-        "weight": "3948",
-        "budget": "7065"
+        "weight": "3543",
+        "budget": "6342"
       },
       {
         "key": "a3-via-a5",
-        "weight": "64100",
-        "budget": "114702"
+        "weight": "57350",
+        "budget": "102653"
       }
     ]
   },
   "nextPlan": {
-    "cap": "161157",
-    "main": "39390",
-    "pool": "121767",
+    "cap": "144305",
+    "main": "35310",
+    "pool": "108995",
     "subs": [
       {
         "key": "a6-via-a5",
-        "weight": "3948",
-        "budget": "7065"
+        "weight": "3543",
+        "budget": "6342"
       },
       {
         "key": "a3-via-a5",
-        "weight": "64100",
-        "budget": "114702"
+        "weight": "57350",
+        "budget": "102653"
       }
     ]
   },
   "receipts": [
     {
-      "at": 1790357598,
+      "at": 1790368602,
       "node": "scraper.luckin-pm.fund.eth",
       "merchant": "agenthire:5",
       "agentId": 5,
-      "amountMicro": "39390",
+      "amountMicro": "35310",
       "route": "x402-pay",
       "mode": "mock",
       "settled": true,
       "realTx": false,
       "simulated": true,
-      "quoteMicro": "39390",
+      "quoteMicro": "35310",
       "quoteSource": "quote-book",
       "challenge": {
         "resourceId": "agent-5-execute",
-        "amountMicro": "39390",
+        "amountMicro": "35310",
         "recipient": "0xD19990C7CB8C386fa865135Ce9706A5A37A3f2f2",
         "token": "0x9C49D730Dfb82B7663aBE6069B5bFe867fa34c9f",
         "chainId": 43113,
-        "validBefore": 1790361198
+        "validBefore": 1790372202
       },
       "permit": {
-        "from": "0x829E6E87063E5F649CF85E26553ea6aCa37f6030",
+        "from": "0x031afd71971C2aD47Ba99c5D5511Fa2f60068934",
         "to": "0xD19990C7CB8C386fa865135Ce9706A5A37A3f2f2",
-        "value": "39390",
+        "value": "35310",
         "validAfter": 0,
-        "validBefore": 1790361198,
-        "nonce": "0x505be7c83eb29a9233a45916df99d45ed6cc21e90f4a148812b9eed0d6c123be",
+        "validBefore": 1790372202,
+        "nonce": "0x52de4bd4fc340c77cc3de1d43cb847c8c2b6fe99a311b11d717817142551714c",
         "v": 27,
-        "r": "0xe5c34052154f5d05e83f4aad2afdd20a65e17977e1abe57c2395663bf22b1f39",
-        "s": "0x765b4c808ea9e302337318511dd860fa9d8f238e8c069377cb08a6ee55a49f3c",
+        "r": "0xa093d421801dc9753a6e195c2842a91d629a7ebcff6bb75e34fcc3948596e1be",
+        "s": "0x40c22a757cc1b057f9948e2293e90ebd66efca67d52b72c703ebbdef73ba12ff",
         "agentId": 5,
-        "tokenBudget": "39390",
+        "tokenBudget": "35310",
         "categoryId": 0
       },
-      "sessionId": "503243ae",
+      "sessionId": "451d8070",
       "note": "AgentHire mock mode: Order recorded in its DB, no on-chain transfer",
-      "reference": "agenthire-x402-mock:503243ae"
+      "reference": "agenthire-x402-mock:451d8070"
     },
     {
-      "at": 1790357598,
+      "at": 1790368602,
       "node": "spot-check.luckin-pm.fund.eth",
       "merchant": "agenthire:5",
       "agentId": 5,
@@ -207,35 +207,35 @@
       "settled": false,
       "realTx": false,
       "simulated": true,
-      "reason": "settlement: amount 1 != AgentHire quote 39390 micro-USDC for agent 5"
+      "reason": "settlement: amount 1 != AgentHire quote 35310 micro-USDC for agent 5"
     },
     {
-      "at": 1790357598,
+      "at": 1790368602,
       "node": "spot-check.luckin-pm.fund.eth",
       "merchant": "agenthire:5",
       "agentId": 5,
-      "amountMicro": "39390",
+      "amountMicro": "35310",
       "route": "none",
       "mode": "mock",
       "settled": false,
       "realTx": false,
       "simulated": true,
-      "quoteMicro": "39390",
+      "quoteMicro": "35310",
       "quoteSource": "quote-book",
-      "reason": "settlement: challenge rejected: validBefore 1790361198 outlives the mandate (expiry 1790358198)"
+      "reason": "settlement: challenge rejected: validBefore 1790372202 outlives the mandate (expiry 1790369202)"
     },
     {
-      "at": 1790357598,
+      "at": 1790368602,
       "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
       "merchant": "agenthire:6",
       "agentId": 6,
-      "amountMicro": "3948",
+      "amountMicro": "3543",
       "route": "trigger-direct",
       "mode": "a2a",
       "settled": true,
       "realTx": false,
       "simulated": true,
-      "quoteMicro": "3948",
+      "quoteMicro": "3543",
       "quoteSource": "quote-book",
       "a2a": {
         "fromId": 5,
@@ -251,17 +251,17 @@
       "reference": "agenthire-a2a-sim:4"
     },
     {
-      "at": 1790357598,
+      "at": 1790368602,
       "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
       "merchant": "agenthire:3",
       "agentId": 3,
-      "amountMicro": "64100",
+      "amountMicro": "57350",
       "route": "trigger-direct",
       "mode": "a2a",
       "settled": true,
       "realTx": false,
       "simulated": true,
-      "quoteMicro": "64100",
+      "quoteMicro": "57350",
       "quoteSource": "quote-book",
       "a2a": {
         "fromId": 5,
@@ -283,7 +283,7 @@
       "seq": 5,
       "node": "scraper.luckin-pm.fund.eth",
       "merchant": "agenthire:5",
-      "amount": "39390",
+      "amount": "35310",
       "purpose": "baidu-maps-store-count",
       "outcome": "SETTLED",
       "screening": {
@@ -296,11 +296,11 @@
         "swapped": false,
         "fromToken": "USDC",
         "toToken": "USDC",
-        "amountIn": "39390",
-        "amountOut": "39390",
-        "reference": "agenthire-x402-mock:503243ae"
+        "amountIn": "35310",
+        "amountOut": "35310",
+        "reference": "agenthire-x402-mock:451d8070"
       },
-      "at": 1790357598
+      "at": 1790368602
     },
     "typed": {
       "seq": 7,
@@ -308,7 +308,7 @@
       "merchant": "agenthire:5",
       "amount": "1",
       "outcome": "BLOCKED_MANDATE",
-      "reason": "settlement: amount 1 != AgentHire quote 39390 micro-USDC for agent 5",
+      "reason": "settlement: amount 1 != AgentHire quote 35310 micro-USDC for agent 5",
       "screening": {
         "approved": true,
         "reason": "cleared: tier 1, score 510, 0 AgentHire incident(s), operator 0x1ce3b4044124714daa6a68b95441963679eea6ec has 0 Allowance incident(s) (AgentHire reputation is its simulated DB mirror)",
@@ -321,17 +321,17 @@
         "toToken": "USDC",
         "amountIn": "0",
         "amountOut": "0",
-        "reason": "settlement: amount 1 != AgentHire quote 39390 micro-USDC for agent 5"
+        "reason": "settlement: amount 1 != AgentHire quote 35310 micro-USDC for agent 5"
       },
-      "at": 1790357598
+      "at": 1790368602
     },
     "early": {
       "seq": 8,
       "node": "spot-check.luckin-pm.fund.eth",
       "merchant": "agenthire:5",
-      "amount": "39390",
+      "amount": "35310",
       "outcome": "BLOCKED_MANDATE",
-      "reason": "settlement: challenge rejected: validBefore 1790361198 outlives the mandate (expiry 1790358198)",
+      "reason": "settlement: challenge rejected: validBefore 1790372202 outlives the mandate (expiry 1790369202)",
       "screening": {
         "approved": true,
         "reason": "cleared: tier 1, score 510, 0 AgentHire incident(s), operator 0x1ce3b4044124714daa6a68b95441963679eea6ec has 0 Allowance incident(s) (AgentHire reputation is its simulated DB mirror)",
@@ -344,15 +344,15 @@
         "toToken": "USDC",
         "amountIn": "0",
         "amountOut": "0",
-        "reason": "settlement: challenge rejected: validBefore 1790361198 outlives the mandate (expiry 1790358198)"
+        "reason": "settlement: challenge rejected: validBefore 1790372202 outlives the mandate (expiry 1790369202)"
       },
-      "at": 1790357598
+      "at": 1790368602
     },
     "sub": {
       "seq": 9,
       "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
       "merchant": "agenthire:6",
-      "amount": "3948",
+      "amount": "3543",
       "purpose": "city-name-reconciliation",
       "outcome": "SETTLED",
       "screening": {
@@ -365,18 +365,18 @@
         "swapped": false,
         "fromToken": "USDC",
         "toToken": "USDC",
-        "amountIn": "3948",
-        "amountOut": "3948",
+        "amountIn": "3543",
+        "amountOut": "3543",
         "reference": "agenthire-a2a-sim:4"
       },
-      "at": 1790357598
+      "at": 1790368602
     },
     "concurrent": [
       {
         "seq": 10,
         "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
         "merchant": "agenthire:3",
-        "amount": "64100",
+        "amount": "57350",
         "purpose": "dedupe-and-count",
         "outcome": "SETTLED",
         "screening": {
@@ -389,21 +389,21 @@
           "swapped": false,
           "fromToken": "USDC",
           "toToken": "USDC",
-          "amountIn": "64100",
-          "amountOut": "64100",
+          "amountIn": "57350",
+          "amountOut": "57350",
           "reference": "agenthire-a2a-sim:7"
         },
-        "at": 1790357598
+        "at": 1790368602
       },
       {
         "seq": 11,
         "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
         "merchant": "agenthire:3",
-        "amount": "64100",
+        "amount": "57350",
         "purpose": "dedupe-and-count",
         "outcome": "BLOCKED_MANDATE",
-        "reason": "amount 64100 exceeds available 50602",
-        "at": 1790357598
+        "reason": "amount 57350 exceeds available 45303",
+        "at": 1790368602
       }
     ],
     "overspend": [
@@ -411,26 +411,26 @@
         "seq": 12,
         "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
         "merchant": "agenthire:6",
-        "amount": "39480",
+        "amount": "35430",
         "outcome": "BLOCKED_MANDATE",
-        "reason": "amount 39480 exceeds available 3117",
-        "at": 1790357598
+        "reason": "amount 35430 exceeds available 2799",
+        "at": 1790368602
       },
       {
         "seq": 13,
         "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
         "merchant": "agenthire:6",
-        "amount": "39480",
+        "amount": "35430",
         "outcome": "BLOCKED_MANDATE",
-        "reason": "amount 39480 exceeds available 3117",
-        "at": 1790357598
+        "reason": "amount 35430 exceeds available 2799",
+        "at": 1790368602
       }
     ],
     "secondBuyer": {
       "seq": 1,
       "node": "second-buyer.eth",
       "merchant": "agenthire:5",
-      "amount": "39390",
+      "amount": "35310",
       "outcome": "BLOCKED_SCREENING",
       "reason": "screening: operator 0x1ce3b4044124714daa6a68b95441963679eea6ec (World ID nullifier 0xe8fbd9cf…) has 1 Allowance incident(s) (agent 5) > 0 allowed",
       "screening": {
@@ -438,35 +438,35 @@
         "reason": "screening: operator 0x1ce3b4044124714daa6a68b95441963679eea6ec (World ID nullifier 0xe8fbd9cf…) has 1 Allowance incident(s) (agent 5) > 0 allowed",
         "reference": "agenthire-screen:5"
       },
-      "at": 1790357598
+      "at": 1790368602
     },
     "afterClose": [
       {
         "seq": 24,
         "node": "scraper.luckin-pm.fund.eth",
         "merchant": "agenthire:5",
-        "amount": "39390",
+        "amount": "35310",
         "outcome": "REVOKED",
         "reason": "node or an ancestor is revoked",
-        "at": 1790357598
+        "at": 1790368602
       },
       {
         "seq": 25,
         "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
         "merchant": "agenthire:6",
-        "amount": "3948",
+        "amount": "3543",
         "outcome": "REVOKED",
         "reason": "node or an ancestor is revoked",
-        "at": 1790357598
+        "at": 1790368602
       },
       {
         "seq": 26,
         "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
         "merchant": "agenthire:3",
-        "amount": "64100",
+        "amount": "57350",
         "outcome": "REVOKED",
         "reason": "node or an ancestor is revoked",
-        "at": 1790357598
+        "at": 1790368602
       }
     ]
   },
@@ -481,8 +481,8 @@
       "operator": "0xe8fbd9cfidkitmocknullifier00000000000000000000000000000000000000",
       "deployerWallet": "0x1ce3b4044124714daa6a68b95441963679eea6ec",
       "kind": "mandate_overspend",
-      "reason": "2 attempts to spend past its mandate; last: amount 39480 exceeds available 3117",
-      "at": 1790357598,
+      "reason": "2 attempts to spend past its mandate; last: amount 35430 exceeds available 2799",
+      "at": 1790368602,
       "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
       "attempts": 2,
       "note": "scripted by the Allowance demo acting for agent 5 (AgentHire's WebCrawler X did not make these attempts itself)",
@@ -532,7 +532,7 @@
     "before": {
       "reputation": {
         "incidentCount": 0,
-        "lastDecayTs": 1789979382,
+        "lastDecayTs": 1789990386,
         "projectedScore": 510,
         "score": 510,
         "simulated": true,
@@ -554,7 +554,7 @@
     "after": {
       "reputation": {
         "incidentCount": 0,
-        "lastDecayTs": 1789979382,
+        "lastDecayTs": 1789990386,
         "projectedScore": 510,
         "score": 510,
         "simulated": true,
@@ -585,6 +585,15 @@
       "ddRecover": 0.05,
       "ddStop": 0.2
     },
+    "rungs": "fixed per-mandate stop-loss",
+    "centerBookScaled": {
+      "ddCut": 0.2,
+      "ddStop": 0.4,
+      "vol": 0.27741735345668106,
+      "scale": 2,
+      "ddStopMax": 0.4,
+      "finalState": "cut"
+    },
     "transitions": [
       {
         "day": 49,
@@ -600,22 +609,22 @@
         "from": "cut",
         "to": "stopped",
         "drawdown": 0.24724278490905538,
-        "pmBudget": "107438"
+        "pmBudget": "96203"
       }
     ],
-    "freed": "124999892562",
+    "freed": "124999903797",
     "rootBefore": "875000000000",
-    "rootAfter": "999999892562",
-    "dataUnspentBefore": "214876",
+    "rootAfter": "999999903797",
+    "dataUnspentBefore": "192407",
     "dataUnspentAfter": "0"
   },
   "audit": {
-    "headline": "5 of 15 sub-agent payments would have been blocked even under AgentHire's own displayed Hard Spend Cap (72.462100 of 233.534300 USDC unbudgeted). All 15 (233.534300 USDC) were outside what the buyer authorized for the primary job, by definition: AgentHire pays sub-agents on top of the primary's price, from the primary agent's wallet. Sub-agent spend = 0.84x the 277.888000 USDC priced for 8 simulated primary jobs (8 of them AgentHire's force-all demo cascade with no paying buyer) [simulated AgentHire marketplace; assumption: buyer cap = AgentHire checkout's own displayed 'Hard Spend Cap' (badged 'Enforced'): 1.25 x (tokens x quote maxPrice + sum of sub-agent est_cost_high); the primary is paid its price first and every sub-agent fee must fit in what is left]",
+    "headline": "3 of 13 sub-agent payments would have been blocked even under AgentHire's own displayed Hard Spend Cap (90.900000 of 239.616200 USDC unbudgeted). All 13 (239.616200 USDC) were outside what the buyer authorized for the primary job, by definition: AgentHire pays sub-agents on top of the primary's price, from the primary agent's wallet. Sub-agent spend = 1x the 238.702000 USDC priced for 8 simulated primary jobs (8 of them AgentHire's force-all demo cascade with no paying buyer) [simulated AgentHire marketplace; assumption: buyer cap = AgentHire checkout's own displayed 'Hard Spend Cap' (badged 'Enforced'): 1.25 x (tokens x quote maxPrice + sum of sub-agent est_cost_high); the primary is paid its price first and every sub-agent fee must fit in what is left]",
     "missed": 0,
     "polls": 21,
     "report": {
       "simulated": true,
-      "source": "http://127.0.0.1:5601 /api/sim/events: retained buffer + 20s live polling (simulated marketplace)",
+      "source": "http://127.0.0.1:5311 /api/sim/events: retained buffer + 20s live polling (simulated marketplace)",
       "headlineScenario": "hardSpendCap",
       "assumption": "buyer cap = AgentHire checkout's own displayed 'Hard Spend Cap' (badged 'Enforced'): 1.25 x (tokens x quote maxPrice + sum of sub-agent est_cost_high); the primary is paid its price first and every sub-agent fee must fit in what is left",
       "sizing": "first-come, nothing held back: each sub-agent alias (one per hiring parent) is granted min(amount, what is left under the cap) just before its payment and shrunk back if blocked, so a payment is blocked only when it exceeds everything left under the buyer's cap",
@@ -623,48 +632,27 @@
       "primaries": 8,
       "demoPrimaries": 8,
       "droppedDemoPrimaries": 0,
-      "primaryMicro": "277888000",
-      "primaryUSDC": "277.888000",
-      "subPayments": 15,
-      "blocked": 5,
-      "blockedMicro": "72462100",
-      "blockedUSDC": "72.462100",
+      "primaryMicro": "238702000",
+      "primaryUSDC": "238.702000",
+      "subPayments": 13,
+      "blocked": 3,
+      "blockedMicro": "90900000",
+      "blockedUSDC": "90.900000",
       "outsideAuthorization": {
-        "payments": 15,
-        "micro": "233534300",
-        "usdc": "233.534300",
+        "payments": 13,
+        "micro": "239616200",
+        "usdc": "239.616200",
         "definition": "buyer cap = the primary's price, paid to the primary in full first, so nothing is left: every sub-agent fee is outside the buyer's authorization BY DEFINITION (a total, not a replay finding)"
       },
-      "totalSubMicro": "233534300",
-      "totalSubUSDC": "233.534300",
+      "totalSubMicro": "239616200",
+      "totalSubUSDC": "239.616200",
       "notes": [
         "All input is AgentHire's SIMULATED marketplace (sim_engine.py); nothing was settled or moved.",
         "8 of 8 audited primary jobs are AgentHire's force-all demo cascade (every sub-agent trigger fires, synthetic buyer, the primary's price is a log line nobody paid)",
         "AgentHire books every A2A fee as paid from the PRIMARY agent's wallet (sim_engine.py:842), on top of the primary's price."
       ],
-      "ratioSubToPrimary": 0.84,
+      "ratioSubToPrimary": 1,
       "byAgent": [
-        {
-          "agentId": 6,
-          "name": "ResearchBot Pro",
-          "parents": [
-            4
-          ],
-          "aliases": [
-            "a6-via-a4"
-          ],
-          "payments": 2,
-          "usdcMicro": "118866000",
-          "usdc": "118.866000",
-          "blocked": 0,
-          "blockedMicro": "0",
-          "blockedUSDC": "0.000000",
-          "blockedBy": {
-            "strict": 2,
-            "primaryFundsSubs": 0,
-            "hardSpendCap": 0
-          }
-        },
         {
           "agentId": 7,
           "name": "SecureAudit AI",
@@ -674,15 +662,15 @@
           "aliases": [
             "a7-via-a1"
           ],
-          "payments": 5,
-          "usdcMicro": "78481600",
-          "usdc": "78.481600",
+          "payments": 3,
+          "usdcMicro": "114825400",
+          "usdc": "114.825400",
           "blocked": 2,
-          "blockedMicro": "58534700",
-          "blockedUSDC": "58.534700",
+          "blockedMicro": "79051900",
+          "blockedUSDC": "79.051900",
           "blockedBy": {
-            "strict": 5,
-            "primaryFundsSubs": 5,
+            "strict": 3,
+            "primaryFundsSubs": 3,
             "hardSpendCap": 2
           }
         },
@@ -695,16 +683,37 @@
           "aliases": [
             "a10-via-a1"
           ],
-          "payments": 5,
-          "usdcMicro": "31988800",
-          "usdc": "31.988800",
-          "blocked": 3,
-          "blockedMicro": "13927400",
-          "blockedUSDC": "13.927400",
+          "payments": 3,
+          "usdcMicro": "44447400",
+          "usdc": "44.447400",
+          "blocked": 1,
+          "blockedMicro": "11848100",
+          "blockedUSDC": "11.848100",
           "blockedBy": {
-            "strict": 5,
-            "primaryFundsSubs": 5,
-            "hardSpendCap": 3
+            "strict": 3,
+            "primaryFundsSubs": 3,
+            "hardSpendCap": 1
+          }
+        },
+        {
+          "agentId": 6,
+          "name": "ResearchBot Pro",
+          "parents": [
+            4
+          ],
+          "aliases": [
+            "a6-via-a4"
+          ],
+          "payments": 2,
+          "usdcMicro": "40261700",
+          "usdc": "40.261700",
+          "blocked": 0,
+          "blockedMicro": "0",
+          "blockedUSDC": "0.000000",
+          "blockedBy": {
+            "strict": 2,
+            "primaryFundsSubs": 0,
+            "hardSpendCap": 0
           }
         },
         {
@@ -716,14 +725,14 @@
           "aliases": [
             "a1-via-a7"
           ],
-          "payments": 1,
-          "usdcMicro": "3225500",
-          "usdc": "3.225500",
+          "payments": 3,
+          "usdcMicro": "39011900",
+          "usdc": "39.011900",
           "blocked": 0,
           "blockedMicro": "0",
           "blockedUSDC": "0.000000",
           "blockedBy": {
-            "strict": 1,
+            "strict": 3,
             "primaryFundsSubs": 1,
             "hardSpendCap": 0
           }
@@ -738,8 +747,8 @@
             "a11-via-a4"
           ],
           "payments": 2,
-          "usdcMicro": "972400",
-          "usdc": "0.972400",
+          "usdcMicro": "1069800",
+          "usdc": "1.069800",
           "blocked": 0,
           "blockedMicro": "0",
           "blockedUSDC": "0.000000",
@@ -754,31 +763,31 @@
         {
           "agentId": 1,
           "name": "CodeReview Pro",
-          "jobs": 5,
-          "priceMicro": "17708000",
-          "priceUSDC": "17.708000",
-          "subMicro": "110470400",
-          "subUSDC": "110.470400",
-          "ratio": 6.23,
-          "subPayments": 10,
+          "jobs": 3,
+          "priceMicro": "23292000",
+          "priceUSDC": "23.292000",
+          "subMicro": "159272800",
+          "subUSDC": "159.272800",
+          "ratio": 6.83,
+          "subPayments": 6,
           "blockedBy": {
-            "strict": 10,
-            "primaryFundsSubs": 10,
-            "hardSpendCap": 5
+            "strict": 6,
+            "primaryFundsSubs": 6,
+            "hardSpendCap": 3
           }
         },
         {
           "agentId": 7,
           "name": "SecureAudit AI",
-          "jobs": 1,
-          "priceMicro": "2180000",
-          "priceUSDC": "2.180000",
-          "subMicro": "3225500",
-          "subUSDC": "3.225500",
-          "ratio": 1.47,
-          "subPayments": 1,
+          "jobs": 3,
+          "priceMicro": "36310000",
+          "priceUSDC": "36.310000",
+          "subMicro": "39011900",
+          "subUSDC": "39.011900",
+          "ratio": 1.07,
+          "subPayments": 3,
           "blockedBy": {
-            "strict": 1,
+            "strict": 3,
             "primaryFundsSubs": 1,
             "hardSpendCap": 0
           }
@@ -787,11 +796,11 @@
           "agentId": 4,
           "name": "AlphaTrader AI",
           "jobs": 2,
-          "priceMicro": "258000000",
-          "priceUSDC": "258.000000",
-          "subMicro": "119838400",
-          "subUSDC": "119.838400",
-          "ratio": 0.46,
+          "priceMicro": "179100000",
+          "priceUSDC": "179.100000",
+          "subMicro": "41331500",
+          "subUSDC": "41.331500",
+          "ratio": 0.23,
           "subPayments": 4,
           "blockedBy": {
             "strict": 4,
@@ -804,37 +813,37 @@
         {
           "hirerId": 1,
           "subAgentId": 7,
-          "payments": 5,
-          "usdcMicro": "78481600",
-          "usdc": "78.481600"
+          "payments": 3,
+          "usdcMicro": "114825400",
+          "usdc": "114.825400"
         },
         {
           "hirerId": 1,
           "subAgentId": 10,
-          "payments": 5,
-          "usdcMicro": "31988800",
-          "usdc": "31.988800"
+          "payments": 3,
+          "usdcMicro": "44447400",
+          "usdc": "44.447400"
         },
         {
           "hirerId": 4,
           "subAgentId": 6,
           "payments": 2,
-          "usdcMicro": "118866000",
-          "usdc": "118.866000"
+          "usdcMicro": "40261700",
+          "usdc": "40.261700"
         },
         {
           "hirerId": 4,
           "subAgentId": 11,
           "payments": 2,
-          "usdcMicro": "972400",
-          "usdc": "0.972400"
+          "usdcMicro": "1069800",
+          "usdc": "1.069800"
         },
         {
           "hirerId": 7,
           "subAgentId": 1,
-          "payments": 1,
-          "usdcMicro": "3225500",
-          "usdc": "3.225500"
+          "payments": 3,
+          "usdcMicro": "39011900",
+          "usdc": "39.011900"
         }
       ],
       "cycles": [
@@ -848,76 +857,57 @@
         {
           "scenario": "hardSpendCap",
           "assumption": "buyer cap = AgentHire checkout's own displayed 'Hard Spend Cap' (badged 'Enforced'): 1.25 x (tokens x quote maxPrice + sum of sub-agent est_cost_high); the primary is paid its price first and every sub-agent fee must fit in what is left",
-          "subPayments": 15,
-          "blocked": 5,
-          "blockedMicro": "72462100",
-          "blockedUSDC": "72.462100",
-          "jobsWithBlocks": 5
+          "subPayments": 13,
+          "blocked": 3,
+          "blockedMicro": "90900000",
+          "blockedUSDC": "90.900000",
+          "jobsWithBlocks": 3
         },
         {
           "scenario": "primaryFundsSubs",
           "assumption": "buyer cap = the primary's price, sub-agents paid out of it first and the primary keeps the rest (AgentHire's own claim that the primary 'eats' sub-agent fees out of its settle)",
-          "subPayments": 15,
-          "blocked": 11,
-          "blockedMicro": "113695900",
-          "blockedUSDC": "113.695900",
-          "jobsWithBlocks": 6
+          "subPayments": 13,
+          "blocked": 7,
+          "blockedMicro": "188034000",
+          "blockedUSDC": "188.034000",
+          "jobsWithBlocks": 4
         },
         {
           "scenario": "strict",
           "assumption": "buyer cap = the primary's price, paid to the primary in full first, so nothing is left: every sub-agent fee is outside the buyer's authorization BY DEFINITION (a total, not a replay finding)",
-          "subPayments": 15,
-          "blocked": 15,
-          "blockedMicro": "233534300",
-          "blockedUSDC": "233.534300",
+          "subPayments": 13,
+          "blocked": 13,
+          "blockedMicro": "239616200",
+          "blockedUSDC": "239.616200",
           "jobsWithBlocks": 8
         }
       ],
       "excluded": {
         "directHires": 2,
-        "directMicro": "68000",
+        "directMicro": "60800",
         "orphanHires": 0,
         "orphanMicro": "0",
-        "soloJobs": 21
+        "soloJobs": 22
       },
       "window": {
-        "events": 145,
+        "events": 121,
         "firstEventId": 1,
-        "lastEventId": 145,
-        "fromTs": 1790357650,
-        "toTs": 1790367151
+        "lastEventId": 121,
+        "fromTs": 1790368654,
+        "toTs": 1790378272
       },
       "jobs": [
         {
-          "key": "job12",
-          "primaryId": 4,
-          "primaryName": "AlphaTrader AI",
-          "demo": true,
-          "priceUSDC": "168.400000",
-          "subUSDC": "78.378000",
-          "caps": {
-            "hardSpendCap": "1052.912500",
-            "primaryFundsSubs": "168.400000",
-            "strict": "168.400000"
-          },
-          "blocked": {
-            "hardSpendCap": 0,
-            "primaryFundsSubs": 0,
-            "strict": 2
-          },
-          "hires": 2
-        },
-        {
-          "key": "job33",
+          "key": "job18",
           "primaryId": 1,
           "primaryName": "CodeReview Pro",
           "demo": true,
-          "priceUSDC": "3.788000",
-          "subUSDC": "24.688000",
+          "priceUSDC": "3.546000",
+          "subUSDC": "27.678400",
           "caps": {
-            "hardSpendCap": "18.962500",
-            "primaryFundsSubs": "3.788000",
-            "strict": "3.788000"
+            "hardSpendCap": "17.752500",
+            "primaryFundsSubs": "3.546000",
+            "strict": "3.546000"
           },
           "blocked": {
             "hardSpendCap": 1,
@@ -927,54 +917,16 @@
           "hires": 2
         },
         {
-          "key": "job53",
-          "primaryId": 1,
-          "primaryName": "CodeReview Pro",
-          "demo": true,
-          "priceUSDC": "8.014000",
-          "subUSDC": "51.908100",
-          "caps": {
-            "hardSpendCap": "40.092500",
-            "primaryFundsSubs": "8.014000",
-            "strict": "8.014000"
-          },
-          "blocked": {
-            "hardSpendCap": 1,
-            "primaryFundsSubs": 2,
-            "strict": 2
-          },
-          "hires": 2
-        },
-        {
-          "key": "job75",
-          "primaryId": 4,
-          "primaryName": "AlphaTrader AI",
-          "demo": true,
-          "priceUSDC": "89.600000",
-          "subUSDC": "41.460400",
-          "caps": {
-            "hardSpendCap": "560.412500",
-            "primaryFundsSubs": "89.600000",
-            "strict": "89.600000"
-          },
-          "blocked": {
-            "hardSpendCap": 0,
-            "primaryFundsSubs": 0,
-            "strict": 2
-          },
-          "hires": 2
-        },
-        {
-          "key": "job85",
+          "key": "job28",
           "primaryId": 7,
           "primaryName": "SecureAudit AI",
           "demo": true,
-          "priceUSDC": "2.180000",
-          "subUSDC": "3.225500",
+          "priceUSDC": "24.625000",
+          "subUSDC": "28.761200",
           "caps": {
-            "hardSpendCap": "10.912500",
-            "primaryFundsSubs": "2.180000",
-            "strict": "2.180000"
+            "hardSpendCap": "123.137500",
+            "primaryFundsSubs": "24.625000",
+            "strict": "24.625000"
           },
           "blocked": {
             "hardSpendCap": 0,
@@ -984,61 +936,118 @@
           "hires": 1
         },
         {
+          "key": "job40",
+          "primaryId": 7,
+          "primaryName": "SecureAudit AI",
+          "demo": true,
+          "priceUSDC": "2.190000",
+          "subUSDC": "2.069300",
+          "caps": {
+            "hardSpendCap": "10.962500",
+            "primaryFundsSubs": "2.190000",
+            "strict": "2.190000"
+          },
+          "blocked": {
+            "hardSpendCap": 0,
+            "primaryFundsSubs": 0,
+            "strict": 1
+          },
+          "hires": 1
+        },
+        {
+          "key": "job58",
+          "primaryId": 4,
+          "primaryName": "AlphaTrader AI",
+          "demo": true,
+          "priceUSDC": "94.900000",
+          "subUSDC": "23.947300",
+          "caps": {
+            "hardSpendCap": "593.537500",
+            "primaryFundsSubs": "94.900000",
+            "strict": "94.900000"
+          },
+          "blocked": {
+            "hardSpendCap": 0,
+            "primaryFundsSubs": 0,
+            "strict": 2
+          },
+          "hires": 2
+        },
+        {
+          "key": "job66",
+          "primaryId": 1,
+          "primaryName": "CodeReview Pro",
+          "demo": true,
+          "priceUSDC": "9.862000",
+          "subUSDC": "47.621600",
+          "caps": {
+            "hardSpendCap": "49.332500",
+            "primaryFundsSubs": "9.862000",
+            "strict": "9.862000"
+          },
+          "blocked": {
+            "hardSpendCap": 1,
+            "primaryFundsSubs": 2,
+            "strict": 2
+          },
+          "hires": 2
+        },
+        {
+          "key": "job82",
+          "primaryId": 1,
+          "primaryName": "CodeReview Pro",
+          "demo": true,
+          "priceUSDC": "9.884000",
+          "subUSDC": "83.972800",
+          "caps": {
+            "hardSpendCap": "49.442500",
+            "primaryFundsSubs": "9.884000",
+            "strict": "9.884000"
+          },
+          "blocked": {
+            "hardSpendCap": 1,
+            "primaryFundsSubs": 2,
+            "strict": 2
+          },
+          "hires": 2
+        },
+        {
           "key": "job103",
-          "primaryId": 1,
-          "primaryName": "CodeReview Pro",
+          "primaryId": 4,
+          "primaryName": "AlphaTrader AI",
           "demo": true,
-          "priceUSDC": "1.712000",
-          "subUSDC": "10.952800",
+          "priceUSDC": "84.200000",
+          "subUSDC": "17.384200",
           "caps": {
-            "hardSpendCap": "8.582500",
-            "primaryFundsSubs": "1.712000",
-            "strict": "1.712000"
+            "hardSpendCap": "526.662500",
+            "primaryFundsSubs": "84.200000",
+            "strict": "84.200000"
           },
           "blocked": {
-            "hardSpendCap": 1,
-            "primaryFundsSubs": 2,
+            "hardSpendCap": 0,
+            "primaryFundsSubs": 0,
             "strict": 2
           },
           "hires": 2
         },
         {
-          "key": "job130",
-          "primaryId": 1,
-          "primaryName": "CodeReview Pro",
+          "key": "job118",
+          "primaryId": 7,
+          "primaryName": "SecureAudit AI",
           "demo": true,
-          "priceUSDC": "3.310000",
-          "subUSDC": "18.408000",
+          "priceUSDC": "9.495000",
+          "subUSDC": "8.181400",
           "caps": {
-            "hardSpendCap": "16.572500",
-            "primaryFundsSubs": "3.310000",
-            "strict": "3.310000"
+            "hardSpendCap": "47.487500",
+            "primaryFundsSubs": "9.495000",
+            "strict": "9.495000"
           },
           "blocked": {
-            "hardSpendCap": 1,
-            "primaryFundsSubs": 2,
-            "strict": 2
+            "hardSpendCap": 0,
+            "primaryFundsSubs": 0,
+            "strict": 1
           },
-          "hires": 2
-        },
-        {
-          "key": "job141",
-          "primaryId": 1,
-          "primaryName": "CodeReview Pro",
-          "demo": true,
-          "priceUSDC": "0.884000",
-          "subUSDC": "4.513500",
-          "caps": {
-            "hardSpendCap": "4.442500",
-            "primaryFundsSubs": "0.884000",
-            "strict": "0.884000"
-          },
-          "blocked": {
-            "hardSpendCap": 1,
-            "primaryFundsSubs": 2,
-            "strict": 2
-          },
-          "hires": 2
+          "hires": 1
         }
       ]
     }

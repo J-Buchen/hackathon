@@ -72,6 +72,12 @@ export interface CenterBookPolicy {
    * 0 = the fixed-percentage ladder.
    */
   ddStopVol: number;
+  /**
+   * Ceiling on the risk-scaled stop (a drawdown, < 1). However volatile the
+   * record, the stop never sits above this, so every agent can still be stopped
+   * out; the cut and recover rungs are capped in proportion.
+   */
+  ddStopMax: number;
   /** Cosine similarity at which two agents' books count as the same trade. */
   crowdSimilarity: number;
   /** Max combined exposure of one crowd to one instrument, as a share of NAV. */
@@ -111,6 +117,8 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
     // A skilled agent (Sharpe S) sits in a drawdown ≥ kσ about e^(−2Sk) of the
     // time; at k = 1.5 that is ~5% for S = 1, so revocation needs real evidence.
     ddStopVol: 1.5,
+    // At most twice the room of the agent's own 20% stop-loss.
+    ddStopMax: 0.4,
     crowdSimilarity: 0.8,
     crowdMaxShare: 0.1,
     bookMaxShare: 0.2,
@@ -249,6 +257,8 @@ export interface LadderThresholds {
   ddStopVol?: number;
   /** Trailing ticks the risk measure is taken over (default: the whole record). */
   volWindow?: number;
+  /** Ceiling on the scaled stop, < 1 (default 2 × ddStop, capped below 1). */
+  ddStopMax?: number;
 }
 
 /** The rungs actually in force for one record, after risk scaling. */
@@ -262,15 +272,23 @@ export interface ScaledLadder {
   scale: number;
 }
 
+/** Default ceiling on the widening when `ddStopMax` is not given. */
+export const DEFAULT_MAX_WIDENING = 2;
+
 /**
  * Widen the configured rungs to the risk this record runs: every rung is
- * multiplied by max(1, ddStopVol × σ / ddStop), σ measured up to the last
- * high-water mark so the losses being judged cannot loosen their own limit.
- * Never tighter than the configured percentages.
+ * multiplied by ddStopVol × σ / ddStop, clamped to [1, ddStopMax / ddStop].
+ * σ is measured up to the last high-water mark, so the losses being judged
+ * cannot loosen their own limit. Never tighter than the configured
+ * percentages, never looser than `ddStopMax`: every agent can still be
+ * stopped out, however volatile (or however short) its record.
  */
 export function scaleLadder(unitReturns: readonly number[], t: LadderThresholds): ScaledLadder {
+  const ceiling = t.ddStopMax ?? Math.min(DEFAULT_MAX_WIDENING * t.ddStop, 0.95);
+  if (!(ceiling < 1)) throw new RangeError(`ddStopMax must be below 100% (got ${ceiling}): a stop at or above it can never fire`);
   const vol = t.ddStopVol ? volAtHighWater(unitReturns, t.volWindow ?? unitReturns.length) : 0;
-  const scale = t.ddStopVol && t.ddStop > 0 ? Math.max(1, (t.ddStopVol * vol) / t.ddStop) : 1;
+  const scale =
+    t.ddStopVol && t.ddStop > 0 ? Math.min(Math.max(1, (t.ddStopVol * vol) / t.ddStop), Math.max(1, ceiling / t.ddStop)) : 1;
   return {
     ddStop: t.ddStop * scale,
     ddCut: t.ddCut === undefined ? undefined : t.ddCut * scale,
@@ -280,20 +298,35 @@ export function scaleLadder(unitReturns: readonly number[], t: LadderThresholds)
   };
 }
 
+/**
+ * One ladder step from the agent's own attributable track record: the next
+ * state and the rungs (after risk scaling) it was judged against.
+ */
+export function ladderStep(
+  state: LadderState,
+  unitReturns: readonly number[],
+  thresholds: LadderThresholds,
+): { next: LadderState; rungs: ScaledLadder } {
+  const rungs = scaleLadder(unitReturns, thresholds);
+  const next = ((): LadderState => {
+    if (state === "stopped") return "stopped"; // revocation is final
+    const dd = currentDrawdown(unitReturns);
+    if (dd >= rungs.ddStop) return "stopped";
+    if (rungs.ddCut === undefined) return "active";
+    if (state === "active" && dd >= rungs.ddCut) return "cut";
+    if (state === "cut" && dd <= (rungs.ddRecover ?? 0)) return "active";
+    return state;
+  })();
+  return { next, rungs };
+}
+
 /** Next ladder state from the agent's own attributable track record. */
 export function nextLadderState(
   state: LadderState,
   unitReturns: readonly number[],
   thresholds: LadderThresholds,
 ): LadderState {
-  if (state === "stopped") return "stopped"; // revocation is final
-  const t = scaleLadder(unitReturns, thresholds);
-  const dd = currentDrawdown(unitReturns);
-  if (dd >= t.ddStop) return "stopped";
-  if (t.ddCut === undefined) return "active";
-  if (state === "active" && dd >= t.ddCut) return "cut";
-  if (state === "cut" && dd <= (t.ddRecover ?? 0)) return "active";
-  return state;
+  return ladderStep(state, unitReturns, thresholds).next;
 }
 
 /* ------------------------------------------------------------------ */

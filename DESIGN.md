@@ -540,7 +540,8 @@ and `expiry = asOf + 30 days`.
 
 **Post-run derived balances (verify against these):**
 `alice.eth` available = **65 USDC** (100 − 30 − 5). `researcher.alice.eth`
-available = **12 USDC** (30 − 10 reserved − 8 spent). 10 events total.
+available = **12 USDC** (30 − 10 reserved − 8 spent). 11 events total (FUND, three DELEGATEs, the
+ATTENUATION_REJECTED delegation, five PAYMENTs and the REVOKE).
 
 ---
 

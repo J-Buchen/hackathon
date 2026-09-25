@@ -27,7 +27,8 @@
  *   6. a second buyer, with its own services and a ledger loaded from disk, is
  *      turned away by screening;
  *   7. operators: agents are bound to their deployer + a World ID (mock) nullifier;
- *   8. the PM funds the next scrape, then the allocator's drawdown ladder stops
+ *   8. the PM funds the next scrape, then the drawdown ladder (the PM mandate's
+ *      fixed stop-loss, the floor of the center book's risk-scaled rungs) stops
  *      the PM out on its virtual (synthetic) track record, and ONE tree.close()
  *      frees the PM's capital and kills the data budget while it still holds a
  *      full hire at every level;
@@ -109,7 +110,7 @@ import {
   type SimEventSource,
 } from "@allowance/adapters";
 import { ARENA_EVAL_FLOOR, RECOMMENDED_TIGER, makeWorld, runTiger, tigerPanel } from "@allowance/lab";
-import { currentDrawdown, defaultCenterBookPolicy, nextLadderState, type LadderState } from "@allowance/swarm";
+import { currentDrawdown, defaultCenterBookPolicy, nextLadderState, scaleLadder, type LadderState } from "@allowance/swarm";
 
 /* ------------------------------------------------------------------ */
 /* Console + assertion helpers (same shape as demo.ts)                 */
@@ -587,10 +588,32 @@ async function main(): Promise<void> {
   const { panel, events } = tigerPanel(world);
   const run = runTiger(panel, events, { ...RECOMMENDED_TIGER, hedgeSymbol: "VIDX" }, { from: 60, to: panel.dates.length - 1 });
   const policy = defaultCenterBookPolicy();
+  // The PM mandate's own stop-loss: the fixed rungs, which are also the floor
+  // of the center book's risk-scaled ladder. The center book only ever widens
+  // them (never past ddStopMax); what it would do to this path is printed too.
   const thresholds = { ddCut: policy.ddCut, ddRecover: policy.ddRecover, ddStop: policy.ddStop };
+  const scaled = scaleLadder(run.ret, {
+    ...thresholds,
+    ddStopVol: policy.ddStopVol,
+    volWindow: policy.window,
+    ddStopMax: policy.ddStopMax,
+  });
   line(`PM return path: the Tiger overlay (packages/lab) on ${panel.primary} in synthetic arena world #${arenaSeed}, ${run.ret.length} days.`);
-  line(`This is a SIMULATED path, not market data. Ladder (swarm nextLadderState, center-book defaults): cut at ${thresholds.ddCut * 100}% drawdown,`);
-  line(`restore below ${thresholds.ddRecover * 100}%, stop out at ${thresholds.ddStop * 100}%.`);
+  line(`This is a SIMULATED path, not market data. Ladder (swarm nextLadderState) on the PM mandate's own fixed stop-loss: cut at ${thresholds.ddCut * 100}% drawdown,`);
+  line(`restore below ${thresholds.ddRecover * 100}%, stop out at ${thresholds.ddStop * 100}%. (The center book's risk-scaled default would widen these ×${scaled.scale.toFixed(2)}`);
+  const capped = scaled.ddStop >= policy.ddStopMax - 1e-12;
+  // Replay the same path under the center book's own rungs, for the record.
+  let centerState: LadderState = "active";
+  for (let t = 1; t <= run.ret.length && centerState !== "stopped"; t++) {
+    centerState = nextLadderState(centerState, run.ret.slice(0, t), {
+      ...thresholds,
+      ddStopVol: policy.ddStopVol,
+      volWindow: policy.window,
+      ddStopMax: policy.ddStopMax,
+    });
+  }
+  line(`for the full path's ${(scaled.vol * 100).toFixed(0)}% vol at its high-water mark, to a ${(scaled.ddStop * 100).toFixed(0)}% stop` +
+    `${capped ? " (its ceiling)" : ` (ceiling ${policy.ddStopMax * 100}%)`}; the fixed rungs are its floor. Under those rungs this path ends ${centerState.toUpperCase()}.)`);
   let state: LadderState = "active";
   const transitions: Array<{ day: number; date: string; from: LadderState; to: LadderState; drawdown: number; pmBudget: string }> = [];
   const cutBudget = (PM_CAPITAL * BigInt(Math.round(policy.cutFactor * 1000))) / 1000n;
@@ -792,7 +815,7 @@ async function main(): Promise<void> {
     incidents: incidents.list(),
     operators: operators.list(),
     agentHireRecord: { agentId: WEBCRAWLER_X, simulated: true, before: { reputation: repBefore, stake: stakeBefore }, after: { reputation: repAfter, stake: stakeAfter }, simSlashesInWindow: simSlashes },
-    ladder: { arenaSeed, synthetic: true, instrument: panel.primary, days: run.ret.length, thresholds, transitions, freed, rootBefore, rootAfter, dataUnspentBefore: dataBefore, dataUnspentAfter: dataAfter },
+    ladder: { arenaSeed, synthetic: true, instrument: panel.primary, days: run.ret.length, thresholds, rungs: "fixed per-mandate stop-loss", centerBookScaled: { ddCut: scaled.ddCut, ddStop: scaled.ddStop, vol: scaled.vol, scale: scaled.scale, ddStopMax: policy.ddStopMax, finalState: centerState }, transitions, freed, rootBefore, rootAfter, dataUnspentBefore: dataBefore, dataUnspentAfter: dataAfter },
     audit: { headline: auditHeadline(report), missed: collected.missed, polls: collected.polls, report },
   };
   await writeFile(receiptsPath, JSON.stringify(sidecar, auditJsonReplacer, 2) + "\n", "utf8");

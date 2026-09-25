@@ -92,8 +92,10 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
         ))}
       </div>
       <p className="cb-note">
-        Same market, same agents, same gate, same leverage, same stop-loss. The only difference is whether
-        anything looks <em>across</em> the agents. Across {snapshot.sweep.seeds} market seeds the center book
+        Same simulated market, same agents, same gate, same leverage. The center book adds what looks{" "}
+        <em>across</em> the agents (allocation and crowding limits) and judges each agent's drawdown against the
+        risk it runs (a stop between 20% and a 40% ceiling), where per-agent guardrails keep a fixed 20% stop-loss.
+        Across {snapshot.sweep.seeds} market seeds the center book
         had the smaller max drawdown on <strong>{snapshot.sweep.centerWinsDrawdown}/{snapshot.sweep.seeds}</strong>{" "}
         and the higher Sharpe on <strong>{snapshot.sweep.centerWinsSharpe}/{snapshot.sweep.seeds}</strong>{" "}
         (mean max drawdown {pct(snapshot.sweep.centerMean.maxDrawdown)} vs{" "}

@@ -109,18 +109,32 @@ test("volAtHighWater: the risk run up to the last peak, not the losses since", (
   assert.equal(volAtHighWater([], 90), 0);
 });
 
-test("risk-scaled ladder: a drawdown is judged against the vol the agent runs, never below the fixed rungs", () => {
-  const rungs = { ddStop: 0.2, ddCut: 0.1, ddRecover: 0.05, ddStopVol: 1.5, volWindow: 90 };
-  // A volatile book (~48% annual vol) at its high-water mark, then a 28% drawdown.
-  const volatile = [...Array.from({ length: 60 }, (_, i) => (i % 2 === 0 ? 0.032 : -0.028)), -0.1, -0.1, -0.08];
-  const v = scaleLadder(volatile, rungs);
+test("risk-scaled ladder: a drawdown is judged against the vol the agent runs, between the fixed rungs and a ceiling", () => {
+  const rungs = { ddStop: 0.2, ddCut: 0.1, ddRecover: 0.05, ddStopVol: 1.5, volWindow: 90, ddStopMax: 0.4 };
+  const swing = (up: number, down: number) => Array.from({ length: 60 }, (_, i) => (i % 2 === 0 ? up : -down));
+  const loss = [-0.1, -0.1, -0.08]; // a 25.5% drawdown
+  // ~22% annual vol: the stop sits at 1.5σ ≈ 33%, under the ceiling.
+  const mid = [...swing(0.016, 0.012), ...loss];
+  const v = scaleLadder(mid, rungs);
+  assert.ok(v.vol > 0.2 && v.vol < 0.25, `≈22% vol, got ${v.vol}`);
   assert.ok(Math.abs(v.ddStop - 1.5 * v.vol) < 1e-12, "stop at 1.5σ");
   assert.ok(Math.abs(v.ddCut! / v.ddStop - 0.5) < 1e-12 && Math.abs(v.ddRecover! / v.ddStop - 0.25) < 1e-12, "rungs keep their proportions");
-  assert.ok(currentDrawdown(volatile) > 0.2 && currentDrawdown(volatile) < v.ddCut!);
-  assert.equal(nextLadderState("active", volatile, rungs), "active", "ordinary noise for this book");
-  assert.equal(nextLadderState("active", volatile, { ddStop: 0.2, ddCut: 0.1 }), "stopped", "the fixed stop-loss revokes it");
+  assert.equal(nextLadderState("active", mid, rungs), "cut", "cut, not revoked: 25% is 1.1σ for this book");
+  assert.equal(nextLadderState("active", mid, { ddStop: 0.2, ddCut: 0.1 }), "stopped", "the fixed stop-loss revokes it");
+  // ~48% vol would put 1.5σ at 72%: the ceiling holds the stop at 40%, the other rungs in proportion.
+  const wild = [...swing(0.032, 0.028), ...loss];
+  const w = scaleLadder(wild, rungs);
+  assert.ok(w.vol > 0.45, `≈48% vol, got ${w.vol}`);
+  assert.equal(w.scale, 2);
+  assert.deepEqual([w.ddStop, w.ddCut, w.ddRecover], [0.4, 0.2, 0.1]);
+  assert.equal(nextLadderState("active", wild, rungs), "cut");
+  assert.equal(nextLadderState("active", [...wild, -0.1, -0.1], rungs), "stopped", "a 40% drawdown stops even the wildest book");
+  // Without an explicit ceiling the default is twice the stop-loss.
+  assert.equal(scaleLadder(wild, { ...rungs, ddStopMax: undefined }).ddStop, 0.4);
+  // A ceiling at or above 100% could never fire, so it is refused.
+  assert.throws(() => scaleLadder(mid, { ...rungs, ddStopMax: 1 }), /below 100%/);
   // Same drawdown on a calm book (~8% vol) is ~3σ: the fixed floor applies and it is stopped.
-  const calm = [...Array.from({ length: 60 }, (_, i) => (i % 2 === 0 ? 0.006 : -0.004)), -0.1, -0.1, -0.08];
+  const calm = [...swing(0.006, 0.004), ...loss];
   const c = scaleLadder(calm, rungs);
   assert.equal(c.scale, 1);
   assert.deepEqual([c.ddStop, c.ddCut, c.ddRecover], [0.2, 0.1, 0.05]);
@@ -129,14 +143,19 @@ test("risk-scaled ladder: a drawdown is judged against the vol the agent runs, n
   const crash = [...calm.slice(0, 60), -0.3];
   assert.equal(scaleLadder(crash, rungs).scale, 1);
   assert.equal(nextLadderState("active", crash, rungs), "stopped");
+  // σ from a short record can be huge (two lucky days), but the ceiling still binds.
+  const lucky = [0.25, 0.02, ...Array.from({ length: 50 }, () => -0.012)];
+  assert.equal(scaleLadder(lucky, rungs).scale, 2);
+  assert.equal(nextLadderState("active", lucky, rungs), "stopped", "a 45% drawdown is past any ceiling");
   // Off switch and final revocation.
-  assert.equal(scaleLadder(volatile, { ...rungs, ddStopVol: 0 }).scale, 1);
+  assert.equal(scaleLadder(wild, { ...rungs, ddStopVol: 0 }).scale, 1);
   assert.equal(nextLadderState("stopped", [0.5], rungs), "stopped");
-  // Risk scaling only ever widens: across random records the scaled rungs dominate the fixed ones.
-  for (let seed = 1; seed <= 50; seed++) {
-    const r = noise(seed, 120, 0.001).map((x) => x * (1 + (seed % 5)));
+  // Every agent stays stoppable: across random records of any vol the scaled
+  // rungs dominate the fixed ones and the stop never passes the ceiling.
+  for (let seed = 1; seed <= 60; seed++) {
+    const r = noise(seed, 120, 0.001).map((x) => x * (1 + (seed % 6) * 2));
     const s = scaleLadder(r, rungs);
-    assert.ok(s.scale >= 1 && s.ddStop >= 0.2 && s.ddCut! >= 0.1 && s.ddRecover! >= 0.05);
+    assert.ok(s.scale >= 1 && s.scale <= 2 && s.ddStop >= 0.2 && s.ddStop <= 0.4 && s.ddCut! >= 0.1 && s.ddRecover! >= 0.05);
   }
 });
 

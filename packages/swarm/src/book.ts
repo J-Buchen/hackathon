@@ -23,8 +23,7 @@
 import { DelegationTree, formatAmount, parseAmount } from "@allowance/core";
 import {
   allocate,
-  nextLadderState,
-  scaleLadder,
+  ladderStep,
   scanCrowding,
   type AllocationPolicy,
   type CenterBookPolicy,
@@ -399,14 +398,14 @@ export async function runBook(
       // The rungs in force for THIS record: the center book widens them to the
       // risk the agent runs (never below the fixed percentages); per-agent
       // guardrails keep the fixed stop-loss.
-      const rungs = scaleLadder(a.unitReturns, {
+      const { next, rungs } = ladderStep(a.ladder, a.unitReturns, {
         ddStop: policy.ddStop,
         ddCut: center?.ddCut,
         ddRecover: center?.ddRecover,
         ddStopVol: center?.ddStopVol,
         volWindow: center?.window,
+        ddStopMax: center?.ddStopMax,
       });
-      const next = nextLadderState(a.ladder, a.unitReturns, rungs);
       if (next === a.ladder) continue;
       const pct = (x: number | undefined) => `${((x ?? 0) * 100).toFixed(0)}%`;
       const why = rungs.scale > 1 ? ` (rungs risk-scaled ×${rungs.scale.toFixed(2)}: the agent runs ${pct(rungs.vol)} vol)` : "";

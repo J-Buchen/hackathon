@@ -70,7 +70,8 @@ npm run dev:web      # opens the dashboard that renders the snapshot
   AgentHire booted with `scripts/agenthire-up.sh`. It writes
   `apps/web/public/agenthire-snapshot.json` and a receipts sidecar.
 - `npm run typecheck` runs `tsc -b` across every package.
-- `npm test` runs the aggregated Node test suite (core + adapters + orchestrator).
+- `npm test` runs the aggregated Node test suite (core, adapters, swarm, lab and
+  orchestrator).
   See [Testing](#testing) for the full matrix, including the web and Solidity suites.
 
 ---
@@ -87,7 +88,10 @@ the mandate tree:
   log as payments.
 - **Allocation uses risk-adjusted, attributable returns, and is
   correlation-aware.** Clones split one allocation.
-- **A drawdown ladder:** cut at 10%, revoke at 20%.
+- **A risk-scaled drawdown ladder:** cut at 10% and stop out (revoke) at 20%,
+  widened for a volatile agent to 1.5× the volatility it runs (measured up to its
+  last high-water mark, so a loss cannot loosen its own stop), and never past a
+  40% ceiling, so every agent can still be stopped out.
 - **Crowding control.** Agents in different pods running the same trade are cut
   back to a book-level limit, even when each is inside its own mandate.
 
@@ -102,10 +106,14 @@ The example portfolio **runs like a Tiger Cub**:
 
 Three Tiger-Cub agents in three pods, each weighting the questions differently,
 all land on SBUX: a hedge-fund hotel. Over 20 synthetic markets, the center book
-cuts mean max drawdown from **7.9% to 4.6%**, the loss in the crowd's unwind
-from **−4.9% to −1.8%**, and peak crowded exposure from **52% to 17% of NAV**.
-It gives up return to do it (+2.9% vs +5.5%). An ablation shows crowding
-control is where the value comes from.
+cuts mean max drawdown from **7.9% to 5.0%**, the loss in the crowd's unwind
+from **−4.9% to −2.4%**, and peak crowded exposure from **52% to 16% of NAV**.
+It gives up return to do it (+3.3% vs +5.5%). An ablation shows crowding
+control is where the value comes from. On this example the risk-scaled ladder
+costs a little drawdown (fixed rungs: 4.6% max drawdown, −1.8% in the unwind);
+across 200-world blocks of the virtual-world arena it adds fund utility but
+leaves the center book's mean max drawdown above the per-agent baseline's. Both
+numbers, and how they were judged, are in [`docs/LOOPS.md`](docs/LOOPS.md).
 
 Full write-up, including what didn't help: [`docs/CENTER-BOOK.md`](docs/CENTER-BOOK.md).
 Prices are synthetic and the research is illustrative; this is not investment
@@ -227,7 +235,7 @@ renders. (Budgets in USDC, 6 decimals.)
 
 **Verify the math:** post-run, `alice.eth` available = **65 USDC** (100 − 30 − 5),
 `researcher.alice.eth` available = **12 USDC** (30 − 10 reserved − 8 spent),
-**10 events** total. Steps d/e/g/h are the required **failure/blocked** demos.
+**11 events** total. Steps d/e/g/h are the required **failure/blocked** demos.
 
 ---
 
@@ -259,11 +267,11 @@ You can also run any layer in isolation:
 | `@allowance/adapters` — shadow audit | `packages/adapters/src/agenthire-audit.test.ts` | On a recorded AgentHire capture: A2A hires link to their primary job, direct and orphan hires are excluded, cycles and shared children get one alias node per parent, the headline comes from the replay-decided Hard Spend Cap scenario while `strict` is the by-definition total, `--organic-only` drops demo-cascade jobs, and AgentHire operator screening plugs into the replay. |
 | `@allowance/core` — close | `packages/core/src/tree.test.ts` | `close` shrinks a subtree to what it spent, revokes it, and returns exactly what the parent's `available` rises by; never shrinks a parent below what its subtree really spent (even after an unserialized overspend); idempotent; reclaims budget under individually revoked descendants. |
 | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
-| `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+| `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
 | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
 | `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are revoked with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book. |
 | `@allowance/swarm` — example | `packages/swarm/src/example.test.ts` | The coffee thesis is well-formed (scores 1–5, sourced trend claims, parseable catalyst dates); the three Tiger Cubs converge on one long; the center book flags it on day one and loses less in the unwind. |
-| `@allowance/orchestrator` | `services/orchestrator/src/flow.test.ts` | The end-to-end demo flow reproduces the storyline outcomes (§8 balances and event count), and the off-chain result **agrees** with the `SpendCapHook` cap decision (hook agreement). |
+| `@allowance/orchestrator` | `services/orchestrator/src/flow.test.ts` | `executePayment` reaches every `PaymentOutcome`; in each, the off-chain result **agrees** with the `SpendCapHook` cap decision (hook agreement), the emitted event matches the record, and a settled payment moves the node's ENS `spentDirect` record in lock-step. |
 | `allowance-web` — snapshot | `apps/web/src/snapshot.test.ts` | Runtime validation of `demo-snapshot.json` against the frozen schema: well-formed input round-trips unchanged; malformed/stale input throws a precise, path-tagged `SnapshotParseError`. |
 | `allowance-web` — format | `apps/web/src/format.test.ts` | Smallest-unit integer strings render to human token amounts via BigInt (no float drift), including fractional, zero, and negative values. |
 | `allowance-web` — tree | `apps/web/src/tree.test.ts` | `buildTree` reconstructs the delegation hierarchy from the flat `nodes` array and marks a node `effectivelyRevoked` when it or any ancestor is revoked (dashboard view models). |
@@ -272,7 +280,8 @@ You can also run any layer in isolation:
 
 The suites are the guardrail for every invariant in [`DESIGN.md`](DESIGN.md): the
 snapshot schema (§7) is pinned by the web snapshot tests, and the storyline
-outcomes (§8) are pinned by the orchestrator flow test. Do not weaken or skip a
+outcomes (§8: balances, outcomes, 11 events) by `npm run demo`'s own
+assertions, which fail the run on any mismatch. Do not weaken or skip a
 test to force a green run — fix the code instead.
 
 ---
