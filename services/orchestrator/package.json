@@ -1,0 +1,19 @@
+{
+  "name": "@allowance/orchestrator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Allowance orchestrator: the x402 agent-payment flow (composing @allowance/core pay() with the concrete sponsor adapters) plus the offline demo runner that produces the dashboard snapshot.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -b",
+    "demo": "tsx src/demo.ts"
+  },
+  "dependencies": {
+    "@allowance/core": "*",
+    "@allowance/adapters": "*"
+  }
+}

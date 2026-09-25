@@ -33,3 +33,16 @@ Thumbs.db
 .idea/
 .vscode/
 *.swp
+
+# TypeScript project references / incremental build
+*.tsbuildinfo
+.tsbuildinfo
+
+# Hardhat (contracts)
+contracts/artifacts/
+contracts/cache/
+contracts/typechain-types/
+
+# Vite / web build
+apps/web/dist/
+

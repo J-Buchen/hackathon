@@ -1,0 +1,18 @@
+{
+  "name": "@allowance/adapters",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sponsor adapters for Allowance behind the @allowance/core ports. Each ships a deterministic offline mock plus a clearly-marked real-integration stub (World ID for Agents, World IDKit, Intercepta, 1inch Aqua, ENSv2, Uniswap v4 hook mirror, Curvegrid MultiBaas, Sui escrow).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "node --import tsx --test src/adapters.test.ts"
+  },
+  "dependencies": {
+    "@allowance/core": "*"
+  }
+}

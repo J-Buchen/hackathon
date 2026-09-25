@@ -1,0 +1,15 @@
+{
+  "name": "@allowance/core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure domain core for Allowance: types, attenuation, delegation tree, and the payment pipeline. Zero runtime dependencies.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -b",
+    "test": "node --import tsx --test src/attenuation.test.ts src/tree.test.ts src/payment.test.ts"
+  }
+}

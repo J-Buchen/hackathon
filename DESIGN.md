@@ -1,0 +1,475 @@
+# Allowance — DESIGN.md (authoritative spec)
+
+> **Give your AI agents an allowance, not your wallet.**
+> An attenuating-delegation protocol for autonomous AI-agent payments.
+
+This file is the **single source of truth** for every builder in this monorepo.
+Import paths, type names, and function signatures below are **locked** — build to
+them exactly. The `@allowance/core` package already implements everything in
+sections 3–7; adapters, orchestrator, web, and contracts bind to it.
+
+---
+
+## 1. The problem & the insight
+
+Agents spawn sub-agents that spend money. There is no clean primitive for
+authority that **attenuates** down a chain: each hop can only *narrow* its
+parent's budget/scope, must be revocable, and must be fully auditable.
+
+**Insight:** ENSv2's hierarchical name registry *is* a delegation tree. A name
+like `scraper.researcher.alice.eth` encodes who-is-boss-of-whom (the **left-most
+label is the node itself**), and each node stores its mandate (budget/scope) as
+resolver records. **Attenuation** = a child's budget is always a slice of its
+parent's *remaining* budget.
+
+---
+
+## 2. Domain model (authoritative)
+
+- **Amounts.** Integers in the token's smallest unit (USDC → 6 decimals). Held
+  as `bigint` in memory. Serialized in JSON as decimal **strings of the
+  smallest-unit integer** (100 USDC → `"100000000"`). Human ↔ smallest-unit
+  conversion lives in `@allowance/core` (`parseAmount` / `formatAmount`).
+- **Principal.** The human root, verified via World **IDKit**. Grants a root
+  budget to the root agent node.
+- **Node (agent).** `{ name, parent, identityStatus, mandate }`.
+  `identityStatus ∈ "verified" | "expired" | "none"`.
+- **Mandate.** `{ budget, spentDirect, allowedMerchants?, allowedPurposes?,
+  expiry, revoked }`. An **absent** allowlist (`undefined`) means **any**.
+- **Derived:** `reserved(node) = Σ children.mandate.budget`.
+  `available(node) = budget − spentDirect − reserved`.
+
+### Attenuation rule (delegate parent **P** → child **C** with mandate **M**)
+
+Valid **iff all** hold (else typed rejection):
+
+1. `M.budget ≤ available(P)`
+2. `P.allowedMerchants === undefined` **or** `M.allowedMerchants ⊆ P.allowedMerchants`
+3. `P.allowedPurposes === undefined` **or** `M.allowedPurposes ⊆ P.allowedPurposes`
+4. `M.expiry ≤ P.mandate.expiry`
+5. (guard) `P` is not revoked.
+
+> A restricted parent (defined allowlist) forces the child to declare a defined
+> allowlist too — a child leaving it `undefined` (= "any") would *broaden*
+> authority and is rejected (`MERCHANTS_NOT_SUBSET` / `PURPOSES_NOT_SUBSET`).
+
+### Payment pipeline (`pay(node N, merchant Mkt, amount A, purpose Pp)`)
+
+Runs in order, short-circuits on first failure:
+
+1. **identity** — `N.identityStatus === "verified"` **and** every ancestor
+   verified (via `IdentityGate`). Else → `DENIED_IDENTITY`.
+2. **mandate** —
+   - self-or-ancestor revoked → `REVOKED`
+   - self-or-ancestor expired, or `A > available(N)`, or `Mkt`/`Pp` not allowed
+     → `BLOCKED_MANDATE`
+3. **screening** — live Intercepta call on `(Mkt, A, Pp)`. Else → `BLOCKED_SCREENING`.
+4. **settlement** — if `payerToken !== merchantToken`, 1inch Aqua swaps; move
+   funds → `SETTLED`.
+
+On `SETTLED`, `N.spentDirect += A`. Every attempt records **one** `PAYMENT`
+event. `revoke(name)` sets `revoked = true`; all descendants' payments then
+fail the ancestor-revoked check.
+
+> **Ordering note (important for the demo):** the mandate merchant-allowlist
+> check runs *before* screening. For a payment to reach the Intercepta stage the
+> merchant must first be permitted by the mandate. See §8 step (e).
+
+---
+
+## 3. Workspace layout
+
+```
+package.json            root: npm workspaces packages/* services/* apps/* contracts
+tsconfig.base.json      strict, ESM, composite (declaration + project refs)
+tsconfig.json           root solution file → references core, adapters, orchestrator
+DESIGN.md               this file
+packages/core        →  @allowance/core        pure domain (DONE — build to it)
+packages/adapters    →  @allowance/adapters    sponsor adapters (mock + real stub)
+services/orchestrator→  @allowance/orchestrator x402 flow + demo runner
+apps/web             →  allowance-web          Vite + React dashboard
+contracts            →  solidity (Hardhat)     Uniswap v4 hook / settlement guard
+docs/                →  ARCHITECTURE.md SPONSORS.md FEEDBACK.md
+```
+
+**Module system.** ESM everywhere (`"type": "module"`), TypeScript **strict**,
+`moduleResolution: "bundler"`, `module: "ESNext"`. Cross-package imports resolve
+to **source `.ts`** (each package's `exports` maps `"."` → `"./src/index.ts"`),
+so `tsx` and Vite run without a build step; `tsc -b` is typecheck-only.
+
+**Every workspace package MUST ship a composite `tsconfig.json`:**
+
+```jsonc
+// packages/adapters/tsconfig.json  (and services/orchestrator/tsconfig.json)
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": { "rootDir": "src", "outDir": "dist", "tsBuildInfoFile": "dist/.tsbuildinfo" },
+  "include": ["src/**/*.ts"],
+  "references": [{ "path": "../core" }]   // adapters → core; orchestrator → core + adapters
+}
+```
+
+The root `tsconfig.json` already references `packages/core`,
+`packages/adapters`, and `services/orchestrator`. `npm run typecheck`
+(`tsc -b tsconfig.json`) will fail until those two tsconfigs exist — create them.
+
+**Root scripts** (already defined):
+
+| script | command |
+| --- | --- |
+| `demo` | `tsx services/orchestrator/src/demo.ts` |
+| `snapshot` | alias of `demo` |
+| `typecheck` | `tsc -b tsconfig.json` |
+| `test` | `node --import tsx --test packages/core/src/*.test.ts` |
+| `dev:web` | `npm -w allowance-web run dev` |
+| `build:web` | `npm -w allowance-web run build` |
+
+Do **not** run `npm install` (the Verify phase installs once at the root).
+Root devDeps: `typescript`, `tsx`, `@types/node`.
+
+---
+
+## 4. `@allowance/core` public API (locked)
+
+Import everything from the barrel: `import { … } from "@allowance/core";`
+
+### 4.1 Domain types (`types.ts`)
+
+```ts
+type IdentityStatus = "verified" | "expired" | "none";
+
+interface Mandate {
+  budget: bigint;
+  spentDirect: bigint;
+  allowedMerchants?: string[];   // undefined = any
+  allowedPurposes?: string[];    // undefined = any
+  expiry: number;                // unix seconds
+  revoked: boolean;
+}
+
+interface AgentNode {
+  name: string;                  // ENS-style dotted, child label left-most
+  parent: string | null;         // null = root agent
+  identityStatus: IdentityStatus;
+  mandate: Mandate;
+}
+
+interface Principal { name: string; verified: boolean; }
+
+// Input to grant/delegate (spentDirect & revoked are managed by the tree):
+interface MandateInput {
+  budget: bigint;
+  allowedMerchants?: string[];
+  allowedPurposes?: string[];
+  expiry: number;
+}
+
+interface PaymentRequest {
+  node: string;
+  merchant: string;
+  amount: bigint;
+  purpose?: string;
+  payerToken?: string;           // defaults to settlement token (USDC)
+  merchantToken?: string;        // defaults to USDC
+}
+
+type PaymentOutcome =
+  | "SETTLED" | "DENIED_IDENTITY" | "REVOKED"
+  | "BLOCKED_MANDATE" | "BLOCKED_SCREENING";
+
+interface PaymentRecord {
+  seq: number; node: string; merchant: string; amount: bigint;
+  purpose?: string; outcome: PaymentOutcome; reason?: string;
+  screening?: ScreeningResult; settlement?: SettlementResult; at: number;
+}
+
+type EventType = "FUND" | "DELEGATE" | "PAYMENT" | "REVOKE";
+type EventResult =
+  | "OK" | "SETTLED" | "BLOCKED_MANDATE" | "BLOCKED_SCREENING"
+  | "DENIED_IDENTITY" | "REVOKED" | "ATTENUATION_REJECTED";
+
+interface AllowanceEvent {
+  seq: number; type: EventType; node: string; detail: string;
+  result: EventResult; amount: bigint | null; merchant: string | null;
+}
+```
+
+### 4.2 Amount helpers (`amount.ts`)
+
+```ts
+const USDC_DECIMALS = 6;
+function parseAmount(value: string | number, decimals?: number): bigint; // "100.000000" -> 100000000n
+function formatAmount(value: bigint, decimals?: number): string;         // 100000000n -> "100.000000"
+```
+
+### 4.3 Attenuation (`attenuation.ts`)
+
+```ts
+type AttenuationRejectionReason =
+  | "PARENT_REVOKED" | "BUDGET_EXCEEDS_AVAILABLE" | "MERCHANTS_NOT_SUBSET"
+  | "PURPOSES_NOT_SUBSET" | "EXPIRY_EXCEEDS_PARENT" | "NEGATIVE_BUDGET";
+
+type AttenuationDecision =
+  | { ok: true }
+  | { ok: false; reason: AttenuationRejectionReason; message: string };
+
+class AttenuationError extends Error { readonly reason: AttenuationRejectionReason; }
+
+function isAllowlistSubset(child: string[] | undefined, parent: string[] | undefined): boolean;
+function checkAttenuation(parent: AgentNode, proposed: MandateInput, parentAvailable: bigint): AttenuationDecision;
+```
+
+### 4.4 Delegation tree (`tree.ts`)
+
+```ts
+// ENS-style name helpers
+function labels(name: string): string[];
+function leftLabel(name: string): string;                       // "scraper.researcher.alice.eth" -> "scraper"
+function parentNameOf(name: string): string | null;             // -> "researcher.alice.eth"
+function childName(parentName: string, childLabel: string): string; // ("alice.eth","researcher") -> "researcher.alice.eth"
+
+class UnknownNodeError extends Error {}
+class DuplicateNodeError extends Error {}
+
+interface FundRootOptions {
+  principal: string; rootName: string; mandate: MandateInput;
+  principalVerified?: boolean;   // default true; pass the IDKit result
+  identityStatus?: IdentityStatus; // default "verified"
+}
+interface DelegateOptions { identityStatus?: IdentityStatus; } // default "verified"
+
+class DelegationTree {
+  get principal(): Principal | null;
+  get events(): readonly AllowanceEvent[];
+  get nextSeq(): number;
+
+  listNodes(): AgentNode[];
+  getNode(name: string): AgentNode | undefined;
+  requireNode(name: string): AgentNode;              // throws UnknownNodeError
+  childrenOf(name: string): AgentNode[];
+  ancestors(name: string): AgentNode[];              // immediate parent → root
+  reserved(name: string): bigint;
+  available(name: string): bigint;
+  isRevokedInChain(name: string): boolean;
+  isExpiredInChain(name: string, now: number): boolean;
+
+  fundRoot(opts: FundRootOptions): AgentNode;        // records FUND / OK
+  delegate(parentName: string, childLabel: string, mandate: MandateInput, opts?: DelegateOptions): AgentNode;
+  // ^ success → DELEGATE / OK ; on attenuation failure records DELEGATE /
+  //   ATTENUATION_REJECTED **then throws AttenuationError** (wrap in try/catch).
+  revoke(name: string): AgentNode;                   // records REVOKE / REVOKED
+  recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent; // custom events
+}
+```
+
+### 4.5 Payment pipeline & **adapter PORT interfaces** (`payment.ts`)
+
+These four interfaces are the contract `@allowance/adapters` implements:
+
+```ts
+interface IdentityGate      { verify(ctx: IdentityCheckContext): Promise<IdentityResult>; }
+interface ScreeningService  { screen(req: ScreeningRequest): Promise<ScreeningResult>; }
+interface SettlementService { settle(req: SettlementRequest): Promise<SettlementResult>; }
+interface PrincipalVerifier { verify(proof: PrincipalProof): Promise<PrincipalVerificationResult>; }
+
+interface PaymentAdapters { identity: IdentityGate; screening: ScreeningService; settlement: SettlementService; }
+interface PayOptions { now?: number; settlementToken?: string; } // now defaults to Date.now()/1000
+
+async function pay(
+  tree: DelegationTree,
+  req: PaymentRequest,
+  adapters: PaymentAdapters,
+  opts?: PayOptions,
+): Promise<PaymentRecord>;   // never throws for business outcomes; records one PAYMENT event
+```
+
+Port request/result types (from `types.ts`):
+
+```ts
+interface IdentityCheckContext { node: AgentNode; ancestors: AgentNode[]; }
+interface IdentityResult { ok: boolean; reason?: string; }
+
+interface ScreeningRequest { node: string; merchant: string; amount: bigint; purpose?: string; }
+interface ScreeningResult  { approved: boolean; reason?: string; reference?: string; }
+
+interface SettlementRequest {
+  node: string; merchant: string; amount: bigint; purpose?: string;
+  payerToken: string; merchantToken: string;
+}
+interface SettlementResult {
+  settled: boolean; swapped: boolean; fromToken: string; toToken: string;
+  amountIn: bigint; amountOut: bigint; reference?: string; reason?: string;
+}
+
+interface PrincipalProof { action?: string; signal?: string; [k: string]: unknown; }
+interface PrincipalVerificationResult { verified: boolean; nullifierHash?: string; reason?: string; }
+```
+
+### 4.6 Serialization (`serialize.ts`)
+
+```ts
+interface ToSnapshotOptions { asOf?: number; events?: readonly AllowanceEvent[]; decimals?: number; }
+function toSnapshot(tree: DelegationTree, opts?: ToSnapshotOptions): Snapshot;
+function snapshotToJSON(snapshot: Snapshot): string;
+async function writeSnapshotFile(tree: DelegationTree, filePath: string, opts?: ToSnapshotOptions): Promise<Snapshot>;
+```
+
+---
+
+## 5. `@allowance/adapters` public API (builder MUST expose this)
+
+Package `@allowance/adapters`, barrel `src/index.ts`. Implements the four core
+ports. **Every adapter ships a deterministic offline MOCK plus a clearly-marked
+real-integration stub** (`TODO(cred)` + doc links). The demo runs entirely on
+mocks.
+
+**Required named exports:**
+
+```ts
+// ---- Mocks (deterministic, offline, no throwing on business paths) ----
+class MockIdentityGate      implements IdentityGate {}      // World ID for Agents
+class MockScreeningService  implements ScreeningService {}  // Intercepta
+class MockSettlementService implements SettlementService {} // 1inch Aqua
+class MockPrincipalVerifier implements PrincipalVerifier {} // World IDKit
+
+// One-call factory returning the PaymentAdapters bundle used by pay():
+function createMockAdapters(config?: MockAdapterConfig): PaymentAdapters;
+
+// ---- Real-integration stubs (throw a clear "not configured" error until wired) ----
+class WorldAgentIdentityGate   implements IdentityGate {}
+class InterceptaScreeningService implements ScreeningService {}
+class AquaSettlementService    implements SettlementService {}
+class WorldIDKitVerifier       implements PrincipalVerifier {}
+```
+
+**Recommended mock behavior (so the demo storyline in §8 works):**
+
+- `MockIdentityGate.verify` → `ok` iff `ctx.node.identityStatus === "verified"`
+  **and** every ancestor is `"verified"`; otherwise `{ ok:false, reason }`.
+- `MockScreeningService.screen` → blocked when the merchant is on a configurable
+  denylist (default includes `"sanctioned-vendor"`, or any `merchant` starting
+  with `"sanctioned"`). Return a `reference` on both paths.
+- `MockSettlementService.settle` → always `settled:true`; `swapped =
+  payerToken !== merchantToken`; echo `amountIn/amountOut = req.amount`
+  (a mock 1:1 rate is fine); include a `reference`.
+- `MockPrincipalVerifier.verify` → `verified:true` for a normal proof;
+  `verified:false` when `proof.signal === "fail"` (or `proof.action === "fail"`)
+  to exercise the IDKit failure path.
+
+`MockAdapterConfig` (suggested): `{ deniedMerchants?: string[]; swapRate?: number; verifiedNames?: string[]; }`.
+
+---
+
+## 6. `@allowance/orchestrator` responsibilities
+
+- Depends on `@allowance/core` and `@allowance/adapters`.
+- `src/demo.ts` runs the **full storyline in §8 offline**, using
+  `createMockAdapters()`, and writes the snapshot to
+  **`apps/web/public/demo-snapshot.json`** via
+  `writeSnapshotFile(tree, "apps/web/public/demo-snapshot.json", { asOf })`.
+  (A schema-correct **seed** snapshot already exists at that path so the web app
+  renders before the orchestrator is built; `npm run demo` overwrites it.)
+- IDKit failure path (§8 has success): call `MockPrincipalVerifier.verify` with a
+  failing proof and log that funding was refused — do **not** call `fundRoot`.
+- May also host the x402 payment flow; keep the demo runnable with `npm run demo`.
+
+---
+
+## 7. Snapshot JSON schema (the one artifact the dashboard reads)
+
+Path: **`apps/web/public/demo-snapshot.json`**. Amounts are decimal **strings**
+of smallest-unit integers. `allowedMerchants`/`allowedPurposes` are `null` when
+unrestricted.
+
+```jsonc
+{
+  "asOf": 1790337600,                 // unix seconds
+  "currency": "USDC",
+  "decimals": 6,
+  "principal": { "name": "alice", "verified": true },
+  "nodes": [
+    {
+      "name": "researcher.alice.eth",
+      "parent": "alice.eth",
+      "identityStatus": "verified",   // "verified" | "expired" | "none"
+      "mandate": {
+        "budget": "30000000",
+        "spentDirect": "8000000",
+        "reserved": "10000000",       // Σ children budgets (derived, provided for you)
+        "available": "12000000",      // budget - spentDirect - reserved (derived)
+        "allowedMerchants": ["arxiv","openai","sanctioned-vendor"], // or null = any
+        "allowedPurposes": null,
+        "expiry": 1792929600,
+        "revoked": true
+      }
+    }
+    // ...one entry per node
+  ],
+  "events": [
+    {
+      "seq": 0,
+      "type": "PAYMENT",              // FUND | DELEGATE | PAYMENT | REVOKE
+      "node": "researcher.alice.eth",
+      "detail": "paid 8000000 to openai",
+      "result": "SETTLED",            // OK|SETTLED|BLOCKED_MANDATE|BLOCKED_SCREENING|DENIED_IDENTITY|REVOKED|ATTENUATION_REJECTED
+      "amount": "8000000",            // string or null
+      "merchant": "openai"            // string or null
+    }
+  ]
+}
+```
+
+---
+
+## 8. Demo storyline (orchestrator + web align to this)
+
+`FAR`/expiry values are unix seconds; the seed uses `asOf = 2026-09-25T12:00Z`
+and `expiry = asOf + 30 days`.
+
+| step | action | expected result |
+| --- | --- | --- |
+| (a) | Human `alice` verifies via IDKit; funds root `alice.eth` with **100 USDC** (merchants = any). | `FUND` / `OK`, principal `verified:true` |
+| (b) | `alice.eth` delegates **30 USDC** to `researcher.alice.eth`, merchants `{arxiv, openai, sanctioned-vendor}`. | `DELEGATE` / `OK` |
+| (c) | `researcher` delegates **10 USDC** to `scraper.researcher.alice.eth`, merchants `{arxiv}`. | `DELEGATE` / `OK` |
+| (d) | `scraper` tries to pay **15 USDC** (arxiv) — exceeds its 10 available. | `PAYMENT` / `BLOCKED_MANDATE` |
+| (e) | `researcher` pays **5 USDC** to `sanctioned-vendor` — Intercepta blocks. | `PAYMENT` / `BLOCKED_SCREENING` |
+| (f) | `researcher` pays **8 USDC** to `openai` (payer USDC → merchant token via Aqua). | `PAYMENT` / `SETTLED` (`swapped:true`); spend propagates |
+| (g) | `ghost.alice.eth` (identity `expired`) tries to pay. | `PAYMENT` / `DENIED_IDENTITY` |
+| (h) | `alice` revokes `researcher.alice.eth`; `scraper` then pays. | `REVOKE` / `REVOKED`, then `PAYMENT` / `REVOKED` |
+
+> **Why `sanctioned-vendor` is in researcher's allowlist (step b):** the mandate
+> merchant check runs *before* screening (§2). If the merchant were not in the
+> allowlist, step (e) would stop at `BLOCKED_MANDATE` and never reach Intercepta.
+> Including it means the *policy* permits the merchant but *live screening*
+> catches it — the exact value proposition of the screening stage.
+
+**Post-run derived balances (verify against these):**
+`alice.eth` available = **65 USDC** (100 − 30 − 5). `researcher.alice.eth`
+available = **12 USDC** (30 − 10 reserved − 8 spent). 10 events total.
+
+---
+
+## 9. Sponsor → component map
+
+| track | where it lives | contract |
+| --- | --- | --- |
+| **ENS** | `tree.ts` name hierarchy = the delegation/authority tree; mandates = resolver records | central |
+| **World ID for Agents** | `IdentityGate` port; every `pay()` runs identity first; supports denied/expired | mock + stub |
+| **World IDKit** | `PrincipalVerifier` port; human verifies to fund root; success + fail path | mock + stub |
+| **Intercepta** | `ScreeningService` port; live screen before settlement; approved + BLOCKED | mock + stub |
+| **1inch Aqua** | `SettlementService` port; swap payer→merchant token (SwapVM) | mock + stub |
+| **Uniswap** | `contracts/` v4 hook / settlement guard enforcing the attenuated cap on-chain; ship `docs/FEEDBACK.md` | on-chain |
+| **Curvegrid** | AI agent reads chain state + MultiBaas-style dashboard of the spend tree | reads snapshot/chain |
+| **Sui** (stretch) | programmable escrow/settlement rail | optional |
+
+---
+
+## 10. Rules recap for all builders
+
+- No `npm install` (Verify installs once at root). You may edit `package.json` deps.
+- Minimal, mainstream deps. **Zero runtime deps in core.**
+- Each adapter = working offline **mock** behind the core interface **plus** a
+  real stub with `TODO(cred)`. The demo must run fully offline.
+- Strict, commented, production-quality TypeScript. No `throw "todo"` on mock paths.
+- Bind to the exact names/paths above. If you need a new shared type, add it to
+  `@allowance/core` and update this file.
