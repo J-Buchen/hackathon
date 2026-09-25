@@ -2,6 +2,29 @@
  "loop": 1,
  "title": "Risk-scaled drawdown ladder: an agent's drawdown is judged against the volatility it runs (stop at 1.5σ, 20% floor)",
  "note": "Corrected after post-push verification: the stop now has a 40% ceiling so every agent can be stopped out. With it, the block-B gain is +4.47 pp [+3.55, +5.39]. This loop also raised the center book's mean max drawdown above per-agent guardrails' (block B 7.58% vs 6.73%).",
+ "riskSummary": {
+  "block": "B",
+  "seeds": "11500-11699",
+  "centerMaxDDBefore": 0.0662,
+  "centerMaxDDAfter": 0.0758,
+  "guardrailsMaxDD": 0.0673,
+  "pairedChange": null,
+  "note": "after = loop 1 with its 40% stop ceiling; paired drawdown changes were not recorded before loop 2"
+ },
+ "rejections": [
+  {
+   "title": "Reserved ops sub-mandates per agent (R)",
+   "reason": "its guarantee was false: a 13-agent roster throws at deploy 0.995 and the test passed through rounding"
+  },
+  {
+   "title": "Operator-level drawdown ladder (G)",
+   "reason": "a second, unfunded name could shield a losing agent from its own stop-out"
+  },
+  {
+   "title": "Uncapped risk-scaled ladder (wildcard)",
+   "reason": "uncapped and measured in-sample, so a crash loosened its own stop; most of its gain was deleting stop-outs"
+  }
+ ],
  "head": "f5b2d80",
  "headNote": "Not recorded by the loop-1 driver; re-derived by post-push verification (baselines reproduce bit for bit at f5b2d80).",
  "mergedAs": "d2151ed",
