@@ -62,11 +62,17 @@ export interface MarketConfig {
   /** Scheduled catalyst jumps. */
   events?: CatalystEvent[];
   /** Per-instrument structural overrides (default: derived from the seed). */
-  overrides?: Record<string, Partial<{ beta: number; carry: number; trends: boolean }>>;
+  overrides?: Record<string, Partial<{ beta: number; carry: number; trends: boolean; volMult: number }>>;
 }
 
 export interface MarketTick {
   t: number;
+  /**
+   * Latent per-instrument drift used in this tick's return. Hidden from
+   * ordinary agents; a "skilled" agent may see a NOISY, LAGGED copy (see the
+   * arena's SkilledPicker) — that is how skill is modelled, point-in-time.
+   */
+  drift: Record<string, number>;
   /** Realized simple return of each instrument over this tick. */
   returns: Record<string, number>;
   /** Published carry (expected per-tick yield) of each instrument. */
@@ -120,6 +126,7 @@ interface InstrumentModel {
   beta: number; // risk-on factor loading
   rates: number; // rates factor loading
   trendPersistence: number; // AR(1) coefficient on the latent drift (trend strength)
+  volMult: number; // idiosyncratic volatility multiplier
   reversion: number; // negative autocorrelation of the idiosyncratic shock
   carry: number; // per-tick carry
 }
@@ -144,6 +151,7 @@ export function generateMarket(config: MarketConfig): Market {
       trendPersistence: trends ? 0.95 : 0.5,
       reversion: trends ? 0 : 0.2,
       carry: o.carry ?? carry,
+      volMult: o.volMult ?? 1,
     });
   });
 
@@ -167,14 +175,16 @@ export function generateMarket(config: MarketConfig): Market {
     const crowdIn = t >= crowd.startTick && t <= crowd.crashTick;
     const returns: Record<string, number> = {};
     const carry: Record<string, number> = {};
+    const driftNow: Record<string, number> = {};
 
     for (const name of ins) {
       const m = models.get(name)!;
       // Latent drift: an AR(1) process — the trend a trend-follower can catch.
-      const d = m.trendPersistence * drift.get(name)! + z() * config.idioVol * 0.04;
+      const d = m.trendPersistence * drift.get(name)! + z() * config.idioVol * m.volMult * 0.04;
       drift.set(name, d);
+      driftNow[name] = d;
       // Idiosyncratic shock with optional mean reversion of the previous one.
-      const shock = z() * config.idioVol - m.reversion * lastShock.get(name)!;
+      const shock = z() * config.idioVol * m.volMult - m.reversion * lastShock.get(name)!;
       lastShock.set(name, shock);
 
       let r = m.carry + d + m.beta * riskOn + m.rates * rates + shock;
@@ -193,7 +203,7 @@ export function generateMarket(config: MarketConfig): Market {
       carry[name] = m.carry;
     }
 
-    ticks.push({ t, returns, carry, viralSignal: crowdIn ? crowd.instrument : null });
+    ticks.push({ t, returns, carry, drift: driftNow, viralSignal: crowdIn ? crowd.instrument : null });
   }
 
   return { config, ticks, instruments: [...ins] };

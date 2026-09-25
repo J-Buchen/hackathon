@@ -19,3 +19,4 @@ export * from "./montecarlo";
 export * from "./thesis";
 export * from "./valuation";
 export * from "./fetch";
+export * from "./arena";

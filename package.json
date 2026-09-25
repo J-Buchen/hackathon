@@ -21,7 +21,8 @@
     "demo:swarm": "tsx services/orchestrator/src/swarm-demo.ts",
     "test:swarm": "npm -w @allowance/swarm run test",
     "lab": "tsx packages/lab/src/cli.ts",
-    "test:lab": "npm -w @allowance/lab run test"
+    "test:lab": "npm -w @allowance/lab run test",
+    "arena": "tsx packages/lab/src/arena-cli.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

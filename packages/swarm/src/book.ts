@@ -47,6 +47,11 @@ export interface PodSpec {
 export interface AgentSpec {
   label: string;
   pod: string;
+  /**
+   * Who runs the agent (e.g. a World ID nullifier). Optional; two agents with
+   * the same operator are one counterparty however they are named.
+   */
+  operator?: string;
   /** Instruments this agent may trade (⊆ its pod's). */
   instruments: string[];
   strategy: Strategy;
