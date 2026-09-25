@@ -5,7 +5,7 @@
  *  - strategies.ts  the agents (Strategy interface + reference agents)
  *  - gate.ts        per-agent pre-trade gate, read from the mandate tree
  *  - allocator.ts   pure allocation math: scores, drawdown ladder, crowding
- *  - book.ts        runs a swarm under a policy; resize = reallocate, revoke = stop-out
+ *  - book.ts        runs a swarm under a policy; resize = reallocate, close = stop-out
  *  - swarm.ts       the default three-pod, eleven-agent swarm
  *  - trackrecord.ts per-agent attributable track records
  *  - evaluate.ts    center book vs. per-agent guardrails, single seed and sweeps

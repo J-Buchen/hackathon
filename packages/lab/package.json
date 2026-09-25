@@ -10,7 +10,7 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc -b",
-    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts",
+    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts",
     "lab": "tsx src/cli.ts"
   },
   "dependencies": {

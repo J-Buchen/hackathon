@@ -82,6 +82,55 @@ test("allocate: equal weight during warmup; ladder and crowd caps shrink targets
   assert.equal(t.y, 100);
 });
 
+test("allocate: scores use a year of record, so one lucky quarter does not outrank a persistent edge", () => {
+  const policy = { ...defaultCenterBookPolicy(), maxAgentShare: 1 };
+  assert.equal(policy.recordWindow, 252);
+  // n ticks alternating between two returns (mean (up + down) / 2).
+  const alt = (n: number, first: number, second: number) => Array.from({ length: n }, (_, i) => (i % 2 === 0 ? first : second));
+  // An edge that held for 160 ticks and went flat for the last 90, and an agent
+  // flat for 160 ticks whose last 90 happened to be as good as the other's edge.
+  const persistent = [...alt(160, 0.006, -0.003), ...alt(90, 0.004, -0.004)];
+  const lucky = [...alt(160, -0.004, 0.004), ...alt(90, -0.003, 0.006)];
+  const agents = [
+    { name: "persistent", unitReturns: persistent, stopped: false, ladderMultiplier: 1 },
+    { name: "lucky", unitReturns: lucky, stopped: false, ladderMultiplier: 1 },
+  ];
+  const share = (out: ReturnType<typeof allocate>, name: string) => out.find((s) => s.name === name)!.share;
+  const year = allocate(agents, 1_000_000, policy);
+  assert.ok(share(year, "persistent") > 0.6, `the year of record backs the persistent edge (${share(year, "persistent").toFixed(2)})`);
+  assert.ok(share(year, "lucky") > 0, "the recent run still counts, as a quarter of the evidence");
+  // Judged on a trailing 90-tick window, the same records see only the lucky quarter.
+  const trailing = allocate(agents, 1_000_000, { ...policy, recordWindow: 90 });
+  assert.equal(share(trailing, "persistent"), 0);
+  assert.equal(share(trailing, "lucky"), 1);
+});
+
+test("allocate: an agent's share is the same whatever the size of the book it runs (Sharpe, not Sharpe ÷ vol)", () => {
+  const policy = { ...defaultCenterBookPolicy(), maxAgentShare: 1 };
+  const a = noise(21, 200, 0.001);
+  const b = noise(22, 200, 0.0008);
+  const c = noise(23, 200, 0.0012);
+  const run = (ka: number, kc: number) =>
+    allocate(
+      [
+        { name: "a", unitReturns: a.map((x) => ka * x), stopped: false, ladderMultiplier: 1 },
+        { name: "b", unitReturns: b, stopped: false, ladderMultiplier: 1 },
+        { name: "c", unitReturns: c.map((x) => kc * x), stopped: false, ladderMultiplier: 1 },
+      ],
+      1_000_000,
+      policy,
+    );
+  const base = run(1, 1);
+  // Agent a runs half the risk and c three times the risk on the same record of decisions.
+  const rescaled = run(0.5, 3);
+  for (let i = 0; i < 3; i++) {
+    assert.ok(Math.abs(base[i]!.share - rescaled[i]!.share) < 1e-9, `${base[i]!.name}: same evidence, same share`);
+    assert.ok(Math.abs(base[i]!.sharpe - rescaled[i]!.sharpe) < 1e-9);
+  }
+  assert.ok(Math.abs(rescaled[0]!.vol / base[0]!.vol - 0.5) < 1e-9, "the vol did change");
+  assert.ok(base.every((s) => s.share > 0));
+});
+
 test("drawdown ladder: cut → restore → stop, and stop is final", () => {
   const th = { ddCut: 0.1, ddRecover: 0.05, ddStop: 0.2 };
   assert.equal(nextLadderState("active", [-0.12], th), "cut");

@@ -1,21 +1,26 @@
 /**
  * The center book's brain. Pure functions only — no tree, no I/O — so every
  * allocation decision is reproducible and unit-testable. `book.ts` turns these
- * decisions into mandate-tree writes (resize = reallocate, revoke = stop-out).
+ * decisions into mandate-tree writes (resize = reallocate, close = stop-out).
  *
  * Three things a pod shop does that per-agent guardrails cannot:
  *
  *  1. ALLOCATE BY RISK-ADJUSTED, ATTRIBUTABLE RETURNS, CORRELATION-AWARE.
- *     score = shrunk Sharpe (short track records are pulled toward zero) ÷ vol,
+ *     score = shrunk Sharpe over the agent's last year of record (`recordWindow`),
  *     then divided by how many OTHER agents are really the same bet (sum of
  *     positive return correlations). Two clones split one allocation instead of
  *     each taking a full one.
  *  2. A DRAWDOWN LADDER. At `ddCut` an agent's capital is cut to `cutFactor`;
  *     it is restored only once it recovers above `ddRecover`. At `ddStop` it is
- *     stopped out: capital to zero and the mandate revoked. The rungs are
- *     RISK-SCALED: drawdowns are judged against the vol the agent runs
- *     (`ddStopVol`), so a volatile skilled book is not revoked for ordinary
- *     noise while the fixed percentages remain the floor.
+ *     stopped out: its mandate is closed together with every sub-mandate it
+ *     handed out, and it never trades again. The rungs are RISK-SCALED:
+ *     drawdowns are judged against the vol the agent runs (`ddStopVol`), so a
+ *     volatile skilled book is not revoked for ordinary noise while the fixed
+ *     percentages remain the floor. The cut rung is optional (leave `ddCut`
+ *     unset for a stop-only ladder). It stays on by default: under the scaled
+ *     ladder, dropping it moved CE utility by only +0.05pp on arena research
+ *     seeds 801–1000 (90% CI −0.06..+0.16) and +0.12pp on 5600–5749
+ *     (−0.03..+0.27), which is not evidence enough to change the default.
  *  3. CROWDING. Agents whose proposed books point the same way (cosine
  *     similarity ≥ `crowdSimilarity`) form a crowd. If a crowd's combined
  *     exposure to any one instrument exceeds `crowdMaxShare` of NAV, every
@@ -44,21 +49,38 @@ export interface CenterBookPolicy {
   rebalanceEvery: number;
   /** Ticks of track record before scores replace equal weighting. */
   warmup: number;
-  /** Trailing window (ticks) scores and correlations are computed over. */
+  /**
+   * Trailing window (ticks) of the ladder's risk measure: the vol each agent
+   * runs, measured up to its high-water mark (see `ddStopVol`).
+   */
   window: number;
+  /**
+   * Trailing ticks of track record that scores and correlations are estimated
+   * on. A Sharpe ratio estimated on n daily returns carries a standard error
+   * of about √(252 / n): ±1.7 on 90 ticks, as large as the skill being
+   * measured, so a short trailing window re-ranks agents on luck every few
+   * weeks. Skill that persists is measured on all of the record that is still
+   * current — one trading year. Agents whose edge decays are handled by the
+   * drawdown ladder, not by forgetting the evidence.
+   */
+  recordWindow: number;
   /** Bayesian-style shrinkage: Sharpe × n / (n + shrinkageObs). */
   shrinkageObs: number;
   /** Max share of deployable capital any single agent may hold. */
   maxAgentShare: number;
   /** Relative change below which a reallocation is skipped (avoids churn). */
   rebalanceBand: number;
-  /** Drawdown (from the agent's own high-water mark) that triggers a cut. */
-  ddCut: number;
-  /** Capital multiplier while cut. */
-  cutFactor: number;
-  /** Drawdown the agent must recover to before a cut is lifted. */
-  ddRecover: number;
-  /** Drawdown that triggers a stop-out (revocation). */
+  /**
+   * Drawdown (from the agent's own high-water mark) that cuts its capital to
+   * `cutFactor`. Optional: unset = no cut rung, only the stop-out (see the
+   * header). On by default.
+   */
+  ddCut?: number;
+  /** Capital multiplier while cut (with `ddCut`; default 1). */
+  cutFactor?: number;
+  /** Drawdown the agent must recover to before a cut is lifted (with `ddCut`). */
+  ddRecover?: number;
+  /** Drawdown that triggers a stop-out (the mandate subtree is closed). */
   ddStop: number;
   /**
    * Risk-scaled ladder. A fixed-percentage drawdown is not evidence on its own:
@@ -107,6 +129,7 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
     rebalanceEvery: 5,
     warmup: 30,
     window: 90,
+    recordWindow: 252,
     shrinkageObs: 60,
     maxAgentShare: 0.25,
     rebalanceBand: 0.1,
@@ -169,7 +192,7 @@ export function allocate(
   policy: CenterBookPolicy,
 ): AgentScore[] {
   const live = agents.filter((a) => !a.stopped);
-  const windows = live.map((a) => a.unitReturns.slice(-policy.window));
+  const windows = live.map((a) => a.unitReturns.slice(-policy.recordWindow));
   const n = windows[0]?.length ?? 0;
 
   const base = live.map((a, i) => {
@@ -186,7 +209,14 @@ export function allocate(
     raw = live.map(() => 1);
     multiplicity = live.map(() => 1);
   } else {
-    const scores = base.map((b) => Math.max(0, b.shrunkSharpe) / b.vol);
+    // Rank on Sharpe itself, not Sharpe ÷ vol (the Kelly weight μ/σ²). Every
+    // agent's Sharpe estimate carries the same sampling error, ≈ √(252 / n),
+    // so ranking by it ranks by strength of evidence. Dividing by vol again
+    // gives a low-vol book's luck 1/σ times the weight of a high-vol book's —
+    // and buys nothing here: capital is capped per agent (`maxAgentShare`)
+    // and in aggregate (`deploy`) far below any skilled agent's Kelly
+    // fraction, so what is scarce is capital, not risk budget.
+    const scores = base.map((b) => Math.max(0, b.shrunkSharpe));
     const corr = correlationMatrix(windows);
     multiplicity = scores.map((_, i) => {
       let m = 0;

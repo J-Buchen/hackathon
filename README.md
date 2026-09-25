@@ -83,15 +83,18 @@ multi-manager ("pod shop") fund does **across** its PMs when the PMs are agents
 trading real capital. `@allowance/swarm` is that center book, built directly on
 the mandate tree:
 
-- **Allocation is a `resize`, a stop-out is a `revoke`.** Fund → pod → agent is
+- **Allocation is a `resize`, a stop-out is a `close`.** Fund → pod → agent is
   a mandate tree, and every allocator action lands in the same audited event
   log as payments.
 - **Allocation uses risk-adjusted, attributable returns, and is
   correlation-aware.** Clones split one allocation.
-- **A risk-scaled drawdown ladder:** cut at 10% and stop out (revoke) at 20%,
+- **A risk-scaled drawdown ladder:** cut at 10% and stop out at 20%,
   widened for a volatile agent to 1.5× the volatility it runs (measured up to its
   last high-water mark, so a loss cannot loosen its own stop), and never past a
-  40% ceiling, so every agent can still be stopped out.
+  40% ceiling, so every agent can still be stopped out. A stop-out is one
+  `tree.close`: the agent's capital and every sub-mandate it handed out go back
+  to its pod. The book audits the tree's reservation and close invariants before
+  and after every tick.
 - **Crowding control.** Agents in different pods running the same trade are cut
   back to a book-level limit, even when each is inside its own mandate.
 
@@ -106,14 +109,15 @@ The example portfolio **runs like a Tiger Cub**:
 
 Three Tiger-Cub agents in three pods, each weighting the questions differently,
 all land on SBUX: a hedge-fund hotel. Over 20 synthetic markets, the center book
-cuts mean max drawdown from **7.9% to 5.0%**, the loss in the crowd's unwind
-from **−4.9% to −2.4%**, and peak crowded exposure from **52% to 16% of NAV**.
-It gives up return to do it (+3.3% vs +5.5%). An ablation shows crowding
-control is where the value comes from. On this example the risk-scaled ladder
-costs a little drawdown (fixed rungs: 4.6% max drawdown, −1.8% in the unwind);
-across 200-world blocks of the virtual-world arena it adds fund utility but
-leaves the center book's mean max drawdown above the per-agent baseline's. Both
-numbers, and how they were judged, are in [`docs/LOOPS.md`](docs/LOOPS.md).
+cuts mean max drawdown from **7.9% to 5.6%**, the loss in the crowd's unwind
+from **−4.9% to −2.5%**, and peak crowded exposure from **52% to 15% of NAV**,
+at the same mean Sharpe (0.50). It gives up return to do it (+2.8% vs +5.5%). An
+ablation shows crowding control is where the value comes from. This small
+example does not show the improvement loops' gains: across 200-world blocks of
+the virtual-world arena they raise fund utility, and loop 2 also lowers the
+center book's max drawdown, which still sits above the per-agent baseline's
+(7.7% vs 6.9% on loop 2's confirmation block). How each number was judged:
+[`docs/LOOPS.md`](docs/LOOPS.md).
 
 Full write-up, including what didn't help: [`docs/CENTER-BOOK.md`](docs/CENTER-BOOK.md).
 Prices are synthetic and the research is illustrative; this is not investment
@@ -266,10 +270,13 @@ You can also run any layer in isolation:
 | `@allowance/adapters` — AgentHire | `packages/adapters/src/agenthire.test.ts` | Against a fake AgentHire: settlement refuses any amount that is not AgentHire's quote (with or without a `QuoteBook`, whose entries only `fetch()` can add), and any challenge whose chain, token, recipient, domain or `validBefore` disagrees with the mandate, and signs nothing; before a permit is sent HTML 429s and timeouts are refusals, after it they are charged as UNCONFIRMED so a node cannot spend the same authority twice (Fuji 402 and timeout cases); sub-agent budgets split `cap − main` to the micro and are delegated all-or-nothing; repeated overspend becomes an operator incident plus a dispute (never a slash), persisted so a fresh ledger in another process screens the next buyer out; `SerializedPayer` stops two payments, even from two payer instances, spending one leftover. |
 | `@allowance/adapters` — shadow audit | `packages/adapters/src/agenthire-audit.test.ts` | On a recorded AgentHire capture: A2A hires link to their primary job, direct and orphan hires are excluded, cycles and shared children get one alias node per parent, the headline comes from the replay-decided Hard Spend Cap scenario while `strict` is the by-definition total, `--organic-only` drops demo-cascade jobs, and AgentHire operator screening plugs into the replay. |
 | `@allowance/core` — close | `packages/core/src/tree.test.ts` | `close` shrinks a subtree to what it spent, revokes it, and returns exactly what the parent's `available` rises by; never shrinks a parent below what its subtree really spent (even after an unserialized overspend); idempotent; reclaims budget under individually revoked descendants. |
+| `@allowance/core` — invariants | `packages/core/src/tree.test.ts` | `audit()` is empty for any tree built through the API and flags over-commitment (children + spend > budget, incl. an unserialized overspend), broadened merchants/purposes/expiry, negative budgets and broken links; `isClosed` separates a close (no unspent authority left) from a bare revoke (authority stranded); nothing can be delegated anywhere inside a closed subtree. |
+| `@allowance/swarm` — close | `packages/swarm/src/close.test.ts` | With PMs holding sub-mandates that pay every tick, the tree is checked from outside at every tick under three policies: children ≤ parent, available ≥ 0, sub-mandates hold exactly their ppm slice of the PM (never more), a closed subtree's budgets are frozen and it can never pay, delegate or grow; every stop-out is exactly one `close` freeing budget − spent into the pod; shares are validated in the ppm they are cut in; the book's audit stops a broken tree before the tick trades (and a mid-tick break at that tick's end); spent authority is a floor no resize crosses, and a grow the fund cannot fund is clipped, never refused. |
+| `@allowance/lab` — close in the arena | `packages/lab/src/arena-close.test.ts` | On randomized arena rosters with desks that spend every tick, center book and guardrails both run to the end on a sound tree, every stop-out is one `close` of the agent with its desks, and no move is refused. |
 | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
 | `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
 | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
-| `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are revoked with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book. |
+| `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are closed with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book. |
 | `@allowance/swarm` — example | `packages/swarm/src/example.test.ts` | The coffee thesis is well-formed (scores 1–5, sourced trend claims, parseable catalyst dates); the three Tiger Cubs converge on one long; the center book flags it on day one and loses less in the unwind. |
 | `@allowance/orchestrator` | `services/orchestrator/src/flow.test.ts` | `executePayment` reaches every `PaymentOutcome`; in each, the off-chain result **agrees** with the `SpendCapHook` cap decision (hook agreement), the emitted event matches the record, and a settled payment moves the node's ENS `spentDirect` record in lock-step. |
 | `allowance-web` — snapshot | `apps/web/src/snapshot.test.ts` | Runtime validation of `demo-snapshot.json` against the frozen schema: well-formed input round-trips unchanged; malformed/stale input throws a precise, path-tagged `SnapshotParseError`. |

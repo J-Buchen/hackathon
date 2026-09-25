@@ -11,6 +11,7 @@
 import {
   AttenuationError,
   checkAttenuation,
+  isAllowlistSubset,
   type AttenuationDecision,
   type AttenuationRejectionReason,
 } from "./attenuation";
@@ -67,6 +68,26 @@ export class DuplicateNodeError extends Error {
     super(`node already exists: "${name}"`);
     this.name = "DuplicateNodeError";
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Invariants                                                         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A broken standing invariant of the tree (see `DelegationTree.audit`):
+ *  - OVER_COMMITTED  spentDirect + Σ children's budgets > budget, i.e. the node
+ *                    handed down or spent more than it holds (available < 0)
+ *  - NEGATIVE_BUDGET a budget below zero
+ *  - NOT_ATTENUATED  a child's merchants/purposes/expiry broaden its parent's
+ *  - BROKEN_LINK     a node whose parent is not in the tree
+ */
+export type TreeViolationKind = "OVER_COMMITTED" | "NEGATIVE_BUDGET" | "NOT_ATTENUATED" | "BROKEN_LINK";
+
+export interface TreeViolation {
+  kind: TreeViolationKind;
+  node: string;
+  message: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -283,11 +304,16 @@ export class DelegationTree {
       throw new DuplicateNodeError(fullName);
     }
 
-    const decision: AttenuationDecision = checkAttenuation(
-      parent,
-      mandate,
-      this.available(parentName),
-    );
+    // A revoked ANCESTOR kills the parent too (checkAttenuation only sees the
+    // parent itself): nothing new is ever minted inside a dead subtree.
+    const deadAbove = !parent.mandate.revoked && this.isRevokedInChain(parentName);
+    const decision: AttenuationDecision = deadAbove
+      ? {
+          ok: false,
+          reason: "PARENT_REVOKED",
+          message: `an ancestor of "${parentName}" is revoked; it cannot delegate`,
+        }
+      : checkAttenuation(parent, mandate, this.available(parentName));
 
     if (!decision.ok) {
       this.recordEvent({
@@ -494,6 +520,92 @@ export class DelegationTree {
       });
     }
     return freed;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Subtrees and invariants                                          */
+  /* ---------------------------------------------------------------- */
+
+  /** The node and every descendant, each parent before its children. */
+  subtree(name: string): AgentNode[] {
+    const out: AgentNode[] = [];
+    const walk = (node: AgentNode): void => {
+      out.push(node);
+      const bucket = this.childrenIndex_.get(node.name);
+      if (bucket) for (const child of bucket) walk(child);
+    };
+    walk(this.requireNode(name));
+    return out;
+  }
+
+  /** Everything spent anywhere in the node's subtree, its own spend included. */
+  spentInSubtree(name: string): bigint {
+    let spent = 0n;
+    for (const node of this.subtree(name)) spent += node.mandate.spentDirect;
+    return spent;
+  }
+
+  /**
+   * True when `name` is revoked AND nothing in its subtree still holds unspent
+   * authority (every node's `available` ≤ 0) — the state `close()` leaves. A
+   * node that was only `revoke()`d still strands its unspent budget (dead
+   * authority its parent cannot reuse), so it is not closed.
+   */
+  isClosed(name: string): boolean {
+    if (!this.requireNode(name).mandate.revoked) return false;
+    return this.subtree(name).every((node) => this.available(node.name) <= 0n);
+  }
+
+  /**
+   * Check the tree's standing invariants and return every violation (empty
+   * when the tree is sound). `delegate`, `resize` and `close` preserve all of
+   * them on their own; the audit is for callers that want the guarantee
+   * checked rather than assumed (the swarm book runs it every tick), and it
+   * catches what the API cannot prevent: an overspend by unserialized
+   * concurrent `pay()` calls, or a caller writing to a node object directly.
+   *
+   *  - reservation: spentDirect + Σ children's budgets ≤ budget for every node
+   *    (children ≤ parent, available ≥ 0), and no budget is negative;
+   *  - attenuation: every child's merchants, purposes and expiry are within
+   *    its parent's;
+   *  - structure: every non-root node's parent exists.
+   */
+  audit(): TreeViolation[] {
+    const out: TreeViolation[] = [];
+    for (const node of this.nodes_.values()) {
+      const m = node.mandate;
+      if (m.budget < 0n) {
+        out.push({ kind: "NEGATIVE_BUDGET", node: node.name, message: `budget ${m.budget} < 0` });
+      }
+      const committed = m.spentDirect + this.reserved(node.name);
+      if (committed > m.budget) {
+        out.push({
+          kind: "OVER_COMMITTED",
+          node: node.name,
+          message: `spent ${m.spentDirect} + delegated ${committed - m.spentDirect} > budget ${m.budget}`,
+        });
+      }
+      if (node.parent === null) continue;
+      const parent = this.nodes_.get(node.parent);
+      if (!parent) {
+        out.push({ kind: "BROKEN_LINK", node: node.name, message: `parent "${node.parent}" is not in the tree` });
+        continue;
+      }
+      const p = parent.mandate;
+      const broadened = [
+        !isAllowlistSubset(m.allowedMerchants, p.allowedMerchants) && "merchants",
+        !isAllowlistSubset(m.allowedPurposes, p.allowedPurposes) && "purposes",
+        m.expiry > p.expiry && "expiry",
+      ].filter((x): x is string => typeof x === "string");
+      if (broadened.length > 0) {
+        out.push({
+          kind: "NOT_ATTENUATED",
+          node: node.name,
+          message: `${broadened.join(", ")} broaden parent "${parent.name}"`,
+        });
+      }
+    }
+    return out;
   }
 
   /**

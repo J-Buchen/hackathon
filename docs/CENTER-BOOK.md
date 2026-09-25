@@ -14,7 +14,7 @@ has limits. It wins through the **center book**:
 1. **Allocating capital by risk-adjusted, attributable returns.** Allocation is
    correlation-aware, so clones don't get paid twice.
 2. **A drawdown ladder.** A PM is cut at one drawdown and stopped out at a
-   second.
+   second. The stop-out closes its whole mandate subtree in one operation.
 3. **Crowding control.** Pods that pile into the same trade get cut, even when
    every one of them is inside its own limits.
 
@@ -25,14 +25,36 @@ has limits. It wins through the **center book**:
 | fund → pod → PM | `fund.eth` → `consumer.fund.eth` → `tiger-quality.consumer.fund.eth` |
 | capital allocation | the node's **budget**: `tree.resize(node, budget)` |
 | allowed instruments | the node's **allowlist**, attenuated fund ⊇ pod ⊇ PM |
+| a PM's own sub-agents (execution, data) | **sub-mandates**: children of the PM node, each reserved as a ppm `share` of its budget when granted and resized with it |
 | drawdown cut | `resize` to `cutFactor` × capital |
-| stop-out | `resize` to 0, then **`revoke`** |
+| stop-out | **`close`**: the PM and every sub-mandate shrink to what they spent and are revoked, in one operation; the unspent authority is back in the pod |
 | audit trail | the same ordered event log as payments (`RESIZE`, `REVOKE`) |
 
-`resize` is the one addition to `@allowance/core`. It can grow a node's budget
-only out of its parent's *available* budget. It can shrink it only down to what
-the node has already committed (its own spend plus what it has delegated). A
-revoked subtree can't be resized, and the root can only shrink.
+`resize` can grow a node's budget only out of its parent's *available* budget.
+It can shrink it only down to what the node has already committed (its own
+spend plus what it has delegated). A revoked subtree can't be resized, and the
+root can only shrink. The book clips a grow to what the parent still has, so
+once sub-mandates have spent the fund's undeployed buffer the allocator's
+targets become ceilings instead of refused moves. `close` is why a stop-out
+can't leave authority behind: the old stop-out was "resize to 0, then revoke",
+and a PM that had delegated sub-budgets couldn't be resized to 0 at all.
+
+**Invariants, checked twice a tick.** The book audits its tree
+(`bookViolations`) before each tick trades and again at its end, and throws
+`BookInvariantError` on any failure:
+
+- no node has spent plus delegated more than it holds (children ≤ parent,
+  `available` ≥ 0), and no budget is negative;
+- merchants, purposes and expiry attenuate;
+- the root still holds exactly the AUM;
+- every revoked mandate is *closed*: nothing under it holds unspent authority;
+- every stopped PM's mandate is dead, and no PM that is not stopped sits in a
+  dead subtree.
+
+`packages/swarm/src/close.test.ts` checks these from the outside at every tick
+of books whose PMs hold spending sub-mandates. It also shows that each stop-out
+is one `close` that frees exactly budget − spent into the pod, and that a closed
+subtree can never pay, delegate or grow again.
 
 ---
 
@@ -85,8 +107,14 @@ Around them sit agents that give the allocator something to allocate between:
 
 ## The allocator (`allocator.ts`, pure functions)
 
-- **Score** = shrunk Sharpe ÷ volatility, over a trailing window. Shrinkage is
-  `n / (n + 60)`: a 30-day track record is pulled hard toward zero.
+- **Score** = shrunk Sharpe over the agent's last year of record
+  (`recordWindow`, 252 days). Shrinkage is `n / (n + 60)`: a 30-day track
+  record is pulled hard toward zero. A Sharpe estimate's standard error is
+  about √(252 / n) — ±1.7 on a 90-day window — so a short window re-ranks
+  agents on luck; the whole year is the evidence. Scores are not divided by
+  volatility again (a Kelly weight): every agent's Sharpe has the same
+  sampling error, so ranking by it ranks by evidence, and with capital capped
+  per agent and in total the binding constraint is capital, not risk budget.
 - **Correlation-aware.** Each score is divided by the agent's *multiplicity*: the
   sum of its positive return correlations with the other scoring agents. Two
   clones split one allocation.
@@ -96,7 +124,7 @@ Around them sit agents that give the allocator something to allocate between:
   track record:
   - cut to 50% capital at a 10% drawdown;
   - restore once it recovers to within 5% of its high-water mark;
-  - **stop out (revoke) at a 20% drawdown;**
+  - **stop out at a 20% drawdown: the PM's mandate subtree is closed;**
   - **risk-scaled** (loop 1): the rungs widen for an agent that runs more
     volatility, so the stop sits at 1.5σ of the agent's annualized vol (σ
     measured over the last 90 ticks up to its last high-water mark, so the losses
@@ -123,8 +151,9 @@ drawdown against the risk that agent runs, which a per-agent stop-loss cannot.
 
 ## Results
 
-The numbers below come from `npm run demo:swarm` at the current code (loop-1
-risk-scaled ladder with its 40% ceiling), using the coffee thesis as of
+The numbers below come from `npm run demo:swarm` at the current code (after
+loop 2: one-year Sharpe scores, risk-scaled ladder with its 40% ceiling,
+stop-outs by `close`), using the coffee thesis as of
 2026-09-25, 260 simulated trading days and 20 market seeds. The two books share
 agents, gate, leverage and initial capital; they differ in the center book's
 cross-agent allocation and crowding limits and its risk-scaled ladder.
@@ -143,11 +172,11 @@ short **BROS**.
 
 | | per-agent guardrails | center book |
 |---|---:|---:|
-| loss in the unwind | −4.9% | **−2.4%** |
-| max drawdown | 7.9% | **5.0%** (smaller on **17/20** seeds) |
-| peak crowded (SBUX) exposure | 51.5% of NAV | **15.9%** |
-| Sharpe | 0.50 | **0.61** (higher on only 10/20 seeds) |
-| total return | **+5.5%** | +3.3% |
+| loss in the unwind | −4.9% | **−2.5%** |
+| max drawdown | 7.9% | **5.6%** (smaller on **17/20** seeds) |
+| peak crowded (SBUX) exposure | 51.5% of NAV | **15.3%** |
+| Sharpe | 0.50 | 0.50 (higher on only 10/20 seeds) |
+| total return | **+5.5%** | +2.8% |
 
 On day 1 the center book flags "4 agents across 3 pods running one trade in
 SBUX: 48.0% of NAV > 10% limit". The three Tiger Cubs are joined by the rogue
@@ -155,8 +184,8 @@ agent, whose clipped book is also long SBUX. Per-agent guardrails never raise
 it, because no single agent breached anything.
 
 **If the research is wrong** (catalysts carry no edge), the center book still has
-the smaller max drawdown on **17/20** seeds: 5.2% vs 8.3% mean. Sharpe goes from
-0.17 to 0.49, and total return from +2.8% to +2.7%. Crowding control doesn't
+the smaller max drawdown on **16/20** seeds: 5.6% vs 8.3% mean. Sharpe goes from
+0.17 to 0.35, and total return from +2.8% to +1.9%. Crowding control doesn't
 depend on the thesis being right.
 
 **Ablation (mean over the same 20 seeds):**
@@ -164,10 +193,10 @@ depend on the thesis being right.
 | variant | max DD | unwind | Sharpe | return |
 |---|---:|---:|---:|---:|
 | per-agent guardrails | 7.9% | −4.9% | 0.50 | +5.5% |
-| center book (all on) | 5.0% | −2.4% | 0.61 | +3.3% |
-| − crowding limits | 15.3% | −12.6% | 0.22 | +3.0% |
-| − drawdown cut rung | 5.1% | −2.5% | 0.64 | +3.5% |
-| − risk-scaled ladder (fixed 10%/20% rungs) | 4.6% | −1.8% | 0.56 | +2.9% |
+| center book (all on) | 5.6% | −2.5% | 0.50 | +2.8% |
+| − crowding limits | 15.4% | −12.1% | 0.32 | +5.0% |
+| − drawdown cut rung | 5.6% | −2.6% | 0.54 | +3.1% |
+| − risk-scaled ladder (fixed 10%/20% rungs) | 5.1% | −1.9% | 0.40 | +2.2% |
 | crowding limits only | 4.2% | −2.8% | 0.46 | +2.3% |
 
 What this says, plainly:
@@ -176,23 +205,34 @@ What this says, plainly:
   comes from it.
 - **Performance-chasing allocation without crowding control is worse than doing
   nothing.** Sharpe-weighting pays the crowd for its run-up: max drawdown rises
-  to 15.3% vs 7.9% for equal weights. This is the case for a book-level risk
+  to 15.4% vs 7.9% for equal weights. This is the case for a book-level risk
   engine rather than a leaderboard.
-- **The cost is return.** The center book gives up about 2.2 points of return in
+- **The cost is return.** The center book gives up about 2.7 points of return in
   the edge-on case, because it refuses to let the fund's single best idea become
   half its NAV.
 - **The drawdown-cut rung does not earn its keep on this market.** Removing it
-  raises Sharpe from 0.61 to 0.64. It stays in the default because it's standard
+  raises Sharpe from 0.50 to 0.54. It stays in the default because it's standard
   pod-shop practice and costs little drawdown, but the data doesn't support it
-  here. The stop-out rung (revocation) stays either way.
+  here. The stop-out rung (now a `close`) stays either way. Since loop 1 the
+  rungs are risk-scaled. The cut still fires (about 9 times per arena world on
+  research seeds 801–900, against 18 under the fixed ladder), but dropping it
+  moves the arena's CRRA (γ = 3) certainty-equivalent return by only +0.05
+  points on seeds 801–1000 (paired 90% CI −0.06..+0.16) and +0.12 on 5600–5749
+  (−0.03..+0.27). That is not enough to change the default. It is optional:
+  leave `ddCut` unset for a stop-only ladder.
 - **The risk-scaled ladder (loop 1) trades drawdown for Sharpe here.** With
-  fixed 10%/20% rungs the center book's mean max drawdown is 4.6% (Sharpe 0.56);
-  risk-scaled, 5.0% (Sharpe 0.61). It was adopted because it raised fund utility
-  on sealed arena worlds, where it also leaves mean max drawdown above the
-  per-agent baseline's; see [`LOOPS.md`](LOOPS.md).
-- **The headline seed (7) is less flattering than the average.** On it the center
-  book has the lower drawdown and unwind loss, but also the lower Sharpe (0.91 vs
-  1.08). The dashboard shows that seed as-is rather than a cherry-picked one.
+  fixed 10%/20% rungs the center book's mean max drawdown is 5.1% (Sharpe 0.40);
+  risk-scaled, 5.6% (Sharpe 0.50). It was adopted because it raised fund utility
+  on sealed arena worlds, where the center book's mean max drawdown is still
+  above the per-agent baseline's; see [`LOOPS.md`](LOOPS.md).
+- **Loop 2's one-year scores do not help this example.** On sealed arena worlds
+  they raised utility and lowered drawdown; on these 20 coffee markets the
+  center book's mean Sharpe fell from 0.61 to 0.50 and its max drawdown rose
+  from 5.0% to 5.6%. The markets are one scenario, a crowded trade that unwinds;
+  the arena's 200-world blocks are the yardstick.
+- **The headline seed (7)** is shown as-is rather than a cherry-picked one. On it
+  the center book has the lower drawdown (5.5% vs 6.6%) and unwind loss, and the
+  higher Sharpe (1.22 vs 1.08), but the lower return (+7.4% vs +9.3%).
 
 ## Limits
 

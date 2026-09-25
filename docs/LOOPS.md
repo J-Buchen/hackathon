@@ -109,3 +109,50 @@ bit (block B paired mean 0.05067830594000386 vs parent `f5b2d80`), but they foun
 - **Protocol text** overstated the neutrality rule, the tests the driver runs, and called a normal
   interval a t-interval. The protocol above is corrected, and the driver now runs every suite.
 
+## Loop 2
+
+**Merged: (A) one-year scores and (C) stop-out by `close`.** Sealed block B (seeds 12500–12699), the
+two combined vs the loop-1 code with its correction: fund utility **+0.62 pp [90% +0.25, +0.99]**,
+better in 59% of worlds; center-book max drawdown **−0.32 pp [90% −0.50, −0.15]**; Sharpe +0.06
+[90% +0.02, +0.09]; tiger track unchanged. On that block the center book returns a certainty
+equivalent of 11.65% vs 6.13% for per-agent guardrails, with a mean max drawdown of 7.75% vs 6.88%:
+lower than before loop 2 (8.07%) but **still above the baseline's**.
+
+- **(A) resize.** Each agent is scored on its last 252 days of attributable record instead of 90,
+  and ranked by shrunk Sharpe rather than Sharpe ÷ vol. A Sharpe estimated on 90 days has a
+  standard error of about ±1.7, as large as the skill being measured, so the old window re-ranked
+  agents on luck. Block A: +0.90 pp [+0.50, +1.30], max drawdown −0.23 pp [−0.40, −0.06].
+  Caveat from its review: the arena's skilled agents have stationary skill, which a long window
+  rewards; an edge that decays to flat never trips the ladder and keeps its capital longer.
+- **(C) close.** A stop-out is now one `DelegationTree.close(agent)`: the agent's capital and every
+  sub-mandate it handed out (`AgentSpec.subMandates`, reserved at grant) return to its pod. The
+  book audits the tree (`audit()`: no over-commitment, attenuation, no negative budgets, links)
+  before and after every tick, `delegate()` refuses under any revoked ancestor, and grows are
+  clipped to the parent's available authority. Structure track: block A utility bit-identical.
+  Carried from loop 1, where it won block A but conflicted with the ladder change.
+
+| candidate | review | sealed block A (vs current code) | outcome |
+|---|---|---|---|
+| (C) stop-out closes the subtree, sub-mandates, tree audit | passed | 0.00 pp (bit-identical), max DD 0.00 | winner on A |
+| (A) one-year Sharpe scores | passed | +0.90 pp [+0.50, +1.30], max DD −0.23 pp | winner on A |
+| (G) crowding measured beyond the lead counterparty | passed | +3.35 pp [+2.58, +4.13], **max DD +2.48 pp** [+2.22, +2.75] | **rejected by the risk guard** |
+| wildcard: deploy × NAV and redeploy freed capital | rejected | — | rejected by review |
+| (G) operator credit event: cap an operator's other names on a stop-out | rejected | — | rejected by review |
+
+Rejected:
+- **Crowding beyond the lead counterparty** won the most utility, by loosening the crowding limits:
+  cuts per world fell from 57 to 6, the largest holder's position (up to 40% of NAV) became exempt,
+  peak exposure to a crowded name rose from about 21% to 37% of NAV, and worst-world max drawdown
+  from 18.8% to 28.6% on research seeds. Its review also found that a net-flat operator could be
+  the exempt "lead" and wipe out a real crowd. This is the case the risk guard was written for.
+- **Constant-proportion deploy and redeploy:** +0.3 pp by putting more capital at risk (Sharpe
+  −0.023, max drawdown +0.27 pp on research seeds), and its "80% of NAV at work" claim was false
+  (about 50%). It was also cut against the pre-fix code; the orchestrator's rebase had to switch
+  off stop-outs in one of its tests.
+- **Operator credit event:** its "caps never compound" guarantee was untested and false: a name the
+  ladder had cut and then restored, still at half capital, was halved again (seeds 59, 168, 260).
+
+All five proposals were written against `d2151ed` and rebased by the orchestrator onto the corrected
+code (`dc01ec0`) before judging. Full numbers: [`docs/loops/loop-2.json`](loops/loop-2.json); diffs:
+[`docs/loops/loop-2/`](loops/loop-2/).
+

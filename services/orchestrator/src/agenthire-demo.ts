@@ -599,8 +599,14 @@ async function main(): Promise<void> {
     ddStopMax: policy.ddStopMax,
   });
   line(`PM return path: the Tiger overlay (packages/lab) on ${panel.primary} in synthetic arena world #${arenaSeed}, ${run.ret.length} days.`);
-  line(`This is a SIMULATED path, not market data. Ladder (swarm nextLadderState) on the PM mandate's own fixed stop-loss: cut at ${thresholds.ddCut * 100}% drawdown,`);
-  line(`restore below ${thresholds.ddRecover * 100}%, stop out at ${thresholds.ddStop * 100}%. (The center book's risk-scaled default would widen these ×${scaled.scale.toFixed(2)}`);
+  line(
+    `This is a SIMULATED path, not market data. Ladder (swarm nextLadderState) on the PM mandate's own fixed stop-loss: ` +
+      (thresholds.ddCut === undefined ? "no cut rung," : `cut at ${thresholds.ddCut * 100}% drawdown,`),
+  );
+  line(
+    (thresholds.ddCut === undefined ? "" : `restore below ${(thresholds.ddRecover ?? 0) * 100}%, `) +
+      `stop out at ${thresholds.ddStop * 100}%. (The center book's risk-scaled default would widen these ×${scaled.scale.toFixed(2)}`,
+  );
   const capped = scaled.ddStop >= policy.ddStopMax - 1e-12;
   // Replay the same path under the center book's own rungs, for the record.
   let centerState: LadderState = "active";
@@ -616,7 +622,7 @@ async function main(): Promise<void> {
     `${capped ? " (its ceiling)" : ` (ceiling ${policy.ddStopMax * 100}%)`}; the fixed rungs are its floor. Under those rungs this path ends ${centerState.toUpperCase()}.)`);
   let state: LadderState = "active";
   const transitions: Array<{ day: number; date: string; from: LadderState; to: LadderState; drawdown: number; pmBudget: string }> = [];
-  const cutBudget = (PM_CAPITAL * BigInt(Math.round(policy.cutFactor * 1000))) / 1000n;
+  const cutBudget = (PM_CAPITAL * BigInt(Math.round((policy.cutFactor ?? 1) * 1000))) / 1000n;
   let freed = 0n;
   let rootBefore = 0n;
   let rootAfter = 0n;

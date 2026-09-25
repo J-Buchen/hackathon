@@ -355,3 +355,109 @@ test("close frees exactly the unspent part of a deep, partly spent subtree", asy
     [30n, 130n, 7n, 187n],
   );
 });
+
+/* ---------------------------------------------------------------- */
+/* subtree, isClosed, audit — the invariants callers can check       */
+/* ---------------------------------------------------------------- */
+
+test("subtree lists a node and every descendant parents-first; spentInSubtree sums their spend", async () => {
+  const tree = await capitalTree();
+  assert.deepEqual(tree.subtree("pm.fund.eth").map((n) => n.name), ["pm.fund.eth", "scraper.pm.fund.eth"]);
+  assert.deepEqual(tree.subtree("fund.eth").map((n) => n.name), ["fund.eth", "pm.fund.eth", "scraper.pm.fund.eth", "pod.fund.eth"]);
+  assert.equal(tree.spentInSubtree("pm.fund.eth"), 8_000000n);
+  assert.equal(tree.spentInSubtree("scraper.pm.fund.eth"), 3_000000n);
+  assert.equal(tree.spentInSubtree("pod.fund.eth"), 0n);
+  assert.throws(() => tree.subtree("nobody.fund.eth"), UnknownNodeError);
+});
+
+test("isClosed: a revoke strands unspent authority, a close leaves none", async () => {
+  const tree = await capitalTree();
+  assert.equal(tree.isClosed("pm.fund.eth"), false, "live");
+  tree.revoke("pm.fund.eth");
+  assert.equal(tree.isClosed("pm.fund.eth"), false, "revoked, but 32 unspent is stranded under it");
+  const stranded = tree.subtree("pm.fund.eth").reduce((s, n) => s + tree.available(n.name), 0n);
+  assert.equal(stranded, 32_000000n);
+  const freed = tree.close("pm.fund.eth");
+  assert.equal(freed, stranded, "close frees exactly what the revoke stranded");
+  assert.equal(tree.isClosed("pm.fund.eth"), true);
+  assert.equal(tree.isClosed("scraper.pm.fund.eth"), false, "the scraper is dead via its parent, not itself revoked");
+  assert.ok(tree.subtree("pm.fund.eth").every((n) => tree.available(n.name) === 0n));
+});
+
+test("nothing new is minted inside a closed subtree: a descendant of a closed node cannot delegate", async () => {
+  const tree = await capitalTree();
+  tree.close("pm.fund.eth");
+  const seq = tree.nextSeq;
+  // The scraper itself is not revoked, only its parent: still refused, even at zero budget.
+  assert.throws(
+    () => tree.delegate("scraper.pm.fund.eth", "late", { budget: 0n, expiry: FAR }),
+    (e: unknown) => e instanceof AttenuationError && e.reason === "PARENT_REVOKED",
+  );
+  assert.equal(tree.getNode("late.scraper.pm.fund.eth"), undefined);
+  assert.equal(tree.events.at(-1)!.result, "ATTENUATION_REJECTED");
+  assert.equal(tree.nextSeq, seq + 1);
+});
+
+test("audit: a tree built through the API is sound before and after resizes and closes", async () => {
+  const tree = await capitalTree();
+  assert.deepEqual(tree.audit(), []);
+  tree.resize("pod.fund.eth", 5_000000n);
+  tree.close("pm.fund.eth");
+  tree.delegate("fund.eth", "next", { budget: tree.available("fund.eth"), expiry: FAR });
+  assert.deepEqual(tree.audit(), []);
+});
+
+test("audit flags an over-committed node (the reservation invariant: children ≤ parent)", async () => {
+  // The unserialized-overspend path: two concurrent pay() calls both pass the
+  // budget check, so the child spends 200 against a budget of 100.
+  const tree = new DelegationTree();
+  tree.fundRoot({ principal: "p", rootName: "r.eth", mandate: { budget: 1000n, expiry: FAR } });
+  tree.delegate("r.eth", "c", { budget: 100n, expiry: FAR });
+  const slow: PaymentAdapters = {
+    ...allowAll,
+    settlement: {
+      settle: async (req) => {
+        await new Promise((res) => setTimeout(res, 5));
+        return allowAll.settlement.settle(req);
+      },
+    },
+  };
+  await Promise.all([
+    pay(tree, { node: "c.r.eth", merchant: "m", amount: 100n }, slow, { now: 1_000 }),
+    pay(tree, { node: "c.r.eth", merchant: "m", amount: 100n }, slow, { now: 1_000 }),
+  ]);
+  const v = tree.audit();
+  assert.equal(v.length, 1);
+  assert.equal(v[0]!.kind, "OVER_COMMITTED");
+  assert.equal(v[0]!.node, "c.r.eth");
+
+  // A caller writing a parent's budget below what it handed down is caught too.
+  const t2 = seed();
+  t2.delegate("alice.eth", "kid", { budget: 60_000000n, expiry: FAR });
+  t2.requireNode("alice.eth").mandate.budget = 50_000000n;
+  assert.deepEqual(t2.audit().map((x) => [x.kind, x.node]), [["OVER_COMMITTED", "alice.eth"]]);
+});
+
+test("audit flags broadened authority, negative budgets and broken links", () => {
+  const tree = seed();
+  tree.delegate("alice.eth", "kid", { budget: 10_000000n, allowedMerchants: ["a"], allowedPurposes: ["data"], expiry: FAR - 10 });
+  tree.delegate("kid.alice.eth", "grandkid", { budget: 1_000000n, allowedMerchants: ["a"], allowedPurposes: ["data"], expiry: FAR - 10 });
+  assert.deepEqual(tree.audit(), []);
+  const kid = tree.requireNode("kid.alice.eth");
+  const grandkid = tree.requireNode("grandkid.kid.alice.eth");
+  grandkid.mandate.allowedMerchants = ["a", "b"];
+  grandkid.mandate.allowedPurposes = ["data", "trade"];
+  grandkid.mandate.expiry = FAR;
+  kid.mandate.budget = -1n;
+  const kinds = tree.audit().map((x) => `${x.kind} ${x.node}`);
+  assert.ok(kinds.includes("NEGATIVE_BUDGET kid.alice.eth"));
+  assert.ok(kinds.includes("OVER_COMMITTED kid.alice.eth"));
+  const broadened = tree.audit().find((x) => x.kind === "NOT_ATTENUATED")!;
+  assert.equal(broadened.node, "grandkid.kid.alice.eth");
+  assert.match(broadened.message, /merchants, purposes, expiry broaden parent "kid.alice.eth"/);
+
+  const orphan = seed();
+  const n = orphan.delegate("alice.eth", "kid", { budget: 1n, expiry: FAR });
+  n.parent = "ghost.eth";
+  assert.ok(orphan.audit().some((x) => x.kind === "BROKEN_LINK" && x.node === "kid.alice.eth"));
+});

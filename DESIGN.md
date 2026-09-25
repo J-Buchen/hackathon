@@ -281,6 +281,18 @@ class DelegationTree {
   //   interleave with pay()'s checks — but a settlement already awaiting inside
   //   pay() can land after it; run close() through the same per-root queue as
   //   payments (SerializedPayer in @allowance/adapters) when payments are live.
+  subtree(name: string): AgentNode[];                // node + descendants, parents first
+  spentInSubtree(name: string): bigint;              // Σ spentDirect over the subtree
+  isClosed(name: string): boolean;
+  // ^ revoked AND no node in its subtree has available > 0 (what close()
+  //   leaves; a bare revoke strands the unspent budget and is not closed).
+  audit(): TreeViolation[];
+  // ^ standing invariants, [] when sound: OVER_COMMITTED (spentDirect +
+  //   Σ children's budgets > budget), NEGATIVE_BUDGET, NOT_ATTENUATED (a
+  //   child's merchants/purposes/expiry broaden its parent's), BROKEN_LINK.
+  //   The API preserves all of them; audit() catches an unserialized
+  //   overspend or a direct write. delegate() also refuses (PARENT_REVOKED)
+  //   under any revoked ANCESTOR, so nothing is minted inside a closed subtree.
   recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent; // custom events
 }
 ```
