@@ -1,0 +1,317 @@
+diff --git a/packages/lab/src/research.test.ts b/packages/lab/src/research.test.ts
+index 1b8cbae..8b5cdf2 100644
+--- a/packages/lab/src/research.test.ts
++++ b/packages/lab/src/research.test.ts
+@@ -22,6 +22,10 @@ test("the grid collapses settings that cannot matter, so every trial is distinct
+   assert.equal(grid.length, 36);
+   assert.equal(new Set(grid.map(paramKey)).size, grid.length);
+   assert.equal(canonical({ ...DEFAULT_PARAMS, trendLookback: null, trendFloor: 0 }).trendFloor, 1);
++  // A beta estimator on an unhedged book cannot matter either.
++  const shrunk = { ...DEFAULT_PARAMS, hedgeBeta: { prior: 0.5, priorSd: 0.5, max: 1.5 } };
++  assert.equal(paramKey(shrunk), paramKey(DEFAULT_PARAMS));
++  assert.notEqual(paramKey({ ...shrunk, hedgeSymbol: "HG", hedgeRatio: 1 }), paramKey({ ...DEFAULT_PARAMS, hedgeSymbol: "HG", hedgeRatio: 1 }));
+ });
+ 
+ test("walk-forward never trains on its test window, and tests tile the development period", () => {
+diff --git a/packages/lab/src/research.ts b/packages/lab/src/research.ts
+index 2df5c3f..1ee71ad 100644
+--- a/packages/lab/src/research.ts
++++ b/packages/lab/src/research.ts
+@@ -47,6 +47,7 @@ export function canonical(p: TigerParams): TigerParams {
+     q.hedgeSymbol = null;
+     q.hedgeRatio = 0;
+     q.betaLookback = BUY_AND_HOLD.betaLookback;
++    q.hedgeBeta = BUY_AND_HOLD.hedgeBeta;
+   }
+   if (q.preEventDays === 0 || q.preEventMult === 1) {
+     q.preEventDays = 0;
+diff --git a/packages/lab/src/strategy.test.ts b/packages/lab/src/strategy.test.ts
+index ae22451..cb58499 100644
+--- a/packages/lab/src/strategy.test.ts
++++ b/packages/lab/src/strategy.test.ts
+@@ -1,6 +1,14 @@
+ import { test } from "node:test";
+ import assert from "node:assert/strict";
+-import { BUY_AND_HOLD, DEFAULT_PARAMS, betaSeries, runTiger, type TigerParams } from "./strategy";
++import {
++  BUY_AND_HOLD,
++  DEFAULT_PARAMS,
++  RECOMMENDED_TIGER,
++  betaSeries,
++  runTiger,
++  shrunkBetaSeries,
++  type TigerParams,
++} from "./strategy";
+ import { quarterlyEvents, syntheticPanel } from "./testkit";
+ import type { Panel } from "./series";
+ 
+@@ -142,3 +150,120 @@ test("gross is capped and costs scale with turnover", () => {
+   const dear = runTiger(p, quarterlyEvents(400), EVERYTHING, { from: 100, to: 399 });
+   assert.ok(dear.costs > cheap.costs && cheap.costs === 0);
+ });
++
++/* ------------------------------------------------------------------ */
++/* Shrunk-beta hedge (loop 4)                                         */
++/* ------------------------------------------------------------------ */
++
++/** OLS beta of a run's excess returns on the hedge's returns over the same days. */
++function bookBeta(r: ReturnType<typeof runTiger>, p: Panel, from: number): number {
++  const y = r.ret.map((x, i) => x - r.rf[i]!);
++  const x = p.ret.HG!.slice(from, from + y.length);
++  const my = y.reduce((a, b) => a + b, 0) / y.length;
++  const mx = x.reduce((a, b) => a + b, 0) / x.length;
++  let c = 0;
++  let v = 0;
++  for (let i = 0; i < y.length; i++) {
++    c += (x[i]! - mx) * (y[i]! - my);
++    v += (x[i]! - mx) ** 2;
++  }
++  return c / v;
++}
++
++test("shrunk beta is OLS pulled toward the prior by its own standard error (Vasicek)", () => {
++  const p = syntheticPanel({ days: 400, seed: 31, beta: 1.3, vol: 0.03 });
++  const y = p.ret.LK!;
++  const x = p.ret.HG!;
++  const L = 120;
++  const ols = betaSeries(y, x, L);
++  // A diffuse prior is OLS; a dogmatic one is the prior.
++  const diffuse = shrunkBetaSeries(y, x, L, 0.5, 1e6);
++  const dogmatic = shrunkBetaSeries(y, x, L, 0.5, 1e-9);
++  for (const t of [20, 60, 200, 399]) {
++    assert.ok(Math.abs(diffuse[t]! - ols[t]!) < 1e-9, `diffuse prior at ${t}`);
++    assert.ok(Math.abs(dogmatic[t]! - 0.5) < 1e-9, `dogmatic prior at ${t}`);
++  }
++  assert.ok(Number.isNaN(shrunkBetaSeries(y, x, L, 0.5, 0.5)[18]!), "no estimate below 20 observations");
++  // The formula, recomputed independently at one close.
++  const t = 250;
++  const a = t - L + 1;
++  const xs = x.slice(a, t + 1);
++  const ys = y.slice(a, t + 1);
++  const mx = xs.reduce((u, v) => u + v, 0) / L;
++  const my = ys.reduce((u, v) => u + v, 0) / L;
++  const sxx = xs.reduce((u, v) => u + (v - mx) ** 2, 0);
++  const b = xs.reduce((u, v, i) => u + (v - mx) * (ys[i]! - my), 0) / sxx;
++  const se2 = ys.reduce((u, v, i) => u + (v - my - b * (xs[i]! - mx)) ** 2, 0) / (L - 2) / sxx;
++  const k = 0.25 / (0.25 + se2);
++  assert.ok(Math.abs(shrunkBetaSeries(y, x, L, 0.5, 0.5)[t]! - (k * b + (1 - k) * 0.5)) < 1e-12);
++  assert.ok(k > 0 && k < 1);
++});
++
++test("shrunk beta trusts a long, precise record more than a short, noisy one", () => {
++  const p = syntheticPanel({ days: 1200, seed: 32, beta: 1.4, vol: 0.04 });
++  const s = shrunkBetaSeries(p.ret.LK!, p.ret.HG!, 1000, 0.5, 0.5);
++  const b = betaSeries(p.ret.LK!, p.ret.HG!, 1000);
++  const weight = (t: number) => (s[t]! - 0.5) / (b[t]! - 0.5);
++  assert.ok(weight(25) < weight(1100), `k(25 obs) ${weight(25)} < k(1100 obs) ${weight(1100)}`);
++  assert.ok(weight(1100) > 0.97, "a long record is nearly OLS");
++  assert.ok(Math.abs(s[1199]! - 1.4) < 0.1, `recovers the true beta: ${s[1199]}`);
++});
++
++test("NO LOOK-AHEAD: the shrunk-beta hedge never moves on future returns", () => {
++  const base = syntheticPanel({ days: 900, seed: 33 });
++  const events = quarterlyEvents(900);
++  const params: TigerParams = { ...EVERYTHING, hedgeBeta: { prior: 0.5, priorSd: 0.5, max: 1.5 } };
++  for (const k of [300, 610]) {
++    const fork = forkAt(base, k, 91 + k);
++    const a = runTiger(base, events, params, { from: 100, to: 899 });
++    const b = runTiger(fork, events, params, { from: 100, to: 899 });
++    const lastSame = k + 1 - 100;
++    for (let i = 0; i <= lastSame; i++) {
++      assert.equal(a.wHedge[i], b.wHedge[i], `hedge weight moved at return day ${i + 100} after forking at ${k}`);
++      assert.equal(a.wLong[i], b.wLong[i]);
++    }
++    const sa = shrunkBetaSeries(base.ret.LK!, base.ret.HG!, 60, 0.5, 0.5);
++    const sb = shrunkBetaSeries(fork.ret.LK!, fork.ret.HG!, 60, 0.5, 0.5);
++    for (let t = 0; t <= k; t++) assert.ok(Object.is(sa[t], sb[t]), `shrunk beta at close ${t}`);
++  }
++});
++
++test("the shrunk-beta hedge is sized at −clip(β, 0, max) × long", () => {
++  const hb = { prior: 0.5, priorSd: 0.5, max: 1.5 };
++  const params: TigerParams = { ...BUY_AND_HOLD, maxGross: 10, hedgeSymbol: "HG", hedgeRatio: 1, betaLookback: 60, hedgeBeta: hb };
++  const cases = [
++    { beta: 1.0, seed: 34 },
++    { beta: 3.0, seed: 35 }, // above the ceiling
++    { beta: -1.0, seed: 36 }, // negative: the hedge never goes long
++  ];
++  let clippedHigh = 0;
++  let clippedLow = 0;
++  for (const c of cases) {
++    const p = syntheticPanel({ days: 300, seed: c.seed, beta: c.beta, vol: 0.02 });
++    const s = shrunkBetaSeries(p.ret.LK!, p.ret.HG!, 60, hb.prior, hb.priorSd);
++    const r = runTiger(p, [], params, { from: 100, to: 299 });
++    r.wHedge.forEach((wH, i) => {
++      const t = 100 + i - 1; // decided at the close before the return day
++      const expect = -Math.min(1.5, Math.max(0, s[t]!)) * r.wLong[i]!;
++      assert.ok(Math.abs(wH - expect) < 1e-12, `beta ${c.beta}, day ${t + 1}: ${wH} vs ${expect}`);
++      if (s[t]! > 1.5) clippedHigh++;
++      if (s[t]! < 0) clippedLow++;
++      assert.ok(wH <= 0 && wH >= -1.5 * r.wLong[i]! - 1e-12);
++    });
++  }
++  assert.ok(clippedHigh > 100 && clippedLow > 100, "both clips were exercised");
++});
++
++test("RECOMMENDED_TIGER's hedge cancels the book's market beta; the old half hedge left half of it on", () => {
++  const p = syntheticPanel({ days: 1000, seed: 37, beta: 1.2, vol: 0.03 });
++  const rec: TigerParams = { ...RECOMMENDED_TIGER, hedgeSymbol: "HG" };
++  const half: TigerParams = { ...rec, hedgeRatio: 0.5, hedgeBeta: null };
++  const none: TigerParams = { ...rec, hedgeRatio: 0 };
++  const range = { from: 200, to: 999 };
++  const bRec = bookBeta(runTiger(p, [], rec, range), p, 200);
++  const bHalf = bookBeta(runTiger(p, [], half, range), p, 200);
++  const bNone = bookBeta(runTiger(p, [], none, range), p, 200);
++  assert.ok(bNone > 0.5, `unhedged book beta ${bNone}`);
++  assert.ok(bHalf > 0.35 * bNone, `half hedge leaves ~half the beta on: ${bHalf} vs ${bNone}`);
++  assert.ok(Math.abs(bRec) < 0.15 * bNone, `recommended hedge leaves ~none: ${bRec} vs ${bNone}`);
++});
+diff --git a/packages/lab/src/strategy.ts b/packages/lab/src/strategy.ts
+index 5a63905..a8e56d6 100644
+--- a/packages/lab/src/strategy.ts
++++ b/packages/lab/src/strategy.ts
+@@ -10,7 +10,10 @@
+  *          cut at `ddCut`, flat at `ddStop` (the mandate is revoked), and only
+  *          re-underwritten after `reentryDays` AND the trend is back
+  *   time   lean in (or out) ahead of scheduled earnings, and after them
+- *   hedge  short China-ADR beta (KWEB/FXI/MCHI) with a trailing-beta hedge
++ *   hedge  short China-ADR beta (KWEB/FXI/MCHI) with a trailing-beta hedge;
++ *          with `hedgeBeta` set, the beta is shrunk toward a prior by its own
++ *          precision and clipped, so the short leg cancels the market
++ *          exposure the thesis does not claim (and no more)
+  *
+  * TIMING CONVENTION (the no-look-ahead contract):
+  *   weights for day t+1 are decided at the close of day t, using prices and
+@@ -51,6 +54,13 @@ export interface TigerParams {
+   /** Fraction of the long's trailing beta to hedge (0–1). */
+   hedgeRatio: number;
+   betaLookback: number;
++  /**
++   * How the trailing beta is estimated. null = the raw OLS beta, clipped to
++   * [0, 3] (legacy). Otherwise the OLS beta is shrunk toward `prior` by its
++   * own precision (Vasicek: weight on the data k = priorSd² / (priorSd² +
++   * SE(β̂)²)) and clipped to [0, max]. See `shrunkBetaSeries`.
++   */
++  hedgeBeta: HedgeBeta | null;
+   /** Costs: one-way cost per unit turnover on the long (OTC spread + impact), in bps. */
+   costBps: number;
+   hedgeCostBps: number;
+@@ -80,6 +90,7 @@ export const DEFAULT_PARAMS: TigerParams = {
+   hedgeSymbol: null,
+   hedgeRatio: 0,
+   betaLookback: 120,
++  hedgeBeta: null,
+   costBps: 20,
+   hedgeCostBps: 5,
+   borrowRate: 0.02,
+@@ -90,10 +101,24 @@ export const DEFAULT_PARAMS: TigerParams = {
+ /** Buy-and-hold with the same cost model: the benchmark every variant must beat. */
+ export const BUY_AND_HOLD: TigerParams = { ...DEFAULT_PARAMS };
+ 
++export interface HedgeBeta {
++  /** Where the beta is pulled when its trailing estimate is imprecise. */
++  prior: number;
++  /** Prior dispersion of betas: the larger, the more the data is trusted. */
++  priorSd: number;
++  /** Ceiling on the hedge beta (floor is 0: the hedge never goes long). */
++  max: number;
++}
++
+ /**
+  * The overlay's recommended settings — what the arena's tiger track scores and
+  * the improvement loops tune. `hedgeSymbol` is a placeholder: callers point it
+  * at their own hedge instrument (the arena uses its virtual index "VIDX").
++ *
++ * Hedge: the thesis is the single name, not the market, so the short leg is
++ * sized to cancel the long's whole trailing beta (hedgeRatio 1), with that
++ * beta shrunk toward 0.5 by its standard error and clipped to [0, 1.5].
++ * (Loops 1–3 hedged half of the raw beta, leaving half the market exposure on.)
+  */
+ export const RECOMMENDED_TIGER: TigerParams = {
+   ...BUY_AND_HOLD,
+@@ -103,7 +128,8 @@ export const RECOMMENDED_TIGER: TigerParams = {
+   ddStop: 0.3,
+   reentryDays: 20,
+   hedgeSymbol: "VIDX",
+-  hedgeRatio: 0.5,
++  hedgeRatio: 1,
++  hedgeBeta: { prior: 0.5, priorSd: 0.5, max: 1.5 },
+ };
+ 
+ export type BookEventKind = "STOP_OUT" | "REUNDERWRITE" | "CUT" | "UNCUT";
+@@ -230,6 +256,55 @@ export function betaSeries(y: readonly number[], x: readonly number[], L: number
+   });
+ }
+ 
++/**
++ * Trailing OLS beta of y on x over r[t-L+1..t], shrunk toward `prior` by its
++ * own precision (Vasicek): with SE² = s²_resid / Σ(x − x̄)² the sampling
++ * variance of β̂, the weight on the data is k = priorSd² / (priorSd² + SE²)
++ * and the value is k·β̂ + (1 − k)·prior. A short or noisy record leans on the
++ * prior; a long, tight one converges to OLS. Point-in-time (indices ≤ t);
++ * NaN below 20 observations, like `betaSeries`. Not clipped.
++ */
++export function shrunkBetaSeries(y: readonly number[], x: readonly number[], L: number, prior: number, priorSd: number): number[] {
++  const tau2 = priorSd * priorSd;
++  return y.map((_, t) => {
++    const a = Math.max(1, t - L + 1);
++    const n = t - a + 1;
++    if (n < 20) return NaN;
++    let sx = 0;
++    let sy = 0;
++    for (let i = a; i <= t; i++) {
++      sx += x[i]!;
++      sy += y[i]!;
++    }
++    const mx = sx / n;
++    const my = sy / n;
++    let cov = 0;
++    let vx = 0;
++    for (let i = a; i <= t; i++) {
++      cov += (x[i]! - mx) * (y[i]! - my);
++      vx += (x[i]! - mx) ** 2;
++    }
++    if (vx === 0) return NaN;
++    const b = cov / vx;
++    let ss = 0;
++    for (let i = a; i <= t; i++) ss += (y[i]! - my - b * (x[i]! - mx)) ** 2;
++    const se2 = ss / (n - 2) / vx;
++    const k = tau2 + se2 > 0 ? tau2 / (tau2 + se2) : 1;
++    return k * b + (1 - k) * prior;
++  });
++}
++
++/** The trailing beta the hedge is sized from: raw OLS (legacy) or shrunk (`hedgeBeta`). */
++function hedgeBetaSeries(panel: Panel, L: string, H: string, p: TigerParams): number[] {
++  const rL = panel.ret[L]!;
++  const rH = panel.ret[H]!;
++  const hb = p.hedgeBeta;
++  if (!hb) return cached(panel, `beta:${L}:${H}:${p.betaLookback}`, () => betaSeries(rL, rH, p.betaLookback));
++  return cached(panel, `sbeta:${L}:${H}:${p.betaLookback}:${hb.prior}:${hb.priorSd}`, () =>
++    shrunkBetaSeries(rL, rH, p.betaLookback, hb.prior, hb.priorSd),
++  );
++}
++
+ /**
+  * For each close t: trading days until the next print that is public by t
+  * (announced ≥ `lead` days ahead), and days since the most recent print ≤ t.
+@@ -277,8 +352,8 @@ export function runTiger(
+   const n = panel.dates.length;
+   const vol = p.volTarget !== null ? cached(panel, `vol:${L}:${p.volLookback}`, () => trailingVolSeries(rL, p.volLookback)) : null;
+   const sma = p.trendLookback !== null ? cached(panel, `sma:${L}:${p.trendLookback}`, () => smaSeries(px, p.trendLookback!)) : null;
+-  const beta =
+-    H && p.hedgeRatio > 0 ? cached(panel, `beta:${L}:${H}:${p.betaLookback}`, () => betaSeries(rL, rH!, p.betaLookback)) : null;
++  const beta = H && p.hedgeRatio > 0 ? hedgeBetaSeries(panel, L, H, p) : null;
++  const betaMax = p.hedgeBeta ? p.hedgeBeta.max : 3;
+   const evKey = `ev:${p.announceLead}:${events.map((e) => e.t).join(",")}`;
+   const until = cached(panel, `${evKey}:next`, () => eventDistances(n, events, p.announceLead).untilNext);
+   const since = cached(panel, `${evKey}:last`, () => eventDistances(n, events, p.announceLead).sinceLast);
+@@ -355,7 +430,7 @@ export function runTiger(
+     let wH = 0;
+     if (beta && wL > 0) {
+       const b = beta[t]!;
+-      if (Number.isFinite(b)) wH = -p.hedgeRatio * Math.min(3, Math.max(0, b)) * wL;
++      if (Number.isFinite(b)) wH = -p.hedgeRatio * Math.min(betaMax, Math.max(0, b)) * wL;
+     }
+     const gross = wL + Math.abs(wH);
+     if (gross > p.maxGross) {

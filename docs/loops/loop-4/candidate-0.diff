@@ -1,0 +1,802 @@
+diff --git a/README.md b/README.md
+index e338f1f..cbc31cf 100644
+--- a/README.md
++++ b/README.md
+@@ -14,6 +14,10 @@ the decisions, and each one lands as one operation on one mandate tree:
+   so the book's own accounting can never let an agent trade more than its
+   reservation; each order is audited against the tree before it is marked.
+ - **(A) Adjusted:** reservations are resized from risk-adjusted records (`resize`).
++  Since loop 4 a record earns control of its agent's reservation only as fast
++  as it becomes credible (`√(n / 252)`, the inverse of its Sharpe's standard
++  error): until then part of the reservation stays at the book's equal grant,
++  so a lucky 30-day record cannot win a full slot.
+ - **(G) Grouped:** agents that are one trade (overlapping positions) are cut as a
+   group, by one factor in one pass. Since loop 3 an operator is also one
+   counterparty: when one of its agents is stopped out, its other live agents are
+@@ -22,7 +26,8 @@ the decisions, and each one lands as one operation on one mandate tree:
+   never delays or brings forward any agent's own stop-out.
+ - **(C) Closed:** a stop-out closes the subtree (`DelegationTree.close`), returning
+   the agent's capital and every sub-mandate it handed out to its pod in one
+-  operation (since loop 2). The AgentHire demo shows a close on a live subtree
++  operation (since loop 2); the pod hands it on to the fund before the tick
++  ends (since loop 4). The AgentHire demo shows a close on a live subtree
+   that was still paying for work.
+ 
+ `npm run demo:fund` builds the fund console's data from one showcase **virtual
+@@ -326,7 +331,8 @@ You can also run any layer in isolation:
+ | `@allowance/swarm` — reservation binds | `packages/swarm/src/reserve.test.ts`, `packages/lab/src/arena-reserve.test.ts` | Every order is checked from outside at the trade, on books where a PM's budget overstates what it may trade (desks, its own spend, an outside grant) and on randomized arena rosters: it is sized on no more than the mandate's available authority, its gross notional is within available × leverage, a closed PM trades nothing, and the marked PnL is exactly the audited order's; an order inflated for one PM (tree untouched) stops the book at the trade naming that PM; orders are sized after the crowding cuts; the book's reallocations and cuts are made on the tree's budgets. |
+ | `@allowance/swarm` — operator counterparty | `packages/swarm/src/counterparty.test.ts`, `packages/lab/src/arena-counterparty.test.ts` | When one of an operator's agents is stopped out, its other live agents are capped as a group in one plan at `cutFactor` of their full size; the cap is a ceiling on capital, so it never compounds with a ladder cut or an earlier cap; it never revokes; every stop-out happens on exactly the tick the agent's own record, replayed alone, breaches its own stop; on the arena's shared-operator worlds a name is revoked if and only if its own ladder stopped it. |
+ | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
+-| `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
++| `@allowance/swarm` — credibility | `packages/swarm/src/credibility.test.ts`, `packages/lab/src/arena-credibility.test.ts` | Credibility is `min(1, √(n / 252))`, the inverse of a Sharpe's standard error; a share is the credibility-weighted average of the record's verdict and the book's equal grant, so a lucky 30-tick record cannot win a full slot, its ceiling grows with its record to the full slot at a year, a record the allocator would defund keeps only its fading equal slice, capital a capped leader cannot take is not pushed onto the others, and a year of record reproduces the record's verdict exactly; a newcomer is bounded by its own credibility and nobody is scaled up for it. On randomized arena rosters no agent's full size ever exceeds its credible bound (the allocator without credibility breaks it in 38 of 40 worlds), credibility never moves a ladder, and after every tick each pod holds exactly what it delegates, so a stop-out's capital is back in the fund. |
++| `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing (the record's verdict); the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+ | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
+ | `@allowance/swarm` — book | `packages/swarm/src/book.test.ts` | The mandate tree stays valid through every reallocation, cut and stop-out (stopped agents are closed with zero budget; no rejected moves); runs are deterministic; cross-pod clones are caught before the unwind and only by the center book. |
+ | `@allowance/swarm` — example | `packages/swarm/src/example.test.ts` | The coffee thesis is well-formed (scores 1–5, sourced trend claims, parseable catalyst dates); the three Tiger Cubs converge on one long; the center book flags it on day one and loses less in the unwind. |
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index 8d025bb..79a9631 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -140,6 +140,21 @@ Around them sit agents that give the allocator something to allocate between:
+ - **Correlation-aware.** Each score is divided by the agent's *multiplicity*: the
+   sum of its positive return correlations with the other scoring agents. Two
+   clones split one allocation.
++- **Credibility** (loop 4). Capital follows evidence. An agent's share is the
++  credibility-weighted average of what its record says and the book's grant
++  with no record (an equal slice):
++  `share = Z × record's share + (1 − Z) × equal slice`, with
++  `Z = min(1, √(n / 252))` for a score estimated on `n` daily returns. This is
++  the square-root rule of limited-fluctuation credibility, and `1 / Z` is the
++  standard error of the agent's Sharpe, `√(252 / n)`: full credibility takes
++  a year, the point where a Sharpe of 1 first stands one standard error from
++  zero. 252 is fixed by that, not tuned. On day 30 (`Z ≈ 0.35`), among eight
++  live agents, a lucky record can hold at most ~17% of deployable capital
++  (`Z × 25% + (1 − Z) × 1/8`), not 25%, and a short
++  losing record keeps its fading equal slice instead of being defunded
++  outright. The ladder still cuts or stops it on its own drawdown. Every
++  agent starts together here, so the `n / (n + 60)` shrinkage cancels;
++  credibility does not. `fullCredibilityObs: 0` switches it off.
+ - **Caps.** No agent gets more than 25% of deployable capital. Capital freed by
+   caps and cuts **stays in cash** rather than being pushed onto whoever is left.
+ - **Drawdown ladder** on each agent's own attributable (per-unit-of-capital)
+@@ -188,8 +203,8 @@ drawdown against the risk that agent runs, which a per-agent stop-loss cannot.
+ ## Results
+ 
+ The numbers below come from `npm run demo:swarm` at the current code (after
+-loop 2: one-year Sharpe scores, risk-scaled ladder with its 40% ceiling,
+-stop-outs by `close`), using the coffee thesis as of
++loop 4: one-year Sharpe scores, risk-scaled ladder with its 40% ceiling,
++stop-outs by `close`, credibility-weighted shares), using the coffee thesis as of
+ 2026-09-25, 260 simulated trading days and 20 market seeds. The two books share
+ agents, gate, leverage and initial capital; they differ in the center book's
+ cross-agent allocation and crowding limits and its risk-scaled ladder.
+@@ -208,11 +223,11 @@ short **BROS**.
+ 
+ | | per-agent guardrails | center book |
+ |---|---:|---:|
+-| loss in the unwind | −4.9% | **−2.5%** |
+-| max drawdown | 7.9% | **5.6%** (smaller on **17/20** seeds) |
+-| peak crowded (SBUX) exposure | 51.5% of NAV | **15.3%** |
+-| Sharpe | 0.50 | 0.50 (higher on only 10/20 seeds) |
+-| total return | **+5.5%** | +2.8% |
++| loss in the unwind | −4.9% | **−2.6%** |
++| max drawdown | 7.9% | **5.3%** (smaller on **18/20** seeds) |
++| peak crowded (SBUX) exposure | 51.5% of NAV | **14.3%** |
++| Sharpe | **0.50** | 0.47 (higher on only 10/20 seeds) |
++| total return | **+5.5%** | +2.4% |
+ 
+ On day 1 the center book flags "4 agents across 3 pods running one trade in
+ SBUX: 48.0% of NAV > 10% limit". The three Tiger Cubs are joined by the rogue
+@@ -220,8 +235,8 @@ agent, whose clipped book is also long SBUX. Per-agent guardrails never raise
+ it, because no single agent breached anything.
+ 
+ **If the research is wrong** (catalysts carry no edge), the center book still has
+-the smaller max drawdown on **16/20** seeds: 5.6% vs 8.3% mean. Sharpe goes from
+-0.17 to 0.35, and total return from +2.8% to +1.9%. Crowding control doesn't
++the smaller max drawdown on **18/20** seeds: 5.4% vs 8.3% mean. Sharpe goes from
++0.17 to 0.27, and total return from +2.8% to +1.4%. Crowding control doesn't
+ depend on the thesis being right.
+ 
+ **Ablation (mean over the same 20 seeds):**
+@@ -229,10 +244,11 @@ depend on the thesis being right.
+ | variant | max DD | unwind | Sharpe | return |
+ |---|---:|---:|---:|---:|
+ | per-agent guardrails | 7.9% | −4.9% | 0.50 | +5.5% |
+-| center book (all on) | 5.6% | −2.5% | 0.50 | +2.8% |
+-| − crowding limits | 15.4% | −12.1% | 0.32 | +5.0% |
+-| − drawdown cut rung | 5.6% | −2.6% | 0.54 | +3.1% |
+-| − risk-scaled ladder (fixed 10%/20% rungs) | 5.1% | −1.9% | 0.40 | +2.2% |
++| center book (all on) | 5.3% | −2.6% | 0.47 | +2.4% |
++| − crowding limits | 14.8% | −11.7% | 0.28 | +4.3% |
++| − drawdown cut rung | 5.4% | −2.7% | 0.52 | +2.7% |
++| − risk-scaled ladder (fixed 10%/20% rungs) | 4.8% | −2.0% | 0.38 | +1.9% |
++| − credibility (the record alone decides from day 30) | 5.6% | −2.5% | 0.50 | +2.8% |
+ | crowding limits only | 4.2% | −2.8% | 0.46 | +2.3% |
+ 
+ What this says, plainly:
+@@ -241,13 +257,13 @@ What this says, plainly:
+   comes from it.
+ - **Performance-chasing allocation without crowding control is worse than doing
+   nothing.** Sharpe-weighting pays the crowd for its run-up: max drawdown rises
+-  to 15.4% vs 7.9% for equal weights. This is the case for a book-level risk
++  to 14.8% vs 7.9% for equal weights. This is the case for a book-level risk
+   engine rather than a leaderboard.
+-- **The cost is return.** The center book gives up about 2.7 points of return in
++- **The cost is return.** The center book gives up about 3.1 points of return in
+   the edge-on case, because it refuses to let the fund's single best idea become
+   half its NAV.
+ - **The drawdown-cut rung does not earn its keep on this market.** Removing it
+-  raises Sharpe from 0.50 to 0.54. It stays in the default because it's standard
++  raises Sharpe from 0.47 to 0.52. It stays in the default because it's standard
+   pod-shop practice and costs little drawdown, but the data doesn't support it
+   here. The stop-out rung (now a `close`) stays either way. Since loop 1 the
+   rungs are risk-scaled. The cut still fires (about 9 times per arena world on
+@@ -257,18 +273,24 @@ What this says, plainly:
+   (−0.03..+0.27). That is not enough to change the default. It is optional:
+   leave `ddCut` unset for a stop-only ladder.
+ - **The risk-scaled ladder (loop 1) trades drawdown for Sharpe here.** With
+-  fixed 10%/20% rungs the center book's mean max drawdown is 5.1% (Sharpe 0.40);
+-  risk-scaled, 5.6% (Sharpe 0.50). It was adopted because it raised fund utility
++  fixed 10%/20% rungs the center book's mean max drawdown is 4.8% (Sharpe 0.38);
++  risk-scaled, 5.3% (Sharpe 0.47). It was adopted because it raised fund utility
+   on sealed arena worlds, where the center book's mean max drawdown is still
+   above the per-agent baseline's; see [`LOOPS.md`](LOOPS.md).
+ - **Loop 2's one-year scores do not help this example.** On sealed arena worlds
+-  they raised utility and lowered drawdown; on these 20 coffee markets the
+-  center book's mean Sharpe fell from 0.61 to 0.50 and its max drawdown rose
+-  from 5.0% to 5.6%. The markets are one scenario, a crowded trade that unwinds;
++  they raised utility and lowered drawdown; on these 20 coffee markets (before
++  loop 4) the center book's mean Sharpe fell from 0.61 to 0.50 and its max
++  drawdown rose from 5.0% to 5.6%. The markets are one scenario, a crowded trade that unwinds;
+   the arena's 200-world blocks are the yardstick.
++- **Loop 4's credibility weighting buys drawdown with return here too.** With
++  it the center book's mean max drawdown falls from 5.6% to 5.3%, but its
++  Sharpe falls from 0.50 to 0.47 and its return from +2.8% to +2.4%. On arena
++  research worlds (seeds 1601–1800 and 6200–6349) it lowered the mean max
++  drawdown by 0.23 points on both blocks, for a fund utility change of −0.20
++  and −0.01 points.
+ - **The headline seed (7)** is shown as-is rather than a cherry-picked one. On it
+-  the center book has the lower drawdown (5.5% vs 6.6%) and unwind loss, and the
+-  higher Sharpe (1.22 vs 1.08), but the lower return (+7.4% vs +9.3%).
++  the center book has the lower drawdown (4.6% vs 6.6%) and unwind loss, and
++  about the same Sharpe (1.09 vs 1.08), but the lower return (+5.2% vs +9.3%).
+ 
+ ## Limits
+ 
+diff --git a/package.json b/package.json
+index f0f712b..a8ed489 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts packages/swarm/src/credibility.test.ts packages/lab/src/arena-credibility.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/lab/package.json b/packages/lab/package.json
+index cb0f115..be36d1c 100644
+--- a/packages/lab/package.json
++++ b/packages/lab/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-counterparty.test.ts src/arena-reserve.test.ts",
++    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-counterparty.test.ts src/arena-reserve.test.ts src/arena-credibility.test.ts",
+     "lab": "tsx src/cli.ts"
+   },
+   "dependencies": {
+diff --git a/packages/lab/src/arena-credibility.test.ts b/packages/lab/src/arena-credibility.test.ts
+new file mode 100644
+index 0000000..c726411
+--- /dev/null
++++ b/packages/lab/src/arena-credibility.test.ts
+@@ -0,0 +1,110 @@
++/**
++ * (A) Capital follows evidence, on randomized arena rosters (research seeds
++ * 1–40). Every agent starts together, so at a scheduled reallocation on tick t
++ * every record is t ticks long and has credibility Z = min(1, √(t / 252)).
++ * Checked at every reallocation of every world, from what the book records
++ * (each agent's full size: its share × deployable at the latest reallocation):
++ *
++ *  - no live agent's full size exceeds (Z × maxAgentShare + (1 − Z) × its
++ *    prior slice) × deployable, the prior slice being an equal share of the
++ *    live agents, capped; a stopped agent's is 0;
++ *  - the whole book's full sizes sum to at most the deployable capital;
++ *  - the bound bites: without credibility (fullCredibilityObs 0) the same
++ *    worlds hand some agent more than it at the first reallocation;
++ *  - credibility moves capital only: every ladder move (CUT, RESTORE,
++ *    STOP_OUT) is the same tick for tick with and without it.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { credibility, defaultCenterBookPolicy, defaultNaivePolicy, runBook, type BookResult, type CenterBookPolicy } from "@allowance/swarm";
++import { makeWorld } from "./arena";
++
++// Research seeds only (< ARENA_EVAL_FLOOR).
++const SEEDS = Array.from({ length: 40 }, (_, i) => i + 1);
++const policy = defaultCenterBookPolicy();
++
++const reallocationTicks = (p: CenterBookPolicy, T: number) =>
++  Array.from({ length: T }, (_, t) => t).filter((t) => t >= p.warmup && (t - p.warmup) % p.rebalanceEvery === 0);
++
++/** Agents stopped out before tick t (the ladder runs at the end of a tick). */
++const stoppedBefore = (b: BookResult, t: number) =>
++  new Set(b.decisions.filter((d) => d.kind === "STOP_OUT" && d.t < t).map((d) => d.node));
++
++const ladderMoves = (b: BookResult) =>
++  b.decisions.filter((d) => d.kind === "CUT" || d.kind === "RESTORE" || d.kind === "STOP_OUT").map((d) => `${d.t} ${d.kind} ${d.node}`);
++
++test("arena: no agent's slot outruns the credibility of its record, and credibility never moves a ladder", async () => {
++  const seen = { worlds: 0, checks: 0, oldBreaches: 0 };
++  for (const seed of SEEDS) {
++    const world = makeWorld(seed);
++    const book = await runBook(world.market, world.swarm(), policy);
++    const old = await runBook(world.market, world.swarm(), { ...policy, fullCredibilityObs: 0 });
++    seen.worlds++;
++    assert.deepEqual(ladderMoves(book), ladderMoves(old), `seed ${seed}: same ladder moves with and without credibility`);
++
++    const T = book.returns.length;
++    for (const t of reallocationTicks(policy, T)) {
++      const navBefore = (b: BookResult) => (t === 0 ? b.startNav : b.nav[t - 1]!);
++      const z = credibility(Math.min(t, policy.recordWindow), policy.fullCredibilityObs);
++      const check = (b: BookResult, strict: boolean) => {
++        const deployable = policy.deploy * Math.min(navBefore(b), b.startNav);
++        const stopped = stoppedBefore(b, t);
++        const live = b.agents.filter((a) => !stopped.has(a.name));
++        const prior = Math.min(policy.maxAgentShare, 1 / live.length);
++        const bound = (z * policy.maxAgentShare + (1 - z) * prior) * deployable;
++        let sum = 0;
++        let breach = false;
++        for (const a of b.agents) {
++          const full = a.fullSize[t]!;
++          if (stopped.has(a.name)) {
++            if (strict) assert.equal(full, 0, `seed ${seed} t ${t}: ${a.name} is stopped`);
++            continue;
++          }
++          sum += full;
++          if (full > bound * (1 + 1e-9)) breach = true;
++          if (strict) {
++            assert.ok(full <= bound * (1 + 1e-9), `seed ${seed} t ${t}: ${a.label} full size ${full.toFixed(0)} > credible bound ${bound.toFixed(0)} (Z ${z.toFixed(2)})`);
++            seen.checks++;
++          }
++        }
++        if (strict) assert.ok(sum <= deployable * (1 + 1e-9), `seed ${seed} t ${t}: the book is not over-allocated`);
++        return breach;
++      };
++      check(book, true);
++      if (t === policy.warmup && check(old, false)) seen.oldBreaches++;
++    }
++  }
++  assert.equal(seen.worlds, SEEDS.length);
++  assert.ok(seen.checks > 5000, `checked ${seen.checks} agent-reallocations`);
++  // The bound is not vacuous: without credibility, a 30-tick record wins more than it in most worlds (38 of 40).
++  assert.ok(seen.oldBreaches >= 30, `without credibility ${seen.oldBreaches} of ${seen.worlds} worlds break the bound at the first reallocation`);
++});
++
++/**
++ * Stopped agents now usually hold capital when they are stopped (a prior
++ * slice, if nothing else), so their stop-outs free real authority. close()
++ * hands it to the pod; the book then hands the pod's slack to the fund in the
++ * same tick. Checked at every tick boundary of every world, for both books.
++ */
++test("arena: a stop-out's capital is back in the fund by the end of its tick; pods hold exactly what they delegate", async () => {
++  const seen = { boundaries: 0, fundedStops: 0 };
++  for (const seed of SEEDS) {
++    const world = makeWorld(seed);
++    for (const p of [policy, defaultNaivePolicy()]) {
++      const spec = world.swarm();
++      const pods = spec.pods.filter((pod) => spec.agents.some((a) => a.pod === pod.label)).map((pod) => `${pod.label}.${spec.fund}`);
++      const check = (tree: BookResult["tree"], t: number) => {
++        for (const pod of pods) {
++          const node = tree.requireNode(pod);
++          assert.equal(node.mandate.budget, node.mandate.spentDirect + tree.reserved(pod), `seed ${seed} ${p.kind} end of tick ${t}: ${pod} holds what it delegates`);
++        }
++        seen.boundaries++;
++      };
++      const book = await runBook(world.market, spec, p, { onTick: (t, tree) => (t > 0 ? check(tree, t - 1) : undefined) });
++      check(book.tree, book.returns.length - 1);
++      seen.fundedStops += book.decisions.filter((d) => d.kind === "STOP_OUT" && !d.detail.includes("already allocated zero")).length;
++    }
++  }
++  assert.ok(seen.fundedStops >= 300, `${seen.fundedStops} stop-outs freed capital`);
++  assert.equal(seen.boundaries, SEEDS.length * 2 * 260, "every tick boundary of every run");
++});
+diff --git a/packages/swarm/package.json b/packages/swarm/package.json
+index d7a15dc..16ace9b 100644
+--- a/packages/swarm/package.json
++++ b/packages/swarm/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/example.test.ts src/reserve.test.ts"
++    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/example.test.ts src/reserve.test.ts src/credibility.test.ts"
+   },
+   "dependencies": {
+     "@allowance/core": "*"
+diff --git a/packages/swarm/src/allocator.test.ts b/packages/swarm/src/allocator.test.ts
+index 5e8b978..ab2fe39 100644
+--- a/packages/swarm/src/allocator.test.ts
++++ b/packages/swarm/src/allocator.test.ts
+@@ -53,7 +53,8 @@ test("capShares: sums to 1, respects the cap, leaves the rest in cash when every
+ });
+ 
+ test("allocate: clones split one allocation; losers and stopped agents get nothing", () => {
+-  const policy = { ...defaultCenterBookPolicy(), warmup: 10, maxAgentShare: 1 };
++  // The record's verdict alone (no credibility weighting; see the credibility tests below).
++  const policy = { ...defaultCenterBookPolicy(), warmup: 10, maxAgentShare: 1, fullCredibilityObs: 0 };
+   const edge = noise(3, 120, 0.003);
+   const other = noise(4, 120, 0.003);
+   const loser = noise(5, 120, -0.003);
+@@ -96,7 +97,8 @@ test("allocate: equal weight during warmup; ladder and crowd caps shrink targets
+ });
+ 
+ test("allocate: scores use a year of record, so one lucky quarter does not outrank a persistent edge", () => {
+-  const policy = { ...defaultCenterBookPolicy(), maxAgentShare: 1 };
++  // The record's verdict alone (no credibility weighting; see the credibility tests below).
++  const policy = { ...defaultCenterBookPolicy(), maxAgentShare: 1, fullCredibilityObs: 0 };
+   assert.equal(policy.recordWindow, 252);
+   // n ticks alternating between two returns (mean (up + down) / 2).
+   const alt = (n: number, first: number, second: number) => Array.from({ length: n }, (_, i) => (i % 2 === 0 ? first : second));
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index 0ecea48..3dd5fe1 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -9,7 +9,12 @@
+  *     score = shrunk Sharpe over the agent's last year of record (`recordWindow`),
+  *     then divided by how many OTHER agents are really the same bet (sum of
+  *     positive return correlations). Two clones split one allocation instead of
+- *     each taking a full one.
++ *     each taking a full one. Capital follows EVIDENCE: a record earns control
++ *     of its agent's share only as fast as it becomes credible (Z = √(n / 252),
++ *     the inverse of its Sharpe's standard error, full after a year); the rest
++ *     of the share is the book's equal grant (`credibleShares`). A lucky
++ *     30-tick record cannot win a full slot, and a short losing one is not
++ *     defunded outright.
+  *  2. A DRAWDOWN LADDER. At `ddCut` an agent's capital is cut to `cutFactor`;
+  *     it is restored only once it recovers above `ddRecover`. At `ddStop` it is
+  *     stopped out: its mandate is closed together with every sub-mandate it
+@@ -81,10 +86,24 @@ export interface CenterBookPolicy {
+    * Bayesian-style shrinkage: Sharpe × n / (n + shrinkageObs). It only matters
+    * between records of different lengths: when every agent started together
+    * (the examples, the arena), the factor is common and cancels in the shares.
++   * What does bite when records are equally short is `fullCredibilityObs`.
+    */
+   shrinkageObs: number;
+   /** Max share of deployable capital any single agent may hold. */
+   maxAgentShare: number;
++  /**
++   * Record length (ticks) that earns FULL CREDIBILITY: from here on the
++   * agent's record alone decides its share. Below it the share is a
++   * credibility-weighted average of what the record says and the prior (see
++   * `credibleShares`), with credibility Z = min(1, √(n / fullCredibilityObs))
++   * for a score estimated on n returns — the square-root rule of
++   * limited-fluctuation credibility. 252 is fixed by the Sharpe ratio's
++   * standard error, √(252 / n): a year of daily record is where it falls to
++   * 1, i.e. where a Sharpe of 1 first stands one standard error from zero.
++   * Not tuned. 0 = no credibility weighting (the record alone decides from
++   * `warmup` on, the allocator before loop 4).
++   */
++  fullCredibilityObs: number;
+   /** Relative change below which a reallocation is skipped (avoids churn). */
+   rebalanceBand: number;
+   /**
+@@ -149,6 +168,7 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
+     recordWindow: 252,
+     shrinkageObs: 60,
+     maxAgentShare: 0.25,
++    fullCredibilityObs: 252,
+     rebalanceBand: 0.1,
+     ddCut: 0.1,
+     cutFactor: 0.5,
+@@ -199,6 +219,14 @@ export interface AgentScore {
+   vol: number;
+   /** How many agents this one effectively duplicates (≥ 1). */
+   multiplicity: number;
++  /**
++   * Credibility of the agent's record, in [0, 1]: the weight its record's
++   * verdict gets against the prior (see `credibility`). 1 once the record is
++   * `fullCredibilityObs` long, or when credibility weighting is off.
++   */
++  credibility: number;
++  /** The record's verdict: its share at full credibility (before the prior). */
++  recordShare: number;
+   /** Share of deployable capital before ladder / crowding multipliers. */
+   share: number;
+   /**
+@@ -214,6 +242,10 @@ export interface AgentScore {
+  * Compute capital targets for every agent. Capital freed by caps, cuts and
+  * crowding stays in cash rather than being pushed onto whoever is left —
+  * cutting risk should reduce risk, not relocate it.
++ *
++ * Shares follow the evidence (`credibleShares`): each agent's share moves from
++ * the prior (an equal slice per live agent, the book's grant with no record)
++ * to its record's verdict only as fast as its record becomes credible.
+  */
+ export function allocate(
+   agents: readonly AgentScoreInput[],
+@@ -257,7 +289,10 @@ export function allocate(
+     raw = scores.map((s, i) => s / multiplicity[i]!);
+   }
+ 
+-  const shares = capShares(raw, policy.maxAgentShare);
++  const record = capShares(raw, policy.maxAgentShare);
++  const prior = priorShares(live.length, policy.maxAgentShare);
++  const z = windows.map((w) => credibility(w.length, policy.fullCredibilityObs));
++  const shares = credibleShares(record, prior, z);
+ 
+   const out: AgentScore[] = live.map((a, i) => {
+     const fullTarget = shares[i]! * deployable;
+@@ -265,16 +300,88 @@ export function allocate(
+     const multiplier = Math.min(a.ladderMultiplier, a.counterpartyMultiplier ?? a.ladderMultiplier);
+     let target = fullTarget * multiplier;
+     if (a.crowdCap !== undefined) target = Math.min(target, a.crowdCap);
+-    return { ...base[i]!, multiplicity: multiplicity[i]!, share: shares[i]!, fullTarget, target };
++    return {
++      ...base[i]!,
++      multiplicity: multiplicity[i]!,
++      credibility: z[i]!,
++      recordShare: record[i]!,
++      share: shares[i]!,
++      fullTarget,
++      target,
++    };
+   });
+   for (const a of agents) {
+     if (a.stopped) {
+-      out.push({ name: a.name, sharpe: 0, shrunkSharpe: 0, vol: 0, multiplicity: 1, share: 0, fullTarget: 0, target: 0 });
++      out.push({
++        name: a.name,
++        sharpe: 0,
++        shrunkSharpe: 0,
++        vol: 0,
++        multiplicity: 1,
++        credibility: 0,
++        recordShare: 0,
++        share: 0,
++        fullTarget: 0,
++        target: 0,
++      });
+     }
+   }
+   return out;
+ }
+ 
++/**
++ * Credibility of a score estimated on `n` returns: Z = min(1, √(n / fullObs)),
++ * the square-root rule of limited-fluctuation credibility. An annualized
++ * Sharpe ratio estimated on n daily returns has a standard error of about
++ * √(252 / n), so with fullObs = 252 the credibility is min(1, 1 / SE): a
++ * 30-tick record (SE ≈ 2.9) earns 0.35, a quarter 0.6, a year 1. `fullObs` ≤ 0
++ * turns the weighting off (always 1). Depends on nothing but the count.
++ */
++export function credibility(n: number, fullObs: number): number {
++  if (!(fullObs > 0)) return 1;
++  return Math.min(1, Math.sqrt(Math.max(0, n) / fullObs));
++}
++
++/**
++ * The prior: the allocation the book makes with no record at all, i.e. its
++ * grant at t = 0, an equal slice for each of the `live` agents, capped at
++ * `cap` like any share (with fewer than 1 / cap agents the rest stays in cash).
++ * Per name, like the grant: an operator running two names holds two fading
++ * slices, as it holds two grants. (One slice per operator was tried on arena
++ * research seeds and cost 0.07–0.21 points of utility for no drawdown, since
++ * the arena's only two-name operators are skilled pickers.)
++ */
++export function priorShares(live: number, cap: number): number[] {
++  return Array.from({ length: live }, () => Math.min(cap, 1 / live));
++}
++
++/**
++ * Capital follows evidence. Each agent's share is the credibility-weighted
++ * average of what its record says (`record`, the capped score shares) and the
++ * prior (`prior`, see `priorShares`):
++ *
++ *   share = Z × record + (1 − Z) × prior,   Z = credibility of its record.
++ *
++ * No agent ever holds more than Z × maxAgentShare + (1 − Z) × its prior slice,
++ * a ceiling that grows with its record to the full slot, and a record the
++ * allocator would defund keeps only its (1 − Z) prior slice, which shrinks to
++ * nothing as the record becomes credible. With one Z for every agent (every
++ * record the same length, as in the book) this is a convex combination of two
++ * allocations that each respect the cap and sum to at most 1, so it does too;
++ * capital the record's leaders cannot take (above the cap) stays in cash, as
++ * it does at full credibility. With different Z's (records of different
++ * lengths) the shares are scaled down together if they would sum above 1,
++ * never up.
++ */
++export function credibleShares(record: readonly number[], prior: readonly number[], z: readonly number[]): number[] {
++  const shares = record.map((r, i) => {
++    const w = Math.min(1, Math.max(0, z[i]!));
++    return w === 1 ? r : w * r + (1 - w) * prior[i]!;
++  });
++  const total = shares.reduce((s, x) => s + x, 0);
++  return total > 1 ? shares.map((s) => s / total) : shares;
++}
++
+ /**
+  * Normalize non-negative raw weights to shares summing to ≤ 1, with no share
+  * above `cap`. Water-filling: capped names are pinned at the cap and the excess
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index c72bcea..6f31a19 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -15,7 +15,8 @@
+  *   - allowed instruments = the node's allowlist   (attenuated fund → pod → agent → sub)
+  *   - stop-out            = tree.close(agent)      (the agent AND every sub-mandate it
+  *                           handed out shrink to what they spent and are revoked, in one
+- *                           operation; the unspent authority is back in the pod); the
++ *                           operation; the unspent authority is back in the pod, which
++ *                           hands it on to the fund before the tick ends); the
+  *                           drawdown rungs are risk-scaled in the center book
+  *   - counterparty        = AgentSpec.operator     (a stop-out of one name caps the
+  *                           operator's other live names at cutFactor of their full size,
+@@ -625,7 +626,9 @@ export async function runBook(
+           detail:
+             `${current.toFixed(0)} → ${s.target.toFixed(0)} USDC ` +
+             `(sharpe ${s.sharpe.toFixed(2)}, shrunk ${s.shrunkSharpe.toFixed(2)}, ` +
+-            `same-bet ×${s.multiplicity.toFixed(2)})`,
++            `same-bet ×${s.multiplicity.toFixed(2)}` +
++            (s.credibility < 1 ? `, record credibility ${s.credibility.toFixed(2)}` : "") +
++            `)`,
+         });
+       }
+       applyTargets(tree, podOf, subsOf, targets);
+@@ -757,7 +760,8 @@ export async function runBook(
+       if (next === "stopped") {
+         // Stop-out: ONE tree.close takes back the agent's capital and every
+         // sub-mandate it handed out (each shrinks to what it spent, then the
+-        // subtree is revoked). The freed authority is available to the pod.
++        // subtree is revoked). The freed authority is available to the pod
++        // (and goes on to the fund at the end of the ladder step, see 6c).
+         const subs = tree.subtree(a.name).length - 1;
+         const freed = toUsdc(tree.close(a.name));
+         stoppedNow.push(a.name);
+@@ -842,6 +846,14 @@ export async function runBook(
+       operatorCaps = update.caps;
+     }
+ 
++    /* 6c) A stop-out's capital goes back to the fund the same tick. ---- */
++    // close() hands the agent's unspent authority to its pod; the pod then
++    // holds more than it delegates. An empty plan re-sizes every pod to exactly
++    // what its agents hold (a no-op if a cut above already did), so the
++    // authority is back in the fund's available budget before the tick ends.
++    // Every later plan would do the same first, so no allocation changes.
++    if (stoppedNow.length > 0) applyTargets(tree, podOf, subsOf, new Map());
++
+     /* 7) Invariants: a break made during the tick is caught before the next. */
+     audit(t, "end");
+   }
+diff --git a/packages/swarm/src/credibility.test.ts b/packages/swarm/src/credibility.test.ts
+new file mode 100644
+index 0000000..131740a
+--- /dev/null
++++ b/packages/swarm/src/credibility.test.ts
+@@ -0,0 +1,210 @@
++/**
++ * (A) Capital follows evidence: an agent's share moves from the prior (the
++ * book's equal grant) to its record's verdict only as fast as its record
++ * becomes credible, Z = min(1, √(n / 252)) = min(1, 1 / SE of its Sharpe).
++ *
++ *  - a lucky 30-tick record cannot win a full slot: the maximum share is
++ *    Z × maxAgentShare + (1 − Z) × prior, and grows with the record;
++ *  - a record the allocator would defund keeps only its (1 − Z) prior slice;
++ *  - capital the record's capped leaders cannot take stays in cash;
++ *  - at full credibility (a year of record) the allocation is the record's
++ *    verdict exactly, and `fullCredibilityObs: 0` is the allocator without it;
++ *  - records of different lengths: a newcomer is bounded by its own
++ *    credibility and nobody is ever scaled UP to make room.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import {
++  allocate,
++  capShares,
++  credibility,
++  credibleShares,
++  defaultCenterBookPolicy,
++  priorShares,
++  type AgentScore,
++  type AgentScoreInput,
++} from "./allocator";
++import { gaussian, mulberry32 } from "./rng";
++
++const noise = (seed: number, n: number, drift = 0) => {
++  const z = gaussian(mulberry32(seed));
++  return Array.from({ length: n }, () => drift + 0.01 * z());
++};
++const close = (a: number, b: number, eps = 1e-12) => Math.abs(a - b) <= eps;
++const by = (out: AgentScore[]) => new Map(out.map((s) => [s.name, s]));
++const total = (out: AgentScore[]) => out.reduce((s, x) => s + x.share, 0);
++
++/** Eight agents: one with a strong record, seven whose records are negative. */
++function roster(n: number, prefix = 0): AgentScoreInput[] {
++  const agents: AgentScoreInput[] = [{ name: "lucky", unitReturns: noise(100 + prefix, n, 0.01), stopped: false, ladderMultiplier: 1 }];
++  for (let i = 0; i < 7; i++) {
++    agents.push({ name: `loser-${i}`, unitReturns: noise(200 + i + prefix, n, -0.006), stopped: false, ladderMultiplier: 1 });
++  }
++  return agents;
++}
++
++test("credibility: min(1, √(n / 252)), the inverse of a Sharpe ratio's standard error; 0 turns it off", () => {
++  assert.equal(credibility(0, 252), 0);
++  assert.ok(close(credibility(30, 252), Math.sqrt(30 / 252)));
++  assert.ok(close(credibility(63, 252), 0.5));
++  assert.equal(credibility(252, 252), 1);
++  assert.equal(credibility(1000, 252), 1);
++  for (let n = 1; n <= 252; n++) {
++    const se = Math.sqrt(252 / n); // standard error of an annualized Sharpe on n daily returns
++    assert.ok(close(credibility(n, 252), 1 / se), `n = ${n}`);
++    assert.ok(credibility(n, 252) > credibility(n - 1, 252), "grows with every tick of record");
++  }
++  assert.equal(credibility(5, 0), 1);
++  assert.equal(credibility(5, -1), 1);
++  assert.equal(defaultCenterBookPolicy().fullCredibilityObs, 252);
++});
++
++test("priorShares: the book's equal grant, capped like any share (the rest stays in cash)", () => {
++  assert.deepEqual(priorShares(8, 0.25), Array(8).fill(1 / 8));
++  assert.deepEqual(priorShares(3, 0.25), [0.25, 0.25, 0.25]);
++  assert.deepEqual(priorShares(0, 0.25), []);
++});
++
++test("credibleShares: a convex combination of the record's verdict and the prior", () => {
++  const record = capShares([5, 1, 0, 0, 0], 0.25); // [0.25, 0.25, 0, 0, 0]: both capped, half the book in cash
++  assert.deepEqual(record, [0.25, 0.25, 0, 0, 0]);
++  const prior = priorShares(5, 0.25);
++  const at = (z: number) => credibleShares(record, prior, record.map(() => z));
++  assert.deepEqual(at(1), record, "full credibility is the record's verdict, bit for bit");
++  assert.deepEqual(at(0), prior, "no credibility is the prior");
++  for (const z of [0.1, 0.35, 0.5, 0.9]) {
++    const s = at(z);
++    s.forEach((x, i) => {
++      assert.ok(close(x, z * record[i]! + (1 - z) * prior[i]!));
++      assert.ok(x <= 0.25 + 1e-15, "never above the cap");
++    });
++    assert.ok(s.reduce((a, b) => a + b, 0) <= 1 + 1e-12);
++  }
++  // Different credibilities can over-commit (full-credibility leaders plus a
++  // newcomer's prior slice): everyone is scaled down together, never up.
++  const lead = [0.25, 0.25, 0.25, 0.25, 0];
++  const mixed = credibleShares(lead, priorShares(5, 0.25), [1, 1, 1, 1, 0]);
++  assert.ok(close(mixed.reduce((a, b) => a + b, 0), 1));
++  mixed.slice(0, 4).forEach((x) => assert.ok(x < 0.25 && close(x, 0.25 / 1.2)));
++  assert.ok(close(mixed[4]!, 0.2 / 1.2));
++  const under = credibleShares([0.1, 0.1], [0.25, 0.25], [1, 0.5]);
++  assert.deepEqual(under, [0.1, 0.5 * 0.1 + 0.5 * 0.25], "a total under 1 is left as it is (cash), not scaled up");
++});
++
++test("allocate: a lucky 30-tick record cannot win a full slot; its maximum share grows with its record", () => {
++  const policy = defaultCenterBookPolicy();
++  const cap = policy.maxAgentShare;
++  const early = roster(30);
++  const recordOnly = by(allocate(early, 1, { ...policy, fullCredibilityObs: 0 }));
++  // Precondition: the record alone hands the lucky agent the full slot and defunds the rest.
++  assert.equal(recordOnly.get("lucky")!.share, cap);
++  for (let i = 0; i < 7; i++) assert.equal(recordOnly.get(`loser-${i}`)!.share, 0);
++
++  const out = allocate(early, 1, policy);
++  const s = by(out);
++  const z = Math.sqrt(30 / 252);
++  assert.ok(close(s.get("lucky")!.credibility, z));
++  assert.equal(s.get("lucky")!.recordShare, cap, "the record's verdict is kept for the log");
++  assert.ok(close(s.get("lucky")!.share, z * cap + (1 - z) / 8));
++  assert.ok(s.get("lucky")!.share < 0.7 * cap, `30 ticks of record buy ${(s.get("lucky")!.share * 100).toFixed(1)}% of deployable, not ${cap * 100}%`);
++  // Capital the capped leader cannot take is not pushed onto the others: they
++  // hold their prior slice and no more, and the rest of the book stays in cash.
++  for (let i = 0; i < 7; i++) assert.ok(close(s.get(`loser-${i}`)!.share, (1 - z) / 8));
++  assert.ok(close(total(out), z * cap + (1 - z)));
++  assert.ok(total(out) < 1);
++
++  // The same edge with a longer record: the ceiling and the share grow with the evidence.
++  let prev = 0;
++  for (const n of [30, 60, 126, 200, 252]) {
++    const agents = roster(n);
++    const r = by(allocate(agents, 1, { ...policy, fullCredibilityObs: 0 }));
++    assert.equal(r.get("lucky")!.share, cap, `n = ${n}: the record alone gives the full slot`);
++    const zn = Math.min(1, Math.sqrt(n / 252));
++    const lucky = by(allocate(agents, 1, policy)).get("lucky")!;
++    assert.ok(lucky.share <= zn * cap + (1 - zn) / 8 + 1e-15, `n = ${n}: within its credibility`);
++    assert.ok(lucky.share > prev, `n = ${n}: grows with the record`);
++    prev = lucky.share;
++  }
++  assert.equal(prev, cap, "a year of record earns the full slot");
++});
++
++test("allocate: a record the allocator would defund keeps only its (1 − Z) prior slice, gone at full credibility", () => {
++  const policy = defaultCenterBookPolicy();
++  for (const n of [30, 90, 180, 252, 300]) {
++    const s = by(allocate(roster(n), 1, policy));
++    const zn = Math.min(1, Math.sqrt(Math.min(n, policy.recordWindow) / 252));
++    for (let i = 0; i < 7; i++) {
++      assert.equal(s.get(`loser-${i}`)!.recordShare, 0);
++      assert.ok(close(s.get(`loser-${i}`)!.share, (1 - zn) / 8), `n = ${n}`);
++    }
++  }
++  assert.equal(by(allocate(roster(252), 1, policy)).get("loser-0")!.share, 0);
++});
++
++test("allocate: at full credibility the allocation is the record's verdict exactly", () => {
++  const policy = { ...defaultCenterBookPolicy(), maxAgentShare: 0.4 };
++  const agents: AgentScoreInput[] = [0.001, 0.0005, -0.0004, 0.0012, 0].map((drift, i) => ({
++    name: `a${i}`,
++    unitReturns: noise(300 + i, 260, drift),
++    stopped: i === 4,
++    ladderMultiplier: i === 1 ? 0.5 : 1,
++    ...(i === 3 ? { crowdCap: 1000 } : {}),
++  }));
++  const full = allocate(agents, 1_000_000, policy);
++  const off = allocate(agents, 1_000_000, { ...policy, fullCredibilityObs: 0 });
++  assert.deepEqual(
++    full.map((s) => [s.name, s.share, s.fullTarget, s.target]),
++    off.map((s) => [s.name, s.share, s.fullTarget, s.target]),
++  );
++  assert.ok(full.every((s) => s.credibility === 1 || s.name === "a4"));
++});
++
++test("allocate: stopped agents get nothing and take no prior slice", () => {
++  const policy = defaultCenterBookPolicy();
++  const agents = roster(30).map((a, i) => ({ ...a, stopped: i >= 5 }));
++  const out = allocate(agents, 1, policy);
++  const z = Math.sqrt(30 / 252);
++  const s = by(out);
++  for (const a of agents) {
++    if (a.stopped) assert.equal(s.get(a.name)!.share, 0);
++    else if (a.name !== "lucky") assert.ok(close(s.get(a.name)!.share, (1 - z) / 5), "the prior is split among the 5 live agents");
++  }
++});
++
++test("allocate: credibility reads only how long each record is (the same for any record of that length)", () => {
++  const policy = defaultCenterBookPolicy();
++  const a = allocate(roster(45), 1, policy);
++  const b = allocate(roster(45, 17), 1, policy);
++  assert.ok(a.every((s) => close(s.credibility, Math.sqrt(45 / 252))));
++  assert.deepEqual(
++    a.map((s) => s.credibility),
++    b.map((s) => s.credibility),
++  );
++  // Only the returns the score is estimated on count: never more than `recordWindow`.
++  const long = allocate(roster(400), 1, { ...policy, recordWindow: 126 });
++  assert.ok(long.every((s) => close(s.credibility, Math.sqrt(126 / 252))), "a 126-tick score has a 126-tick standard error");
++});
++
++test("allocate: a newcomer among incumbents is bounded by its own credibility, and nobody is scaled up", () => {
++  const policy = defaultCenterBookPolicy();
++  const cap = policy.maxAgentShare;
++  const incumbents: AgentScoreInput[] = [0.001, 0.0008, 0.0012, 0.0009].map((drift, i) => ({
++    name: `inc-${i}`,
++    unitReturns: noise(400 + i, 252, drift),
++    stopped: false,
++    ladderMultiplier: 1,
++  }));
++  const newcomer: AgentScoreInput = { name: "new", unitReturns: noise(500, 10, 0.02), stopped: false, ladderMultiplier: 1 };
++  const agents = [...incumbents, newcomer];
++  const out = allocate(agents, 1, policy);
++  const s = by(out);
++  const zNew = Math.sqrt(10 / 252);
++  assert.ok(close(s.get("new")!.credibility, zNew));
++  assert.ok(s.get("new")!.share <= zNew * cap + (1 - zNew) / 5 + 1e-15);
++  for (const a of incumbents) {
++    assert.equal(s.get(a.name)!.credibility, 1);
++    assert.ok(s.get(a.name)!.share <= s.get(a.name)!.recordShare + 1e-15, `${a.name}: only ever scaled down`);
++  }
++  assert.ok(total(out) <= 1 + 1e-12);
++  out.forEach((x) => assert.ok(x.share <= cap + 1e-15));
++});
+diff --git a/packages/swarm/src/evaluate.ts b/packages/swarm/src/evaluate.ts
+index 2b70d26..c78d03b 100644
+--- a/packages/swarm/src/evaluate.ts
++++ b/packages/swarm/src/evaluate.ts
+@@ -138,6 +138,7 @@ export async function ablation(seeds: number[]): Promise<AblationRow[]> {
+     { variant: "− crowding", description: "score-based allocation + ladder, no crowding limits", patch: { crowdMaxShare: off, bookMaxShare: off } },
+     { variant: "− drawdown cut", description: "no cut rung (stop-out kept)", patch: { ddCut: off } },
+     { variant: "− risk-scaled ladder", description: "drawdown rungs at fixed percentages, whatever vol the agent runs", patch: { ddStopVol: 0 } },
++    { variant: "− credibility", description: "the record alone decides from the first reallocation, however short", patch: { fullCredibilityObs: 0 } },
+     { variant: "crowding only", description: "equal weight + crowding limits, no scoring, no cut", patch: { warmup: off, ddCut: off } },
+   ];
+   const rows: AblationRow[] = [];
