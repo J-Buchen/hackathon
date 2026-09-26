@@ -5,7 +5,20 @@
  * tested in ../fund.test.ts.
  */
 
-import type { FundAgent, FundDecision, FundSnapshot, GroupCut, LoopEvidence, Rejection, SealedBooks, StopOut, TreeState, Uplift } from "./types";
+import type {
+  AuditTrail,
+  FundAgent,
+  FundDecision,
+  FundSnapshot,
+  GroupCut,
+  LoopEvidence,
+  OperatorRecordRow,
+  Rejection,
+  SealedBooks,
+  StopOut,
+  TreeState,
+  Uplift,
+} from "./types";
 
 /* -------------------------------------------------------------------------- */
 /* Decision log                                                                */
@@ -697,4 +710,86 @@ export function ladderAt(s: FundSnapshot, t: number): Map<string, FundAgent["sta
     else if (d.kind === "STOP_OUT") m.set(d.node, "stopped");
   }
   return m;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Operator record + audit trail                                               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The status chip's words, under the column "A new grant would be…": never
+ * "slashed", never "banned" — a new grant would be refused, nothing is taken
+ * back. It is what the record's grant screen (OperatorGrantScreen) would
+ * answer: the showcase book grants every mandate at the start and none after.
+ */
+export function grantStatus(row: Pick<OperatorRecordRow, "stopOuts" | "wouldRefuseNewGrant">, maxStopOuts: number): {
+  refused: boolean;
+  label: string;
+} {
+  const n = row.stopOuts.length;
+  return row.wouldRefuseNewGrant
+    ? { refused: true, label: `refused: ${n} stop-out${n === 1 ? "" : "s"} (limit ${maxStopOuts})` }
+    : { refused: false, label: "eligible" };
+}
+
+export interface OperatorRecordSummary {
+  /** Stop-outs on record, across every operator. */
+  filed: number;
+  /** Operators with at least one stop-out. */
+  withStopOuts: number;
+  operators: number;
+  /** Operators a new grant would be refused to. */
+  refused: number;
+  maxStopOuts: number;
+  /** The most stop-outs any one operator has. */
+  most: number;
+}
+
+export function operatorRecordSummary(s: {
+  operatorRecord: OperatorRecordRow[];
+  operatorRecordLimits: { maxStopOuts: number };
+}): OperatorRecordSummary {
+  const rows = s.operatorRecord;
+  return {
+    filed: rows.reduce((n, r) => n + r.stopOuts.length, 0),
+    withStopOuts: rows.filter((r) => r.stopOuts.length > 0).length,
+    operators: rows.length,
+    refused: rows.filter((r) => r.wouldRefuseNewGrant).length,
+    maxStopOuts: s.operatorRecordLimits.maxStopOuts,
+    most: Math.max(0, ...rows.map((r) => r.stopOuts.length)),
+  };
+}
+
+/**
+ * The first tick of the run of ticks, ending at the stop-out, over which the
+ * allocator had given the agent no capital (and it made no PnL for the fund);
+ * null when the agent still held capital when it was stopped out. A stop-out
+ * is judged on the agent's own per-unit record, so it can fire long after the
+ * fund stopped having anything at risk with that agent.
+ */
+export function unallocatedSince(s: Pick<FundSnapshot, "agents">, name: string, tick: number): number | null {
+  const a = s.agents.find((x) => x.name === name);
+  if (!a) return null;
+  const idle = (t: number) => a.capital[t] === 0 && (a.pnl[t] ?? 0) === 0;
+  if (!idle(tick)) return null;
+  let t = tick;
+  while (t > 0 && idle(t - 1)) t -= 1;
+  return t;
+}
+
+/**
+ * What a stop-out's close meant for the fund: "freed 298K USDC", or, for an
+ * agent the allocator had already cut to zero, "no fund capital at risk since
+ * Day 51" (or "freed 0 (already unallocated)" when that day is not known).
+ */
+export function freedLabel(freed: number, since: number | null = null): string {
+  if (freed > 0) return `freed ${usdCompact(freed)} USDC`;
+  return since === null ? "freed 0 (already unallocated)" : `no fund capital at risk since ${day(since)}`;
+}
+
+/** The log replay check as one line, its limit included (the console's line and its tests share it). */
+export function auditLine(a: AuditTrail): string {
+  const times = a.checks.toLocaleString("en-US");
+  const diffs = a.discrepancies === 0 ? "0 differences" : `${a.discrepancies} difference${a.discrepancies === 1 ? "" : "s"}`;
+  return `the mandate tree was compared with a rebuild from its own event log ${times} times in this run; ${diffs} (a self-consistency check: the log is not signed)`;
 }

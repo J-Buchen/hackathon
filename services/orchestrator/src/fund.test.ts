@@ -11,9 +11,11 @@ import { join, resolve, dirname } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DelegationTree } from "@allowance/core";
 import { ARENA_EVAL_FLOOR, makeWorld } from "@allowance/lab";
+import { DEFAULT_MAX_OPERATOR_INCIDENTS, DEFAULT_MAX_OPERATOR_STOP_OUTS, operatorRecordRefusal } from "@allowance/adapters";
 import { defaultCenterBookPolicy } from "@allowance/swarm";
 import {
   buildFundSnapshot,
+  checkOperatorRecord,
   observeBook,
   pickShowcaseSeed,
   qualifies,
@@ -118,6 +120,72 @@ test("group cuts name their members and flag shared operators; stop-outs report 
     const a = s.agents.find((y) => y.name === x.name)!;
     assert.equal(a.status, "stopped");
   }
+});
+
+test("operator record: one stop-out incident per STOP_OUT, filed under the agent's operator, screened under the default limits", async () => {
+  const s = await snapshot();
+  assert.deepEqual(s.operatorRecordLimits, { maxStopOuts: DEFAULT_MAX_OPERATOR_STOP_OUTS, maxMisconduct: DEFAULT_MAX_OPERATOR_INCIDENTS });
+  // Every operator of the world, in roster order, once.
+  assert.deepEqual(s.operatorRecord.map((o) => o.id), s.world.operators.map((o) => o.id));
+  assert.deepEqual(s.operatorRecord.map((o) => o.agents), s.world.operators.map((o) => o.agents));
+  const filed = s.operatorRecord.flatMap((o) => o.stopOuts.map((x) => ({ ...x, operator: o.id })));
+  assert.equal(filed.length, s.stopOuts.length, "one incident per stop-out");
+  for (const x of s.stopOuts) {
+    const f = filed.find((y) => y.agent === x.name && y.tick === x.t);
+    assert.ok(f, `stop-out of ${x.agent} on tick ${x.t} is on its operator's record`);
+    assert.equal(f.freed, x.freed, "the incident frees what the tree's REVOKE says");
+    assert.equal(f.label, x.agent);
+    assert.equal(f.operator, s.agents.find((a) => a.name === x.name)!.operator);
+    assert.ok(f.drawdown > 0 && f.drawdown < 1);
+  }
+  for (const o of s.operatorRecord) {
+    assert.equal(o.misconduct, 0, "a stop-out is a loss, never misconduct");
+    // The same answer operatorRecordRefusal gives the adapters' OperatorGrantScreen.
+    const incidents = o.stopOuts.map((x, i) => ({ id: `x${i}`, agentId: 0, operator: o.id, deployerWallet: "", kind: "stop-out", reason: "", agent: x.agent, at: 0 }));
+    assert.equal(o.wouldRefuseNewGrant, operatorRecordRefusal(incidents) !== null, o.id);
+    assert.equal(o.wouldRefuseNewGrant, o.stopOuts.length > DEFAULT_MAX_OPERATOR_STOP_OUTS, o.id);
+    if (o.wouldRefuseNewGrant) assert.match(o.reason, /stop-out/);
+    else assert.match(o.reason, /^cleared/);
+  }
+});
+
+test("checkOperatorRecord wants the book's stop-outs exactly: not a count that happens to match", async () => {
+  const s = await snapshot();
+  const rec = () => JSON.parse(JSON.stringify(s.operatorRecord)) as FundSnapshot["operatorRecord"];
+  assert.doesNotThrow(() => checkOperatorRecord(s.operatorRecord, s.stopOuts));
+  const first = rec().findIndex((o) => o.stopOuts.length > 0);
+  const second = rec().findIndex((o, i) => i > first && o.stopOuts.length > 0);
+  assert.ok(first >= 0 && second > first, "the showcase world has two operators with stop-outs");
+  const twice = rec();
+  twice[first]!.stopOuts.push({ ...twice[first]!.stopOuts[0]! });
+  twice[second]!.stopOuts = [];
+  assert.throws(() => checkOperatorRecord(twice, s.stopOuts), /is filed twice/);
+  const dropped = rec();
+  dropped[second]!.stopOuts = [];
+  assert.throws(() => checkOperatorRecord(dropped, s.stopOuts), /is not on record/);
+  const moved = rec();
+  moved[second]!.stopOuts.push(moved[first]!.stopOuts.pop()!);
+  assert.throws(() => checkOperatorRecord(moved, s.stopOuts), /is filed under/);
+  const relabelled = rec();
+  relabelled[first]!.stopOuts[0]!.agent = relabelled[second]!.stopOuts[0]!.agent;
+  relabelled[second]!.stopOuts = [];
+  assert.throws(() => checkOperatorRecord(relabelled, s.stopOuts), /is filed under|is not on record/);
+});
+test("log replay check: the book compared its tree against its own log three times a tick and found no difference", async () => {
+  const s = await snapshot();
+  assert.equal(s.audit.checks, 3 * s.world.ticks, "start, trade and end of every tick");
+  assert.equal(s.audit.discrepancies, 0);
+  assert.ok(s.audit.events >= s.tree.events.length + s.resizes, "the log holds every event the snapshot shows, and every resize");
+});
+
+test("the operator record changes nothing the book does: the same run without a sink is identical", async () => {
+  const world = makeWorld(pickShowcaseSeed());
+  const without = await observeBook(world.market, world.swarm(), defaultCenterBookPolicy());
+  const s = await snapshot();
+  assert.deepEqual(without.book.nav.map((v) => Math.round(v)), s.books.center.nav);
+  assert.deepEqual(JSON.parse(JSON.stringify(without.book.decisions)), JSON.parse(JSON.stringify(s.decisions)));
+  assert.equal(without.logChecks.checks, s.audit.checks);
+  assert.equal(without.book.tree.events.length, s.audit.events);
 });
 
 /* Loop reports shaped like scripts/loop-driver.mjs writes them. */
@@ -368,6 +436,7 @@ test("a snapshot built from incomplete loop reports still passes the web console
 
 test("observeBook refuses to overlap and always restores the tree prototype", async () => {
   const original = DelegationTree.prototype.recordEvent;
+  const originalVerify = DelegationTree.prototype.verifyAgainstLog;
   const world = makeWorld(1);
   const first = observeBook(world.market, world.swarm(), defaultCenterBookPolicy());
   const second = observeBook(world.market, world.swarm(), defaultCenterBookPolicy());
@@ -376,6 +445,7 @@ test("observeBook refuses to overlap and always restores the tree prototype", as
   assert.equal(b.status, "rejected");
   assert.match(String((b as PromiseRejectedResult).reason), /one at a time/);
   assert.equal(DelegationTree.prototype.recordEvent, original, "prototype restored");
+  assert.equal(DelegationTree.prototype.verifyAgainstLog, originalVerify, "log-check hook restored");
   // And a later observation works again.
   await observeBook(world.market, world.swarm(), defaultCenterBookPolicy());
   assert.equal(DelegationTree.prototype.recordEvent, original);

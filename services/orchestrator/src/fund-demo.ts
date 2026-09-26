@@ -83,6 +83,29 @@ async function main(): Promise<void> {
     line(`stop-out day ${s.t + 1}: ${s.agent}'s mandate closed, ${usd(s.freed)} back to its pod`);
   }
 
+  const lim = snap.operatorRecordLimits;
+  header(
+    "3b. OPERATOR RECORD + LOG REPLAY CHECK",
+    "Every stop-out is written down against the person who runs the agent. It is a loss, not misconduct: nothing is slashed.",
+  );
+  line(`limits (adapters' defaults): a NEW grant through OperatorGrantScreen is refused above ${lim.maxStopOuts} stop-outs or ${lim.maxMisconduct} misconduct incidents`);
+  line("the book makes no grants after the start, so the answers below are what that screen would say (a what-if)");
+  line("each drawdown is on the agent's own per-unit record, not money the fund lost");
+  for (const o of snap.operatorRecord) {
+    const stops = o.stopOuts.length === 0
+      ? "no stop-outs"
+      : o.stopOuts.map((x) => `${x.label} day ${x.tick + 1} (${pct(x.drawdown)} drawdown, ${usd(x.freed)} freed)`).join("; ");
+    const status = o.wouldRefuseNewGrant
+      ? `a new grant would be refused (${o.stopOuts.length} stop-outs, limit ${lim.maxStopOuts})`
+      : "a new grant would be eligible";
+    line(`${o.id.padEnd(6)} ${o.agents.join(" + ").padEnd(20)} ${status.padEnd(30)} ${stops}; misconduct ${o.misconduct}`);
+  }
+  line("(operators are simulated labels in this virtual world; World ID is a mock here)");
+  line(
+    `log replay check: the mandate tree was compared with a rebuild from its own event log ${snap.audit.checks} times ` +
+      `(${snap.audit.events} events); ${snap.audit.discrepancies} differences (a self-consistency check: the log is not signed).`,
+  );
+
   header("4. SEALED EVIDENCE", "Every loop is judged on virtual worlds nobody tuned on, then confirmed on a second fresh block.");
   if (snap.evidence.loops.length === 0) line("no sealed loop reports found in docs/loops");
   for (const l of snap.evidence.loops) {

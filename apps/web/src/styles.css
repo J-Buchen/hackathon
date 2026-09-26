@@ -1314,6 +1314,26 @@ a { color: inherit; }
   text-decoration: none;
 }
 .guarantee-see:hover { text-decoration: underline; }
+/* One line under the four cards: the operator record and the log replay check
+   (accountability, not a fifth guarantee). */
+.guarantees-acct {
+  margin: 18px 0 0;
+  padding: 14px 18px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-soft);
+  background: var(--bg-1);
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--text-dim);
+}
+.guarantees-acct-k {
+  margin-right: 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+.guarantees-acct .guarantee-see { margin-left: 4px; white-space: nowrap; }
 
 /* Under the hood: a chapter divider, not a section. A band with the chapter's
    heading and an index of the sections that follow; those use h3 headings a
@@ -1440,9 +1460,9 @@ a { color: inherit; }
    changes (DESIGN.md §11.1). */
 .fcs { container-type: inline-size; }
 .fcs {
-  --fcs-intro: 175px; --fcs-top: 658px; --fcs-context: 386px;
-  --fcs-chart: calc(510px + 0.003 * 100cqi); --fcs-tree: 1209px; --fcs-log: 1209px;
-  --fcs-agents: 780px; --fcs-evidence: 2038px;
+  --fcs-intro: 175px; --fcs-top: 666px; --fcs-context: 386px;
+  --fcs-chart: calc(518px + 0.003 * 100cqi); --fcs-tree: 1285px; --fcs-log: 1285px;
+  --fcs-agents: 791px; --fcs-evidence: 2038px;
 }
 @media (max-width: 1179px) {
   .fcs {
@@ -1570,6 +1590,28 @@ a { color: inherit; }
 .fcs-log { height: var(--fcs-log); }
 .fcs-agents { height: var(--fcs-agents); }
 .fcs-evidence { height: var(--fcs-evidence); }
+/* The log replay check line and the operator record (OperatorRecord.tsx),
+   fitted to the rendered heights measured every 10 px from 320 to 1280 px
+   (loop 6): the line steps as it wraps (720, 490, 400, 340 px); the record
+   steps as its intro wraps on desktop and, below 640 px, where each operator
+   is a card, follows a line through the measured heights (within ~25 px from
+   430 to 640 px, and within ~20 px at the steps below). */
+.fcs { --fcs-audit: 91px; --fcs-ops: 641px; }
+@media (max-width: 1149px) { .fcs { --fcs-ops: 713px; } }
+@media (max-width: 1049px) { .fcs { --fcs-ops: 760px; } }
+@media (max-width: 999px) { .fcs { --fcs-ops: 768px; } }
+@media (max-width: 899px) { .fcs { --fcs-ops: 789px; } }
+@media (max-width: 739px) { .fcs { --fcs-ops: 809px; } }
+@media (max-width: 719px) { .fcs { --fcs-audit: 112px; } }
+@media (max-width: 640px) { .fcs { --fcs-ops: calc(1560px - 0.6 * 100vw); } }
+@media (max-width: 489px) { .fcs { --fcs-audit: 133px; } }
+@media (max-width: 429px) { .fcs { --fcs-ops: 1400px; } }
+@media (max-width: 399px) { .fcs { --fcs-audit: 154px; --fcs-ops: 1462px; } }
+@media (max-width: 379px) { .fcs { --fcs-ops: 1482px; } }
+@media (max-width: 359px) { .fcs { --fcs-ops: 1521px; } }
+@media (max-width: 339px) { .fcs { --fcs-audit: 175px; --fcs-ops: 1754px; } }
+.fcs-audit { height: var(--fcs-audit); border-radius: var(--radius-sm); }
+.fcs-ops { height: var(--fcs-ops); }
 
 /* --- Mandate tree -------------------------------------------------------- */
 /* overflow: clip (not hidden) keeps the rounded clip without making the panel
@@ -2494,3 +2536,144 @@ a { color: inherit; }
      without being one. */
   .panel:has(.fc-forest-axis-top) { overflow: clip; }
 }
+
+/* --- Audit trail + operator record (fund/OperatorRecord.tsx) --------------- */
+.fc-audit {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  padding: 10px 16px;
+}
+.fc-audit-line { margin: 0; display: flex; gap: 10px; align-items: baseline; font-size: 13.5px; color: var(--text-dim); }
+.fc-audit-line strong { color: var(--text); }
+.fc-audit-mark {
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--gold-deep);
+  background: var(--gold-bg);
+  color: var(--gold-bright);
+  font-size: 11px;
+  font-weight: 800;
+  transform: translateY(3px);
+}
+.fc-audit-more { margin: 4px 0 0 28px; font-size: 12.5px; color: var(--text-dim); }
+.fc-audit-more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-faint);
+  padding: 2px 6px 2px 2px;
+  border-radius: var(--radius-xs);
+}
+.fc-audit-more > summary::-webkit-details-marker { display: none; }
+.fc-audit-more > summary:hover { color: var(--gold-bright); }
+.fc-audit-more > summary:focus-visible { outline: 2px solid var(--gold); outline-offset: 1px; }
+.fc-audit-i {
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font: italic 700 11px/1 Georgia, serif;
+}
+.fc-audit-more[open] > summary { color: var(--text-dim); }
+.fc-audit-more p { margin: 6px 0 2px; max-width: 860px; line-height: 1.5; }
+.fc-audit-more strong { color: var(--text); }
+
+.fc-oprec-sum {
+  margin: 0;
+  padding: 10px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  font-size: 13px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-1);
+}
+.fc-oprec-sum strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.fc-oprec-why { color: var(--text-faint); }
+.fc-oprec td, .fc-oprec th { vertical-align: top; }
+.fc-oprec .fc-op { margin-top: 1px; }
+.fc-oprec-agents { font-size: 13px; color: var(--text); }
+.fc-oprec-none { color: var(--text-faint); }
+.fc-oprec-stops { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.fc-oprec-stops li { display: flex; flex-wrap: wrap; column-gap: 10px; row-gap: 1px; align-items: baseline; padding-left: 10px; border-left: 2px solid var(--revoked); }
+.fc-oprec-stop { color: var(--text); white-space: nowrap; }
+.fc-oprec-day { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
+.fc-oprec-detail { font-size: 12px; color: var(--text-faint); white-space: nowrap; }
+.fc-grant {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg-elev-2);
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.fc-grant.is-refused { border-color: var(--terra); background: var(--terra-bg); color: var(--terra-bright); }
+/* The chip's own key ("a new grant would be") only where the column header is hidden (phone cards). */
+.fc-grant-k { display: none; font-weight: 400; }
+.fc-oprec-freed { white-space: nowrap; }
+.fc-audit-line .fc-vw { margin-left: 4px; font-size: 11px; }
+/* Operators with no stop-outs share one row: a count, then their ids. */
+.fc-oprec-rest th { font-weight: 400; }
+.fc-oprec-count { display: block; font-size: 12.5px; color: var(--text-dim); margin-bottom: 4px; }
+.fc-oprec-ids { display: flex; flex-wrap: wrap; gap: 4px; }
+.fc-oprec-rest .fc-oprec-agents { color: var(--text-dim); }
+/* A snapshot written before a panel existed: one quiet line instead of the panel. */
+.fc-note-missing { margin: 0; padding: 10px 16px; border: 1px dashed var(--border); border-radius: var(--radius-sm); font-size: 13px; color: var(--text-dim); }
+@media (max-width: 560px) {
+  .fc-audit { padding: 10px 12px; }
+  .fc-audit-more { margin-left: 0; }
+  .fc-oprec-sum { padding: 10px 14px; flex-direction: column; }
+}
+.fc-oprec-mis-k { display: none; }
+/* Phones: each operator is a card (operator + agents, its stop-outs, then the
+   misconduct count and the grant status, right-aligned on the last line), so
+   the status is never scrolled off and sits in the same place on every card. */
+@media (max-width: 640px) {
+  .fc-oprec thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .fc-oprec, .fc-oprec tbody { display: block; }
+  .fc-oprec tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .fc-oprec tr:last-child { border-bottom: 0; }
+  .fc-oprec th, .fc-oprec td { display: block; padding: 0; border: 0; }
+  .fc-sticky.fc-oprec tbody th { position: static; background: none; box-shadow: none; }
+  /* Line 1: operator and its agents; line 2: its stop-outs; line 3: misconduct count, then the grant status. */
+  .fc-oprec th { flex: none; order: 1; }
+  .fc-oprec-agents { flex: 1 1 0; min-width: 64px; order: 2; }
+  .fc-oprec-stopcell { flex: 1 1 100%; order: 3; }
+  .fc-oprec-stopcell.is-none { font-size: 12.5px; }
+  .fc-oprec-mis { flex: none; order: 4; font-size: 12px; color: var(--text-faint); }
+  .fc-oprec-mis-k { display: inline; font-family: var(--sans); }
+  .fc-oprec-grantcell { flex: none; order: 5; margin-left: auto; max-width: 100%; }
+  .fc-grant-k { display: inline; }
+  /* Drawdown, then what it meant for the fund, stacked: no separator left dangling at a line end. */
+  .fc-oprec-freed { display: block; white-space: normal; }
+  .fc-oprec-sep { display: none; }
+  .fc-oprec-rest th { flex: 1 1 100%; }
+  .fc-oprec-rest .fc-oprec-count { display: inline; margin: 0 8px 0 0; }
+  .fc-oprec-rest .fc-oprec-ids { display: inline-flex; vertical-align: middle; }
+  .fc-oprec-rest .fc-oprec-agents { flex: 1 1 100%; font-size: 12.5px; }
+  .fc-oprec-detail, .fc-oprec-stop { white-space: normal; }
+  .fc-grant { white-space: normal; }
+}
+.fc-nw { white-space: nowrap; }

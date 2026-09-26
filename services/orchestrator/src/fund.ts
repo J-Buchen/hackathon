@@ -12,6 +12,14 @@
  * decision, `observeBook` watches a run from outside: it wraps the market's tick
  * array so it knows when runBook starts each tick, and reads the tree's budgets
  * at that boundary through the public DelegationTree API.
+ *
+ * The showcase run also carries an operator record: runBook's `incidents` port
+ * (IncidentSink), implemented by the adapters' StopOutIncidentSink over an
+ * in-memory IncidentLedger. The book never reads the sink back, so the run
+ * trades exactly as it would without it; the record only adds, per operator,
+ * the stop-outs filed against it and whether OperatorGrantScreen would refuse
+ * that operator a NEW grant under its default limits. `observeBook` also counts
+ * the tree's own log checks (verifyAgainstLog) that runBook made on that tree.
  */
 
 import { readdirSync, readFileSync } from "node:fs";
@@ -23,6 +31,13 @@ import {
   type AllowanceEvent,
   type Snapshot,
 } from "@allowance/core";
+import {
+  DEFAULT_MAX_OPERATOR_INCIDENTS,
+  DEFAULT_MAX_OPERATOR_STOP_OUTS,
+  IncidentLedger,
+  OperatorGrantScreen,
+  StopOutIncidentSink,
+} from "@allowance/adapters";
 import { ARENA_EVAL_FLOOR, certaintyEquivalent, makeWorld, performance, type World } from "@allowance/lab";
 import {
   defaultCenterBookPolicy,
@@ -36,6 +51,9 @@ import {
   type Decision,
   type Market,
   type NaivePolicy,
+  type IncidentSink,
+  type RunBookOptions,
+  type StopOutIncident,
   type SwarmSpec,
 } from "@allowance/swarm";
 
@@ -126,6 +144,48 @@ export interface StopOut {
   /** The revoked node and everything under it (agents are leaves: just the node). */
   subtree: string[];
   detail: string;
+}
+
+/** One stop-out filed against an operator (a LOSS on the agent's own record, not misconduct). */
+export interface OperatorStopOut {
+  /** Full mandate-tree node name of the agent that was stopped out. */
+  agent: string;
+  label: string;
+  tick: number;
+  /** Whole USDC the close took back (the incident's `freed`). */
+  freed: number;
+  /** The agent's drawdown when it was stopped out (a fraction). */
+  drawdown: number;
+}
+
+/**
+ * An operator's record after the showcase run: the stop-outs the book filed
+ * against it through its IncidentSink, and what OperatorGrantScreen (default
+ * limits) would answer if the operator asked for a NEW grant. Nothing already
+ * granted is taken back by it; nothing is slashed.
+ */
+export interface OperatorRecordRow {
+  id: string;
+  /** Agent labels this operator runs. */
+  agents: string[];
+  stopOuts: OperatorStopOut[];
+  /** Misconduct incidents (the book files none: a stop-out is a loss). */
+  misconduct: 0;
+  wouldRefuseNewGrant: boolean;
+  /** OperatorGrantScreen's own reason (refusal, or clearance). */
+  reason: string;
+}
+
+/**
+ * The tree checked against its own history during the showcase run: how many
+ * times runBook compared the live tree with a replay of its event log
+ * (DelegationTree.verifyAgainstLog), how many differences those checks found
+ * (runBook stops on the first, so a finished run has 0), and the log's length.
+ */
+export interface AuditTrail {
+  checks: number;
+  discrepancies: number;
+  events: number;
 }
 
 export interface TreeState {
@@ -263,6 +323,11 @@ export interface FundSnapshot {
   treeNodes: string[];
   treeAtGrant: TreeState;
   treeStates: TreeState[];
+  /** Per operator, in roster order: the stop-outs filed against it and the new-grant answer. */
+  operatorRecord: OperatorRecordRow[];
+  /** The limits the new-grant answer is computed under (the adapters' defaults). */
+  operatorRecordLimits: { maxStopOuts: number; maxMisconduct: number };
+  audit: AuditTrail;
   evidence: { source: string; loops: LoopEvidence[] };
 }
 
@@ -284,6 +349,8 @@ export interface ObservedBook {
   states: Map<number, Map<string, NodeState>>;
   /** Index into book.tree.events of the first event recorded during each tick. */
   eventStart: Map<number, number>;
+  /** verifyAgainstLog calls runBook made on its tree, and the differences they returned. */
+  logChecks: { checks: number; discrepancies: number };
 }
 
 const usdc = (units: bigint): number => Math.round(Number(formatAmount(units)));
@@ -318,17 +385,22 @@ let observing = false;
  * call while one is running is refused, rather than letting it capture (and
  * later put back) the first call's wrapper.
  */
-export async function observeBook(market: Market, spec: SwarmSpec, policy: AllocationPolicy): Promise<ObservedBook> {
+export async function observeBook(
+  market: Market,
+  spec: SwarmSpec,
+  policy: AllocationPolicy,
+  options: RunBookOptions = {},
+): Promise<ObservedBook> {
   if (observing) throw new Error("observeBook: another book is being observed; observe books one at a time");
   observing = true;
   try {
-    return await observeOne(market, spec, policy);
+    return await observeOne(market, spec, policy, options);
   } finally {
     observing = false;
   }
 }
 
-async function observeOne(market: Market, spec: SwarmSpec, policy: AllocationPolicy): Promise<ObservedBook> {
+async function observeOne(market: Market, spec: SwarmSpec, policy: AllocationPolicy, options: RunBookOptions): Promise<ObservedBook> {
   const seen: { tree: DelegationTree | null } = { tree: null };
   const states = new Map<number, Map<string, NodeState>>();
   const eventStart = new Map<number, number>();
@@ -353,23 +425,37 @@ async function observeOne(market: Market, spec: SwarmSpec, policy: AllocationPol
     seen.tree ??= this;
     return original.call(this, event);
   };
+  // Count the book's log checks on ITS tree (runBook calls verifyAgainstLog at
+  // the start, the trade and the end of every tick). The hook only counts.
+  const logChecks = { checks: 0, discrepancies: 0 };
+  const originalVerify = proto.verifyAgainstLog;
+  const verifyWrapper = function (this: DelegationTree, ...args: Parameters<DelegationTree["verifyAgainstLog"]>) {
+    const found = originalVerify.apply(this, args);
+    if (this === seen.tree) {
+      logChecks.checks += 1;
+      logChecks.discrepancies += found.length;
+    }
+    return found;
+  };
   proto.recordEvent = wrapper;
+  proto.verifyAgainstLog = verifyWrapper;
   let book: BookResult;
   try {
-    book = await runBook({ ...market, ticks }, spec, policy);
+    book = await runBook({ ...market, ticks }, spec, policy, options);
   } finally {
-    // Put back only our own hook: anything else means something patched over it.
-    if (proto.recordEvent !== wrapper) {
-      throw new Error("observeBook: DelegationTree.prototype.recordEvent was replaced during the run");
-    }
-    proto.recordEvent = original;
+    // Put back only our own hooks: anything else means something patched over them.
+    const ours = { record: proto.recordEvent === wrapper, verify: proto.verifyAgainstLog === verifyWrapper };
+    if (ours.record) proto.recordEvent = original;
+    if (ours.verify) proto.verifyAgainstLog = originalVerify;
+    if (!ours.record) throw new Error("observeBook: DelegationTree.prototype.recordEvent was replaced during the run");
+    if (!ours.verify) throw new Error("observeBook: DelegationTree.prototype.verifyAgainstLog was replaced during the run");
   }
   if (seen.tree !== book.tree) throw new Error("observeBook: watched a different tree than runBook returned");
   states.set(current, readTree(book.tree));
   if (states.size !== market.ticks.length + 1) {
     throw new Error(`observeBook: saw ${states.size - 1} tick boundaries, expected ${market.ticks.length}`);
   }
-  return { book, states, eventStart };
+  return { book, states, eventStart, logChecks };
 }
 
 /* ------------------------------------------------------------------ */
@@ -657,6 +743,33 @@ export interface BuildOptions {
   seed?: number;
 }
 
+/**
+ * The operator record files exactly the book's stop-outs: each one once, under
+ * an operator that runs the agent, with the book's label. Counts alone are not
+ * enough (one stop-out filed twice and another dropped has the right count).
+ */
+export function checkOperatorRecord(
+  record: ReadonlyArray<Pick<OperatorRecordRow, "id" | "agents" | "stopOuts">>,
+  stopOuts: ReadonlyArray<Pick<StopOut, "name" | "t" | "agent">>,
+): void {
+  const key = (name: string, t: number) => `${name}@${t}`;
+  const filed = new Set<string>();
+  for (const o of record) {
+    for (const x of o.stopOuts) {
+      const k = key(x.agent, x.tick);
+      if (filed.has(k)) throw new Error(`operator record: the stop-out of ${x.agent} on tick ${x.tick} is filed twice`);
+      filed.add(k);
+      const st = stopOuts.find((s) => s.name === x.agent && s.t === x.tick);
+      if (!st) throw new Error(`operator record: ${o.id} has a stop-out of ${x.agent} on tick ${x.tick} the book never made`);
+      if (st.agent !== x.label || !o.agents.includes(x.label)) {
+        throw new Error(`operator record: the stop-out of ${st.agent} is filed under ${o.id} as ${x.label}`);
+      }
+    }
+  }
+  const missing = stopOuts.find((s) => !filed.has(key(s.name, s.t)));
+  if (missing) throw new Error(`operator record: the stop-out of ${missing.agent} on tick ${missing.t} is not on record`);
+}
+
 export async function buildFundSnapshot(opts: BuildOptions): Promise<FundSnapshot> {
   const seed = opts.seed ?? pickShowcaseSeed();
   if (!Number.isInteger(seed) || seed < 1 || seed >= ARENA_EVAL_FLOOR) {
@@ -676,7 +789,19 @@ export async function buildFundSnapshot(opts: BuildOptions): Promise<FundSnapsho
   };
 
   const spec = world.swarm();
-  const observed = await observeBook(market, spec, centerPolicy);
+  // The operator record: every stop-out filed, once, against the agent's
+  // operator (in memory; the virtual world's operators are simulated labels).
+  const ledger = new IncidentLedger();
+  const sink = new StopOutIncidentSink({ ledger });
+  // What the book reported (the ledger keeps the drawdown only in its reason text).
+  const raw: StopOutIncident[] = [];
+  const incidents: IncidentSink = {
+    async record(i) {
+      raw.push({ ...i });
+      await sink.record(i);
+    },
+  };
+  const observed = await observeBook(market, spec, centerPolicy, { incidents });
   const naive = await runBook(market, world.swarm(), naivePolicy);
   const center = observed.book;
 
@@ -731,6 +856,35 @@ export async function buildFundSnapshot(opts: BuildOptions): Promise<FundSnapsho
       return { t: d.t, agent: agent?.label ?? d.node, name: d.node, freed, subtree: descendants(d.node), detail: d.detail };
     });
 
+  // One filed incident per stop-out, freeing what the tree's REVOKE says.
+  if (sink.filed.length !== stopOuts.length) {
+    throw new Error(`operator record: ${sink.filed.length} incidents filed for ${stopOuts.length} stop-outs`);
+  }
+  const screen = new OperatorGrantScreen({ incidents: ledger });
+  const operatorRecord: OperatorRecordRow[] = [];
+  for (const [id, labels] of operators) {
+    const mine = ledger.forOperator(id);
+    const opStops: OperatorStopOut[] = mine
+      .filter((i) => i.kind === "stop-out")
+      .map((i) => {
+        const at = stopOuts.find((s) => s.name === i.agent && s.t === i.tick);
+        if (!at || i.tick === undefined || i.agent === undefined) throw new Error(`operator record: incident ${i.id} matches no stop-out`);
+        if (Math.round(i.freed ?? NaN) !== at.freed) {
+          throw new Error(`operator record: incident ${i.id} freed ${i.freed}, the tree's REVOKE says ${at.freed}`);
+        }
+        const reported = raw.find((r) => r.agent === i.agent && r.tick === i.tick);
+        if (!reported) throw new Error(`operator record: incident ${i.id} was not reported by the book`);
+        return { agent: i.agent, label: at.agent, tick: i.tick, freed: at.freed, drawdown: round(reported.drawdown, 4) };
+      });
+    if (mine.some((i) => i.kind !== "stop-out")) throw new Error(`operator record: ${id} has an incident that is not a stop-out`);
+    const screening = await screen.screen(id);
+    operatorRecord.push({ id, agents: labels, stopOuts: opStops, misconduct: 0, wouldRefuseNewGrant: !screening.approved, reason: screening.reason ?? "" });
+  }
+  checkOperatorRecord(operatorRecord, stopOuts);
+  // The log checks: runBook stops on the first difference, so a finished run found none.
+  if (observed.logChecks.discrepancies !== 0) throw new Error("audit: the book finished with log differences");
+  const audit: AuditTrail = { ...observed.logChecks, events: events.length };
+
   const decisionTicks = [...new Set([...center.decisions.map((d) => d.t), T - 1])].sort((a, b) => a - b);
   const asOf = tickToUnix(T);
   // The console shows the tree's log without its RESIZE events (the allocator
@@ -782,6 +936,9 @@ export async function buildFundSnapshot(opts: BuildOptions): Promise<FundSnapsho
     treeNodes,
     treeAtGrant: columns(-1, treeNodes, stateAt(-1)),
     treeStates: decisionTicks.map((t) => columns(t, treeNodes, stateAt(t))),
+    operatorRecord,
+    operatorRecordLimits: { maxStopOuts: DEFAULT_MAX_OPERATOR_STOP_OUTS, maxMisconduct: DEFAULT_MAX_OPERATOR_INCIDENTS },
+    audit,
     evidence: { source: "docs/loops/loop-*.json", loops: readEvidence(opts.loopsDir) },
   };
 }
