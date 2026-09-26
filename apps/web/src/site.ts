@@ -13,13 +13,13 @@ export const REPO_URL = "https://github.com/J-Buchen/hackathon";
  * The commit every GitHub link on the page points at. GitHub's `main` lags the
  * branch the loops are pushed to (`claude/busy-albattani-6iq8tj`) and does not
  * carry docs/LOOPS.md or docs/AGENTHIRE.md, so the links are pinned to a
- * pushed commit on that branch that carries every linked file: f0754d2 (loop
- * 6 and its docs), whose docs/loops/*.json hold loops 1-6, the ledger this
+ * pushed commit on that branch that carries every linked file: db8d74b (loop
+ * 6, its docs and the final verification fixes), whose docs/loops/*.json hold loops 1-6, the ledger this
  * page's evidence is read from. site.test.ts checks that this commit is in the
  * page's own history and
  * holds every linked file. Move it forward when a later loop is pushed.
  */
-export const REPO_REF = "f0754d2e34d298e816ff5942ad819b7ebec6b7f1";
+export const REPO_REF = "db8d74bb76b7b71167a99fdfc4d564aa95fc0fe8";
 
 /** A repo file at REPO_REF on GitHub. */
 export const repoFile = (path: string): string => `${REPO_URL}/blob/${REPO_REF}/${path}`;
