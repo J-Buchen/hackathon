@@ -12,7 +12,7 @@
   "pairedChange": {
    "mean": -0.00020333598840559797,
    "lo": -0.0004288645138112538,
-   "hi": 0.000022192537000057872,
+   "hi": 2.2192537000057872e-05,
    "wins": 0.09
   }
  },
@@ -73,7 +73,7 @@
     },
     "risk": {
      "allocatorMaxDD": {
-      "mean": 0.000045265105223225574,
+      "mean": 4.5265105223225574e-05,
       "lo": -0.00010218006015092645,
       "hi": 0.00019271027059737758,
       "wins": 0.085
@@ -374,7 +374,7 @@
     "allocatorMaxDD": {
      "mean": -0.00020333598840559797,
      "lo": -0.0004288645138112538,
-     "hi": 0.000022192537000057872,
+     "hi": 2.2192537000057872e-05,
      "wins": 0.09
     },
     "allocatorSharpe": {
@@ -609,7 +609,9 @@
     "maxDDAtBaselineVol": 0.05878368446071541
    }
   },
-  "verdict": "fails block B: utility -0.13 pp [-0.25, -0.02] exceeds the 0.1 pp tolerance, and the drawdown bought per pp of utility (0.98) is below the 1.3 deleveraging bar"
+  "verdict": "fails block B: utility -0.13 pp [-0.25, -0.02] exceeds the 0.1 pp tolerance, and the drawdown bought per pp of utility (0.98) is below the 1.3 deleveraging bar",
+  "diffFile": "docs/loops/loop-3/true-combination.diff",
+  "commitsNote": "the commits were local to the orchestrator and not pushed; the combination is archived as a diff against b97953a"
  },
  "reserveIdentity": {
   "what": "operator + reserve vs operator alone",

@@ -23,6 +23,10 @@
   {
    "title": "Uncapped risk-scaled ladder (wildcard)",
    "reason": "uncapped and measured in-sample, so a crash loosened its own stop; most of its gain was deleting stop-outs"
+  },
+  {
+   "title": "Stop-out closes the subtree (C)",
+   "reason": "won block A (+0.59 pp) but its diff conflicted with the merged ladder change, so it could not be combined; carried to loop 2, where it merged"
   }
  ],
  "head": "f5b2d80",
@@ -300,6 +304,14 @@
     "loop1Capped": 0.0732,
     "naive": 0.0683
    }
+  },
+  "loop1GainOnAAfterFix": {
+   "vs": "f5b2d80",
+   "code": "dc01ec0",
+   "mean": 0.039383143458213275,
+   "lo": 0.030318778203156208,
+   "hi": 0.048447508713270346,
+   "wins": 0.705
   }
  }
 }

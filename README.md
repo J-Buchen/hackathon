@@ -107,7 +107,9 @@ npm run dev:web      # opens the dashboard that renders the snapshot
   ablation. It writes `apps/web/public/swarm-snapshot.json`.
 - `npm run demo:agenthire` runs the **AgentHire** story (below) against a local
   AgentHire booted with `scripts/agenthire-up.sh`. It writes
-  `apps/web/public/agenthire-snapshot.json` and a receipts sidecar.
+  `apps/web/public/agenthire-snapshot.json` and a receipts sidecar. AgentHire's
+  prices move (surge) and the run is timestamped, so each run rewrites both
+  files with different quotes; the event sequence is the same.
 - `npm run typecheck` runs `tsc -b` across every package.
 - `npm test` runs the aggregated Node test suite (core, adapters, swarm, lab and
   orchestrator).
@@ -276,10 +278,11 @@ renders. (Budgets in USDC, 6 decimals.)
 | a | Human **alice** verifies via IDKit; funds root **alice.eth** with **100 USDC** (merchants = any). | `FUND` / `OK` |
 | b | `alice.eth` delegates **30 USDC** → `researcher.alice.eth` (merchants `{arxiv, openai, sanctioned-vendor}`). | `DELEGATE` / `OK` |
 | c | `researcher` delegates **10 USDC** → `scraper.researcher.alice.eth` (merchants `{arxiv}`). | `DELEGATE` / `OK` |
+| c′ | `researcher` tries to delegate **999 USDC** → `greedy.researcher.alice.eth` — more than it has. | `DELEGATE` / `ATTENUATION_REJECTED` |
 | d | `scraper` tries to pay **15 USDC** (arxiv) — exceeds its 10 available. | `PAYMENT` / `BLOCKED_MANDATE` |
 | e | `researcher` pays **5 USDC** to `sanctioned-vendor` — **Intercepta blocks**. | `PAYMENT` / `BLOCKED_SCREENING` |
 | f | `researcher` pays **8 USDC** to `openai` (USDC → merchant token via **Aqua**). | `PAYMENT` / `SETTLED` (`swapped:true`) |
-| g | `ghost.alice.eth` (identity **expired**) tries to pay. | `PAYMENT` / `DENIED_IDENTITY` |
+| g | `alice.eth` delegates to `ghost.alice.eth`, whose identity has **expired**; ghost tries to pay. | `DELEGATE` / `OK`, then `PAYMENT` / `DENIED_IDENTITY` |
 | h | `alice` **revokes** `researcher.alice.eth`; `scraper` then pays. | `REVOKE` / `REVOKED`, then `PAYMENT` / `REVOKED` |
 
 **Verify the math:** post-run, `alice.eth` available = **65 USDC** (100 − 30 − 5),
@@ -348,7 +351,7 @@ test to force a green run — fix the code instead.
 packages/core         @allowance/core         pure domain: types, attenuation, tree, payment engine (zero runtime deps)
 packages/adapters     @allowance/adapters     sponsor ports: deterministic mock + real-integration stub
 packages/swarm        @allowance/swarm        the center book: agent swarm, allocator, Tiger-Cub process, coffee thesis
-packages/lab          @allowance/lab          research lab (Luckin study, provenance-checked data) + the virtual-world arena
+packages/lab          @allowance/lab          research lab (Luckin study; runs only on price data fetched and cross-checked with `npm run lab -- fetch`, none checked in) + the virtual-world arena
 services/orchestrator @allowance/orchestrator x402 flow + demo runners (demo, demo:fund, demo:swarm, demo:agenthire)
 scripts/              agenthire-up.sh / agenthire-down.sh (local keyless AgentHire), agenthire-audit.ts (shadow audit),
                       loop-driver.mjs / loop-judge.mjs / worktree-setup.sh (sealed improvement loops)
