@@ -7,8 +7,9 @@ import { Allowlist } from "./Allowlist";
 /**
  * A single agent node in the delegation tree. Shows the ENS name, identity
  * badge, the budget breakdown (budget / spent / reserved / AVAILABLE), the
- * allowlists, and revoked state. Indentation encodes depth; a connector rail
- * on the left makes the parent→child hierarchy legible.
+ * allowlists, and revoked state. Indentation encodes depth (one fixed step
+ * per level, narrower on a narrow panel); a connector rail on the left makes
+ * the parent→child hierarchy legible.
  *
  * Memoized: this recursive, purely prop-driven component would otherwise
  * re-walk the entire subtree whenever an unrelated parent state change (e.g. a
@@ -18,10 +19,13 @@ export const NodeCard = memo(function NodeCardInner({
   tree,
   currency,
   decimals,
+  identitySource,
 }: {
   tree: TreeNode;
   currency: string;
   decimals: number;
+  /** Who issued the identity badges, e.g. "World ID (mock)". */
+  identitySource?: string;
 }) {
   const { node, depth, effectivelyRevoked, children } = tree;
   const m = node.mandate;
@@ -37,7 +41,7 @@ export const NodeCard = memo(function NodeCardInner({
     .filter(Boolean)
     .join(" ");
 
-  // Depth is otherwise encoded only visually (marginLeft), so summarize the node
+  // Depth is otherwise encoded only visually (indentation), so summarize the node
   // and its revoked state in one accessible label for the treeitem row.
   const revokedSuffix = selfRevoked
     ? ", revoked"
@@ -50,9 +54,10 @@ export const NodeCard = memo(function NodeCardInner({
   )} ${currency}${revokedSuffix}`;
 
   return (
+    // Indentation: each child row nests inside its parent's row and steps in
+    // by one --tree-indent (styles.css), so depth adds up without growing.
     <div
       className="node-row"
-      style={{ marginLeft: depth * 28 }}
       data-depth={depth}
       role="treeitem"
       aria-level={depth + 1}
@@ -67,7 +72,7 @@ export const NodeCard = memo(function NodeCardInner({
             </span>
           </div>
           <div className="node-badges">
-            <IdentityBadge status={node.identityStatus} />
+            <IdentityBadge status={node.identityStatus} source={identitySource} />
             {selfRevoked && <span className="badge badge-revoked">revoked</span>}
             {effectivelyRevoked && !selfRevoked && (
               <span className="badge badge-revoked-inherited" title="An ancestor is revoked">
@@ -119,7 +124,7 @@ export const NodeCard = memo(function NodeCardInner({
       {children.length > 0 && (
         <div className="node-children" role="group">
           {children.map((c) => (
-            <NodeCard key={c.node.name} tree={c} currency={currency} decimals={decimals} />
+            <NodeCard key={c.node.name} tree={c} currency={currency} decimals={decimals} identitySource={identitySource} />
           ))}
         </div>
       )}
@@ -144,7 +149,7 @@ function Stat({
     <div className={`stat ${highlight ? "stat-highlight" : ""}`} title={hint}>
       <span className="stat-label">{label}</span>
       <span className="stat-value">
-        {value} <span className="stat-unit">{unit}</span>
+        <span className="stat-num">{value}</span> <span className="stat-unit">{unit}</span>
       </span>
     </div>
   );

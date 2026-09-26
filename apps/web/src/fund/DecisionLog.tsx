@@ -38,6 +38,7 @@ const GUARANTEE: Record<LogEntry["type"], "R" | "A" | "G" | "C" | null> = {
   group: "G",
   stopout: "C",
   gate: "R",
+  opcap: "G",
 };
 
 /** Short name of an entry's kind (also used by the tree's status line). */
@@ -55,6 +56,8 @@ export function entryKind(e: LogEntry): string {
       return e.kind === "CUT" ? "Drawdown cut" : "Restored";
     case "gate":
       return "Gate clip";
+    case "opcap":
+      return "Operator cap";
   }
 }
 
@@ -114,8 +117,8 @@ function Body({ e, selected }: { e: LogEntry; selected: boolean }) {
     }
     case "group": {
       const c = e.cut;
-      // Operators are flagged after the run; the allocator does not read them.
-      // On a one-trade cut the pair is marked; on a book-wide cut it is context.
+      // On a one-trade cut an operator pair is flagged; on a book-wide cut it is
+      // context. (The allocator's operator rule is the separate operator cap.)
       const flagged = flaggedOperatorCut(c);
       const shared = new Set(flagged ? c.sharedOperators.flatMap((o) => o.agents) : []);
       return (
@@ -141,8 +144,7 @@ function Body({ e, selected }: { e: LogEntry; selected: boolean }) {
           {c.sharedOperators.map((o) =>
             flagged ? (
               <span key={o.operator} className="fc-shared-note">
-                <span aria-hidden="true">⚑</span> {o.agents.join(" + ")} also share an operator ({o.operator}),
-                flagged after the run
+                <span aria-hidden="true">⚑</span> {o.agents.join(" + ")} also share an operator ({o.operator})
               </span>
             ) : (
               <span key={o.operator} className="fc-shared-context">
@@ -181,6 +183,7 @@ function Body({ e, selected }: { e: LogEntry; selected: boolean }) {
         </span>
       );
     case "gate":
+    case "opcap":
       return (
         <span className="fc-log-body">
           <strong>{e.agent}</strong> <span className="fc-log-detail">{e.detail}</span>
@@ -249,8 +252,8 @@ export function DecisionLog({ snapshot, filter, onFilter, selected, onSelect }: 
       </div>
       {filter === "operator" && (
         <p className="fc-filter-note">
-          One-trade cuts whose members include both agents of one operator. The operator is flagged after the run: the
-          allocator groups agents by overlapping positions and does not read operator identity yet.
+          Operator caps (when one of an operator's agents is stopped out, its other agents are capped together until
+          each recovers on its own record) and one-trade cuts whose members include both agents of one operator.
         </p>
       )}
       <p id={hintId} className="sr-only">

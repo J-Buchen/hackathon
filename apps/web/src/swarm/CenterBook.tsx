@@ -1,11 +1,14 @@
 import { useMemo } from "react";
 import { LineChart, type Series } from "./LineChart";
 import type { Decision, Question, ScorecardRow, SwarmSnapshot } from "./types";
+import { workedExampleVerdict } from "./verdict";
+import { ScrollRegion } from "../components/ScrollRegion";
 
 /**
- * The center book: a Tiger-Cub-style fund whose PMs are agents, run twice on
- * the same market — once with per-agent guardrails only, once with the center
- * book looking across all of them.
+ * The worked example: a Tiger-Cub-style fund whose PMs are agents, run twice on
+ * the same simulated market — once with per-agent guardrails only, once with
+ * the center book looking across all of them. It opens with its result over the
+ * multi-seed sweep (swarm/verdict.ts), costs included.
  */
 
 // Validated categorical pair for the dark chart surface (dataviz validator:
@@ -26,6 +29,9 @@ const compact = (x: number) => {
   const s = a >= 1e6 ? `${(a / 1e6).toFixed(2)}M` : a >= 1e3 ? `${(a / 1e3).toFixed(0)}K` : a.toFixed(0);
   return `${x < 0 ? "−" : ""}${s}`;
 };
+
+/** Screen-reader text for a result's tone (sighted readers get ✓ / ✕ / = and colour). */
+const TONE_TEXT = { good: "(better)", bad: "(worse: a cost)", even: "" } as const;
 
 const SHOWN: ReadonlySet<Decision["kind"]> = new Set(["CROWDING_CUT", "OPERATOR_CUT", "STOP_OUT", "CUT", "GATE_CLIP"]);
 const KIND_LABEL: Record<Decision["kind"], string> = {
@@ -63,20 +69,73 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
 
   const c = books.center.summary;
   const n = books.naive.summary;
+  // Same metrics, same order as the result card above (swarm/verdict.ts), then
+  // the one this market adds: peak exposure to the crowded name.
   const tiles = [
-    { label: "Loss in the unwind", center: signedPct(c.crashWindowReturn), naive: signedPct(n.crashWindowReturn) },
     { label: "Max drawdown", center: pct(c.maxDrawdown), naive: pct(n.maxDrawdown) },
-    { label: `Peak ${crowd.instrument} exposure`, center: pct(c.peakCrowdExposure, 0), naive: pct(n.peakCrowdExposure, 0) },
+    { label: "Loss in the unwind", center: signedPct(c.crashWindowReturn), naive: signedPct(n.crashWindowReturn) },
     { label: "Sharpe", center: c.sharpe.toFixed(2), naive: n.sharpe.toFixed(2) },
     { label: "Total return", center: signedPct(c.totalReturn), naive: signedPct(n.totalReturn) },
+    { label: `Peak ${crowd.instrument} exposure`, center: pct(c.peakCrowdExposure, 0), naive: pct(n.peakCrowdExposure, 0) },
   ];
   const decisions = snapshot.decisions.filter((d) => SHOWN.has(d.kind));
+  const verdict = workedExampleVerdict(snapshot.sweep);
+  const long = thesis?.pms[0]?.long ?? crowd.instrument;
 
   return (
     <div className="cb">
+      <section className="cb-result" aria-labelledby="cb-result-h">
+        <div>
+          <span className="cb-result-over">The result · {verdict.seeds} simulated markets</span>
+          <h3 className="cb-result-h" id="cb-result-h">
+            What the center book bought, and what it cost
+          </h3>
+          <p className="cb-result-p">
+            Means over {verdict.seeds} simulated market seeds, center book vs per-agent guardrails on the same agents. The
+            center book caps how much of the whole book can pile into {long}. Each result is stated as it came out, costs
+            included. Synthetic prices, not market data.
+          </p>
+          <div className="cb-result-legend" aria-hidden="true">
+            <span>
+              <span className="chart-key" style={{ background: CENTER }} /> center book
+            </span>
+            <span>
+              <span className="chart-key" style={{ background: NAIVE }} /> per-agent guardrails
+            </span>
+          </div>
+        </div>
+        <ul className="cb-result-list">
+          {verdict.items.map((i) => (
+            <li key={i.key}>
+              <span className="cb-result-k">{i.label}</span>
+              <span className={"cb-result-w is-" + i.tone}>
+                <span aria-hidden="true">{i.tone === "good" ? "✓ " : i.tone === "bad" ? "✕ " : "= "}</span>
+                {i.word}
+                {/* The tone is otherwise only a glyph and a colour. */}
+                <span className="sr-only">{TONE_TEXT[i.tone]}</span>
+              </span>
+              <span className="cb-result-n">
+                <span>
+                  <span className="chart-key" style={{ background: CENTER }} aria-hidden="true" />
+                  <span className="sr-only">center book</span> <b>{i.center}</b>
+                </span>
+                <span>
+                  <span className="chart-key" style={{ background: NAIVE }} aria-hidden="true" />
+                  <span className="sr-only">per-agent guardrails</span> <b>{i.guardrails}</b>
+                </span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      </section>
+
       {thesis && <Thesis thesis={thesis} />}
 
-      <div className="cb-tiles" role="list">
+      <p className="cb-tiles-cap">
+        <strong>One market up close:</strong> one of the {verdict.seeds} simulated markets in the result above, the one
+        charted below. Same measures, same order.
+      </p>
+      <div className="cb-tiles" role="list" aria-label="Center book vs per-agent guardrails in the charted market">
         {tiles.map((t) => (
           <div key={t.label} className="cb-tile" role="listitem">
             <div className="tile-label">{t.label}</div>
@@ -88,7 +147,7 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
             <div className="cb-tile-row">
               <span className="chart-key" style={{ background: NAIVE }} aria-hidden="true" />
               <span className="cb-tile-value cb-tile-value-dim">{t.naive}</span>
-              <span className="cb-tile-who">per-agent only</span>
+              <span className="cb-tile-who">per-agent guardrails</span>
             </div>
           </div>
         ))}
@@ -97,12 +156,15 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
         Same simulated market, same agents, same gate, same leverage. The center book adds what looks{" "}
         <em>across</em> the agents (allocation and crowding limits) and judges each agent's drawdown against the
         risk it runs (a stop between 20% and a 40% ceiling), where per-agent guardrails keep a fixed 20% stop-loss.
-        Across {snapshot.sweep.seeds} market seeds the center book
-        had the smaller max drawdown on <strong>{snapshot.sweep.centerWinsDrawdown}/{snapshot.sweep.seeds}</strong>{" "}
-        and the higher Sharpe on <strong>{snapshot.sweep.centerWinsSharpe}/{snapshot.sweep.seeds}</strong>{" "}
-        (mean max drawdown {pct(snapshot.sweep.centerMean.maxDrawdown)} vs{" "}
-        {pct(snapshot.sweep.naiveMean.maxDrawdown)}; mean unwind {signedPct(snapshot.sweep.centerMean.crashWindowReturn)} vs{" "}
-        {signedPct(snapshot.sweep.naiveMean.crashWindowReturn)}).
+        Across {snapshot.sweep.seeds} market seeds the center book had the smaller max drawdown on{" "}
+        <strong>
+          {snapshot.sweep.centerWinsDrawdown}/{snapshot.sweep.seeds}
+        </strong>{" "}
+        and the higher Sharpe on{" "}
+        <strong>
+          {snapshot.sweep.centerWinsSharpe}/{snapshot.sweep.seeds}
+        </strong>
+        .
         {snapshot.sweepNoEdge && (
           <>
             {" "}If the research is wrong and catalysts carry no edge, the center book still had the smaller
@@ -190,11 +252,12 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
           <div className="panel-head">
             <h2>Center-book decisions</h2>
             <p className="panel-sub">
-              Every cut is a mandate <code>resize</code>, every stop-out a <code>revoke</code>, in the same
-              tree as payments. Plus {snapshot.decisionCounts.REALLOCATE ?? 0} routine reallocations.
+              Every cut is a mandate <code>resize</code>, every stop-out one <code>close</code> of the agent's
+              subtree, in the same tree as payments. Plus {snapshot.decisionCounts.REALLOCATE ?? 0} routine
+              reallocations.
             </p>
           </div>
-          <div className="panel-scroll cb-log-scroll" tabIndex={0} role="region" aria-label="Center-book decisions">
+          <ScrollRegion label="Center-book decisions" className="cb-log-scroll">
             <ol className="cb-log">
               {decisions.map((d, i) => (
                 <li key={`${d.t}-${i}`} className={`cb-log-item cb-log-${d.kind.toLowerCase()}`}>
@@ -207,7 +270,7 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
                 </li>
               ))}
             </ol>
-          </div>
+          </ScrollRegion>
         </div>
         <div className="panel cb-panel">
           <div className="panel-head">

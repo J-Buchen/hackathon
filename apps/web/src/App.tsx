@@ -20,7 +20,7 @@ import { parseFundSnapshot, type FundSnapshot } from "./fund/types";
 import { isConsoleAlias, parseConsoleHash } from "./fund/hash";
 import "./styles.css";
 
-// Code-split the live dashboard: it renders only below the fold AND only after
+// Code-split the payment dashboard: it renders only below the fold AND only after
 // the async demo-snapshot.json fetch resolves, so its subtree (NodeCard,
 // EventLog, buildTree, format helpers) is pulled out of the entry chunk and
 // loaded lazily — cutting time-to-interactive on the landing hero.
@@ -249,14 +249,15 @@ export function App() {
       <section className="section" id="dashboard">
         <div className="container">
           <Reveal className="dash-head">
-            <span className="overline">The primitive, live · agent payments</span>
+            <span className="overline">The primitive at work · agent payments · deterministic mocks</span>
             <h3 className="h2 h2-sub">
               The same tree, <span className="hl">spending money</span>.
             </h3>
             <p className="lede">
-              Rendered straight from <code>demo-snapshot.json</code> — the exact output of{" "}
-              <code>npm run demo</code>. Watch the budget attenuate down the tree, and every
-              blocked, denied, and revoked payment in the ledger.
+              Rendered from <code>demo-snapshot.json</code>, the output of <code>npm run demo</code>: a
+              scripted, reproducible run with no real money or chain. The delegation tree, its attenuation,
+              the mandate checks and revocation are Allowance code. The identity (World ID) and screening
+              (Intercepta) verdicts, and settlement (1inch Aqua), come from deterministic mocks.
             </p>
           </Reveal>
 
@@ -275,7 +276,7 @@ export function App() {
           {state.status === "ready" && (
             <SectionBoundary what="the payment dashboard" hint={<>Reload the page. If it keeps failing, run <code>npm run demo</code> at the repo root to regenerate its data.</>}>
               <Suspense fallback={<DashboardSkeleton />}>
-                <Dashboard snapshot={state.snapshot} panelHeading="h4" />
+                <Dashboard snapshot={state.snapshot} panelHeading="h4" stageLabels={PAYMENT_STAGES} />
               </Suspense>
             </SectionBoundary>
           )}
@@ -288,6 +289,15 @@ export function App() {
     </LazyMotion>
   );
 }
+
+// The payment demo (npm run demo) runs every adapter as a deterministic mock,
+// so the stage tags say which sponsor each stage stands in for, and that it is
+// a mock.
+const PAYMENT_STAGES = {
+  BLOCKED_SCREENING: "Intercepta (mock)",
+  DENIED_IDENTITY: "World ID (mock)",
+  SETTLED: "1inch Aqua (mock)",
+} as const;
 
 /* -------------------------------------------------------------------------- */
 /* Fund console — the product, on one virtual world (npm run demo:fund)        */
@@ -334,8 +344,8 @@ function FundConsoleSection() {
           </h2>
           <p className="lede">
             A simulated year in one virtual world: AI agents from different operators trade virtual stocks while a crowd
-            piles into one name and unwinds. The same roster runs twice on the same prices, once under the allocator and once with
-            per-agent guardrails only. Every number below is simulated.
+            piles into one name and unwinds. The same roster runs twice on the same prices, once under the allocator (the center
+            book) and once with per-agent guardrails only. Every number below is simulated.
           </p>
         </Reveal>
         {state.status === "loading" && <FundConsoleSkeleton />}
@@ -401,17 +411,16 @@ function CenterBookSection() {
     <section className="section section-alt" id="center-book">
       <div className="container">
         <Reveal className="dash-head">
-          <span className="overline">Worked example · one trend, three Tiger Cubs</span>
+          <span className="overline">A worked example · one trend, three Tiger Cubs · simulated prices</span>
           <h2 className="h2">
-            Tiger Cub agents, and the <span className="hl">center book</span> that stops them becoming
-            one trade.
+            Three Tiger-Cub PMs, <span className="hl">one crowded trade</span>.
           </h2>
           <p className="lede">
-            Every agent below is inside its own mandate. Guardrails on single agents are table stakes. What
-            no single agent can see is the crowding: several smart PMs landing on the same idea. The center
-            book allocates by risk-adjusted, attributable returns, cuts at one drawdown and revokes at a
-            second, and cuts pods that crowd into the same trade. Each of those moves is a <code>resize</code>{" "}
-            or <code>revoke</code> on the same mandate tree.
+            The console shows the allocator across a whole virtual fund; this is one mechanism up close. Three
+            Tiger-Cub-style PMs in three pods research the same trend, weigh it differently and converge on the same
+            long, each inside its own limits. Together they are one crowded trade, and only the center book, which looks
+            across them, catches it: every cut is a <code>resize</code> and every stop-out a <code>close</code> on the
+            same mandate tree.
           </p>
         </Reveal>
         {state.status === "loading" && <DashboardSkeleton />}
@@ -436,7 +445,7 @@ function CenterBookSection() {
 }
 
 /* -------------------------------------------------------------------------- */
-/* AgentHire — the live marketplace run (npm run demo:agenthire)               */
+/* AgentHire — a local, keyless marketplace run (npm run demo:agenthire)       */
 /* -------------------------------------------------------------------------- */
 // This tree settles through AgentHire (keyless, so simulated), not 1inch Aqua,
 // and a BLOCKED_MANDATE here can also be the settlement guard refusing a challenge.
@@ -446,6 +455,7 @@ const AGENTHIRE_STAGES = {
   SETTLED: "AgentHire · simulated",
   BLOCKED_MANDATE: "mandate · settlement guard",
   BLOCKED_SCREENING: "screening · operator incidents / AgentHire reputation",
+  DENIED_IDENTITY: "World ID (mock)",
 } as const;
 
 type AgentHireLoad =
@@ -483,7 +493,7 @@ function AgentHireSection() {
     <section className="section" id="agenthire">
       <div className="container">
         <Reveal className="dash-head">
-          <span className="overline">A live agent marketplace</span>
+          <span className="overline">A real agent marketplace, run locally · settlement simulated</span>
           <h2 className="h2">
             A fund's PM hires a scraper on AgentHire. One <span className="hl">close</span> takes it all back.
           </h2>
@@ -621,7 +631,7 @@ function Hero() {
           </h1>
           <p className="lede">
             Each agent trades inside a mandate that can only shrink, and carries a track record
-            bound to a verified human operator. The allocator moves capital to the best
+            bound to its human operator (World ID in production; simulated here). The allocator moves capital to the best
             risk-adjusted agents, spots when "independent" agents are one trade, and cuts them.
             A stop-out closes the agent's whole subtree in one operation.
           </p>
@@ -675,7 +685,7 @@ function HeroVisual() {
               <span className="hc-bar" aria-hidden="true">
                 <span className="hc-fill" style={{ transform: `scaleX(${r.w ?? 0})` }} />
               </span>
-              <span className="hc-state">{r.tone === "closed" ? "⦸ stopped" : "● live"}</span>
+              <span className="hc-state">{r.tone === "closed" ? "⦸ stopped" : "● active"}</span>
             </li>
           ),
         )}
@@ -691,8 +701,8 @@ function HeroVisual() {
         <span className="hc-note">
           <span className="hero-proof-k hero-proof-stop" aria-hidden="true">⦸</span>
           <span>
-            herd-1 hit its loss limit: its mandate was resized to zero and revoked, and the capital went back to the
-            fund. A stop-out, not a penalty.
+            herd-1 hit its loss limit: one close shut its mandate (and anything it delegated), and the unspent capital
+            returned to its pod. A stop-out, not a penalty.
           </span>
         </span>
       </figcaption>
@@ -710,7 +720,7 @@ function Guarantees() {
       h: "Reserved at grant",
       p: "Every agent's capital is set aside from the fund the moment it is granted, so no agent can ever trade money that was promised to another.",
       op: "delegate",
-      how: "A child's budget is carved from its parent's available balance; a grant the parent cannot back is rejected before the agent exists.",
+      how: "A child's budget is carved from its parent's available balance; a grant the parent cannot back is rejected before the agent exists. Every order is then sized from the agent's available authority in the tree and checked against it before it trades.",
       see: "#fc-tree-grant",
       seeLabel: "See the reservations at grant",
     },
@@ -728,7 +738,7 @@ function Guarantees() {
       h: "One trade, one cut",
       p: "When \"independent\" agents are really the same bet, the allocator treats them as one position and cuts them together, whatever names they trade under.",
       op: "group resize",
-      how: "The crowding scan groups agents whose books overlap and scales every contributor by one factor in one pass. It groups by positions: each agent's operator is recorded and flagged on the cuts after the run, but the allocator does not read it yet.",
+      how: "The crowding scan groups agents whose books overlap and scales every contributor by one factor in one pass. An operator is also one counterparty: when one of its agents is stopped out, its other agents are capped together in one plan until each recovers on its own record (never revoked, never shielded from their own stop).",
       see: "#fc-log-group",
       seeLabel: "See the group cuts",
     },
@@ -737,9 +747,9 @@ function Guarantees() {
       h: "A stop-out closes the subtree",
       p: "A stop-out is a loss limit, not a punishment: one operation shuts the agent's mandate and everything it delegated, and hands the unspent capital back up the tree.",
       op: "close",
-      how: "DelegationTree.close shrinks every descendant to what it spent (deepest first), revokes the node, and returns the freed amount to the parent. The center book stops every agent out this way (since loop 2), and the AgentHire run closes a live subtree that was still paying for work.",
+      how: "DelegationTree.close shrinks every descendant to what it spent (deepest first), revokes the node, and returns the freed amount to the parent. The center book stops every agent out this way (since loop 2), and the AgentHire run closes an active subtree that was still paying for work.",
       see: "#agenthire",
-      seeLabel: "See a close on a live subtree",
+      seeLabel: "See a close on an active subtree",
     },
   ];
   return (
@@ -794,7 +804,7 @@ const UNDER_THE_HOOD = [
   { href: "#how", label: "Attenuation" },
   { href: "#ens", label: "ENS names are the tree" },
   { href: "#pipeline", label: "The payment pipeline" },
-  { href: "#dashboard", label: "The primitive, live" },
+  { href: "#dashboard", label: "The primitive at work" },
 ];
 
 function UnderTheHood() {
@@ -917,16 +927,27 @@ function Attenuation() {
                 <div className="atten-track">
                   <m.div
                     className="atten-fill"
+                    aria-hidden="true"
                     initial={prefersReduced ? undefined : { scaleX: 0 }}
                     whileInView={prefersReduced ? undefined : { scaleX: s.pct }}
                     viewport={{ once: true, margin: "-15% 0px" }}
                     transition={{ duration: 1, delay: i * 0.12 + 0.1, ease: EASE }}
                     style={{ scaleX: prefersReduced ? s.pct : undefined }}
+                  />
+                  {/* Not inside the scaled fill (it would be squashed with it):
+                      its own element at the fill's end, faded in once the bar
+                      has grown. */}
+                  <m.span
+                    className={`atten-label ${s.pct >= 0.5 ? "is-in" : "is-out"}`}
+                    style={{ left: `${s.pct * 100}%` }}
+                    initial={prefersReduced ? undefined : { opacity: 0 }}
+                    whileInView={prefersReduced ? undefined : { opacity: 1 }}
+                    viewport={{ once: true, margin: "-15% 0px" }}
+                    transition={{ duration: 0.4, delay: i * 0.12 + 0.8, ease: EASE }}
                   >
                     {s.amt} USDC
-                  </m.div>
+                  </m.span>
                 </div>
-                <div className="atten-amt">{s.amt}</div>
               </div>
             </Reveal>
           ))}
@@ -992,7 +1013,7 @@ function Pipeline() {
   const steps = [
     { n: "01", h: "Verify identity", tag: "World ID", block: false, p: "Every node — and every ancestor — must present a valid agent credential. Expired or rogue agents are denied before anything moves." },
     { n: "02", h: "Check the mandate", tag: "Attenuation", block: true, p: "Not revoked, not expired, within the node's available balance, merchant and purpose on the allowlist. Over-budget spends stop here." },
-    { n: "03", h: "Screen the payment", tag: "Intercepta · x402", block: true, p: "A live screening call runs before the payment is signed. A flagged counterparty is blocked even when the mandate allows it." },
+    { n: "03", h: "Screen the payment", tag: "Intercepta · x402", block: true, p: "A screening call runs before the payment is signed. A flagged counterparty is blocked even when the mandate allows it." },
     { n: "04", h: "Settle in any token", tag: "1inch Aqua", block: false, p: "Pay in USDC, the merchant receives their token — swapped through Aqua/SwapVM as part of settlement." },
     { n: "05", h: "Enforce on-chain", tag: "Uniswap v4 hook", block: false, p: "A v4 hook mirrors the same cap on-chain: a swap that exceeds the node's remaining allowance reverts." },
   ];

@@ -617,12 +617,47 @@ The fetch validates untrusted JSON against the frozen §7 schema via
 
 The `#fund-console` section follows the same contract over
 `fund-snapshot.json`: a console-shaped loading skeleton
-(`FundConsoleSkeleton`, block heights measured per breakpoint so the ready
-state does not shift the page), `.notice-error` with the `npm run demo:fund`
+(`FundConsoleSkeleton`), `.notice-error` with the `npm run demo:fund`
 hint (validated by `parseFundSnapshot`, including every `policy` field the
 console reads), an empty notice when the file has no agents or no NAV, and the
 lazy-loaded `FundConsole` chunk when ready. Everything it shows is labelled as a
-simulated virtual world.
+simulated virtual world. The showcase world's KPI tiles are never shown without
+the context card below them (`fund/Context.tsx`, always rendered): "Across N
+sealed worlds" with the latest confirmed loop's block-B means, including where
+the center book still loses; or, when no loop has recorded its block-B books
+yet, "No sealed average yet", saying this one world has nothing to be read
+against. Both name the books the same way as the tiles ("center book" /
+"per-agent guardrails"). The skeleton reserves the pair (`--fcs-top`,
+`--fcs-context`).
+
+The skeleton's reserved heights are approximate, not exact: text reflows
+continuously with width, so within each width band a block's height is a line
+in the console's own width (`100cqi`; the skeleton is a size container),
+fitted to the ready console on fresh loads. Against the committed snapshot the
+skeleton's total is within 95 px of the ready console at every width sampled
+(every 6 px from 320 to 1436 px; about 15 px on average, 0 from 1180 px up),
+and the browser's scroll anchoring absorbs the rest where it has it (Safari
+does not). Re-fit (`styles.css`, "Loading skeleton") when the snapshot's text
+changes. Charts that size themselves to their container measure before the
+first paint (`LineChart`'s `useLayoutEffect`), so they render at their real
+height from the start.
+
+The evidence panel never softens the drawdown record: each loop's drawdown
+flag is worked out from before AND after (`model.ts` `standing`: "still above"
+only when the center book was already above guardrails before the loop; "now
+above · was below before this loop" when that loop took it there), the
+ledger's own note on each loop is always visible (never inside a collapsed
+element), and a result a later fix re-measured is drawn hollow and dashed
+next to the number that replaced it, which the loop card leads with.
+
+Scroll regions with a max height (the payment and AgentHire dashboards' tree
+and event log, `components/ScrollRegion.tsx`) show a "More below" tag and a
+bottom fade while content runs past the edge, since many browsers hide
+scrollbars. Their contents fit the panel's width: tree levels indent by one
+fixed step (narrower on a narrow panel) and the cards and event rows adapt to
+container queries rather than scrolling sideways. Their keyboard focus ring is
+drawn inside the region (`.panel` clips anything outside it) and above the
+fade and the tag.
 
 Every lazy section (payment dashboard, fund console, center book, AgentHire)
 sits inside a `SectionBoundary`: a render error replaces that section with the

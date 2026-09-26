@@ -5,6 +5,7 @@ import { buildTree } from "./tree";
 import { formatAmount, formatDate } from "./format";
 import { NodeCard } from "./components/NodeCard";
 import { EventLog } from "./components/EventLog";
+import { ScrollRegion } from "./components/ScrollRegion";
 
 const EASE = [0.16, 1, 0.3, 1] as const;
 
@@ -54,14 +55,21 @@ function Reveal({
 }
 
 /* -------------------------------------------------------------------------- */
-/* Dashboard (live data)                                                       */
+/* Dashboard (a demo run's snapshot)                                           */
 /* -------------------------------------------------------------------------- */
 function Dashboard({
   snapshot,
   stageLabels,
   panelHeading: PanelHeading = "h2",
+  identitySource = "World ID (mock)",
 }: {
   snapshot: Snapshot;
+  /**
+   * Who verified the principal and issued the identity badges. Both demos that
+   * render this dashboard use deterministic mocks (MockPrincipalVerifier,
+   * MockIdentityGate), so the default says so.
+   */
+  identitySource?: string;
   /** Per-result stage tags for the event log (the defaults name the main demo's sponsors). */
   stageLabels?: Partial<Record<EventResult, string>>;
   /** Heading level of the two panel titles, so they nest under the section's own heading. */
@@ -98,7 +106,7 @@ function Dashboard({
     {
       label: "Principal",
       value: snapshot.principal.name,
-      sub: snapshot.principal.verified ? "IDKit verified ✓" : "unverified",
+      sub: snapshot.principal.verified ? `${identitySource} ✓` : "unverified",
       tone: snapshot.principal.verified ? "good" : "warn",
     },
     ...(root
@@ -145,18 +153,14 @@ function Dashboard({
             <PanelHeading>Delegation tree</PanelHeading>
             <p className="panel-sub">
               Budget <strong>attenuates</strong> down the chain — each child's available
-              balance is a slice of its parent's. Revoked subtrees are dimmed.
+              balance is a slice of its parent's. Revoked subtrees are dimmed. Identity
+              badges are issued by {identitySource}.
             </p>
           </div>
-          {/* tabIndex/role/aria-label make the overflowing panel a keyboard-
-              operable scroll region (WCAG 2.1.1) with an accessible name. The
-              inner container is the ARIA tree; NodeCards are its treeitems. */}
-          <div
-            className="panel-scroll"
-            tabIndex={0}
-            role="region"
-            aria-label="Delegation tree"
-          >
+          {/* A keyboard-operable scroll region (WCAG 2.1.1) with an accessible
+              name and a "more below" hint. The inner container is the ARIA
+              tree; NodeCards are its treeitems. */}
+          <ScrollRegion label="Delegation tree">
             {/* A snapshot with zero nodes (malformed/partial file that still
                 passes shape validation, or a future minimal demo) would render a
                 blank tree container. Show a real empty state instead. */}
@@ -173,11 +177,12 @@ function Dashboard({
                     tree={r}
                     currency={snapshot.currency}
                     decimals={snapshot.decimals}
+                    identitySource={identitySource}
                   />
                 ))}
               </div>
             )}
-          </div>
+          </ScrollRegion>
         </Reveal>
 
         <Reveal className="panel panel-events" delay={0.12}>
@@ -189,19 +194,14 @@ function Dashboard({
             </p>
           </div>
           {/* Same keyboard-operable scroll region treatment as the tree panel. */}
-          <div
-            className="panel-scroll"
-            tabIndex={0}
-            role="region"
-            aria-label="Event log"
-          >
+          <ScrollRegion label="Event log">
             <EventLog
               events={snapshot.events}
               currency={snapshot.currency}
               decimals={snapshot.decimals}
               stageLabels={stageLabels}
             />
-          </div>
+          </ScrollRegion>
         </Reveal>
       </div>
     </LazyMotion>

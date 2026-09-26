@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 
 /**
  * Minimal, dependency-free SVG line chart for the center-book section.
@@ -74,6 +74,13 @@ export function LineChart({
   const svgRef = useRef<SVGSVGElement>(null);
   const plotRef = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(WIDE);
+  // Measure once before the first paint, so the chart never shows at the
+  // design width and then jumps to its real height (a layout shift that moved
+  // everything below a freshly loaded section). The observer keeps it current.
+  useLayoutEffect(() => {
+    const w = Math.round(plotRef.current?.getBoundingClientRect().width ?? 0);
+    if (w > 0) setW(Math.max(300, w));
+  }, []);
   useEffect(() => {
     const el = plotRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
@@ -254,7 +261,9 @@ export function LineChart({
         </div>
       </div>
       <details className="chart-table">
-        <summary>Show data table</summary>
+        <summary>
+          Show data table<span className="sr-only">: {title}</span>
+        </summary>
         <div className="table-scroll" tabIndex={0} role="region" aria-label={`${title} data`}>
           <table>
             <thead>

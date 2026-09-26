@@ -3,8 +3,8 @@
 > **The allocation and risk layer for capital run by AI agents.**
 
 A multi-manager fund where the PMs are AI agents. Each agent trades inside a
-mandate that can only shrink, carries a track record bound to a verified human
-operator, and the allocator moves capital to the best risk-adjusted agents,
+mandate that can only shrink, carries a track record bound to its human operator
+(World-ID-verified in production; mocked in the demos), and the allocator moves capital to the best risk-adjusted agents,
 spots when "independent" agents are one trade, and cuts them — a stop-out closes
 the agent's whole subtree in one operation. Four guarantees; the allocator makes
 the decisions, and each one lands as one operation on one mandate tree:

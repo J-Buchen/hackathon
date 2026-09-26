@@ -8,11 +8,21 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { FundSnapshotError, parseFundSnapshot, type FundSnapshot } from "./fund/types";
+import { Evidence } from "./fund/Evidence";
+import { SealedContext } from "./fund/Context";
 import {
   buildLog,
+  drawdownRows,
   entryAgents,
   evidenceRows,
+  latestSealed,
+  pp,
+  showcaseContext,
+  standing,
+  winPct,
   filterLog,
   groupCutStats,
   ladderAt,
@@ -180,12 +190,30 @@ test("evidence rows plot only merged, confirmed changes", () => {
     blockA: null,
     // A report can carry block B for a winner that FAILED it; it must not plot.
     blockB: { allocator: u(-0.004), tiger: u(0) },
+    correctedB: null,
     headVsBaseline: null,
+    riskSummary: null,
+    rejections: [],
+    booksB: null,
   };
   const rows = evidenceRows([...s.evidence.loops, unmerged]);
   assert.ok(rows.every((r) => !r.key.startsWith("9")), "the unmerged loop is not plotted");
   const confirmed = s.evidence.loops.filter((l) => l.confirmed);
-  assert.equal(rows.length, confirmed.reduce((n, l) => n + (l.blockA ? 1 : 0) + (l.blockB ? 1 : 0), 0));
+  assert.equal(rows.length, confirmed.reduce((n, l) => n + (l.blockA ? 1 : 0) + (l.blockB ? 1 : 0) + (l.correctedB ? 1 : 0), 0));
+  // A correction is plotted next to the confirmed number, not instead of it:
+  // the first confirmation is marked superseded and the re-measurement right
+  // after it is the one that stands.
+  const corrected = rows.find((r) => r.key.endsWith("Bc"));
+  assert.ok(corrected, "loop 1's corrected block-B gain");
+  const at = rows.indexOf(corrected);
+  const first = rows[at - 1]!;
+  assert.equal(first.key, corrected.key.slice(0, -1), "its first confirmation comes right before it");
+  assert.equal(first.superseded, true);
+  assert.equal(corrected.superseded, false);
+  assert.equal(rows.filter((r) => r.superseded).length, 1, "nothing else is marked superseded");
+  // Plain words on the chart; the commit hash stays in the hover title and the data table.
+  assert.doesNotMatch(`${corrected.label} ${corrected.sub}`, /[0-9a-f]{7}|post-push/);
+  assert.match(corrected.detail ?? "", /f5b2d80/);
   assert.deepEqual(evidenceRows([unmerged]), []);
 });
 
@@ -229,4 +257,240 @@ test("usdCompact", () => {
   assert.equal(usdCompact(854_489), "854K");
   assert.equal(usdCompact(1_500), "1.5K");
   assert.equal(usdCompact(-800), "−800");
+});
+
+/* -------------------------------------------------------------------------- */
+/* Evidence v2: drawdown summary, rejections, sealed books                     */
+/* -------------------------------------------------------------------------- */
+
+type Loop = Record<string, unknown>;
+const withLoop = (mutate: (l: Loop) => void): Record<string, unknown> => {
+  const r = raw();
+  const loops = (r.evidence as { loops: Loop[] }).loops;
+  mutate(loops.find((l) => l.loop === 2)!);
+  return r;
+};
+const at = (r: Record<string, unknown>) => (r.evidence as { loops: Loop[] }).loops.findIndex((l) => l.loop === 2);
+
+test("the committed snapshot carries each loop's drawdown summary and rejected candidates", () => {
+  const s = load();
+  // Loops 1 and 2 are sealed ledger entries (docs/loops/loop-1.json, loop-2.json)
+  // with these hand-written fields; later loops are free to differ.
+  for (const l of s.evidence.loops.filter((x) => x.loop <= 2)) {
+    assert.ok(l.riskSummary, `loop ${l.loop} riskSummary`);
+    assert.ok(l.rejections.length > 0, `loop ${l.loop} rejections`);
+    for (const r of l.rejections) assert.ok(r.title.length > 0 && r.reason.length > 0);
+  }
+  const two = s.evidence.loops.find((l) => l.loop === 2)!;
+  assert.ok(two.riskSummary!.pairedChange, "loop 2 recorded the paired drawdown change");
+  assert.equal(s.evidence.loops.find((l) => l.loop === 1)!.riskSummary!.pairedChange, null, "loop 1 did not");
+});
+
+test("parseFundSnapshot rejects malformed evidence v2 fields with the JSON path", () => {
+  let r = withLoop((l) => delete l.riskSummary);
+  assert.throws(() => parseFundSnapshot(r), new RegExp(`evidence\\.loops\\[${at(r)}\\]\\.riskSummary: expected object, got undefined`));
+
+  r = withLoop((l) => ((l.riskSummary as Loop).centerMaxDDAfter = "7.75%"));
+  assert.throws(() => parseFundSnapshot(r), /evidence\.loops\[\d+\]\.riskSummary\.centerMaxDDAfter: expected finite number, got string/);
+
+  // Out-of-range values are named in the message, not just their type.
+  r = withLoop((l) => ((l.riskSummary as Loop).guardrailsMaxDD = -0.07));
+  assert.throws(() => parseFundSnapshot(r), /riskSummary\.guardrailsMaxDD: expected number in \[0, 1\], got -0\.07$/);
+
+  r = withLoop((l) => ((l.riskSummary as Loop).centerMaxDDAfter = 7.75));
+  assert.throws(() => parseFundSnapshot(r), /riskSummary\.centerMaxDDAfter: expected number in \[0, 1\], got 7\.75$/);
+
+  r = withLoop((l) => ((l.booksB as { seeds: Loop }).seeds.count = 0));
+  assert.throws(() => parseFundSnapshot(r), /booksB\.seeds\.count: expected positive integer, got 0$/);
+
+  r = raw();
+  (r.world as Loop).seed = 10_001;
+  assert.throws(() => parseFundSnapshot(r), /world\.seed: expected research seed in \[1, 9999\], got 10001$/);
+
+  r = withLoop((l) => ((l.riskSummary as Loop).pairedChange = { mean: -0.003, lo: -0.001, hi: -0.005 }));
+  assert.throws(() => parseFundSnapshot(r), /riskSummary\.pairedChange: expected lo ≤ mean ≤ hi/);
+
+  r = withLoop((l) => ((l.riskSummary as Loop).pairedChange = { mean: -0.003, lo: -0.005 }));
+  assert.throws(() => parseFundSnapshot(r), /riskSummary\.pairedChange\.hi: expected finite number, got undefined/);
+
+  r = withLoop((l) => (l.rejections = [{ title: "x", reason: "y" }, { title: "no reason" }]));
+  assert.throws(() => parseFundSnapshot(r), /evidence\.loops\[\d+\]\.rejections\[1\]\.reason: expected string, got undefined/);
+
+  r = withLoop((l) => (l.rejections = null));
+  assert.throws(() => parseFundSnapshot(r), /rejections: expected array, got null/);
+
+  r = withLoop((l) => ((l.booksB as { center: Loop }).center.maxDrawdown = null));
+  assert.throws(() => parseFundSnapshot(r), /booksB\.center\.maxDrawdown: expected finite number, got null/);
+
+  r = withLoop((l) => ((l.booksB as { guardrails: Loop }).guardrails.sharpe = "0.77"));
+  assert.throws(() => parseFundSnapshot(r), /booksB\.guardrails\.sharpe: expected finite number, got string/);
+
+  r = withLoop((l) => ((l.booksB as Loop).block = "A"));
+  assert.throws(() => parseFundSnapshot(r), /booksB\.block: expected "B"/);
+
+  r = withLoop((l) => delete l.correctedB);
+  assert.throws(() => parseFundSnapshot(r), /correctedB: expected object, got undefined/);
+
+  // Nullable fields accept null.
+  r = withLoop((l) => {
+    l.riskSummary = null;
+    l.booksB = null;
+    l.rejections = [];
+  });
+  assert.doesNotThrow(() => parseFundSnapshot(r));
+  r = withLoop((l) => ((l.booksB as { guardrails: Loop }).guardrails.sharpe = null));
+  assert.doesNotThrow(() => parseFundSnapshot(r));
+});
+
+test("drawdown standing is worked out from before AND after", () => {
+  assert.equal(standing(0.08, 0.078, 0.069), "still-above");
+  assert.equal(standing(0.066, 0.076, 0.067), "now-above");
+  assert.equal(standing(0.08, 0.066, 0.069), "now-below");
+  assert.equal(standing(0.06, 0.065, 0.069), "below");
+});
+
+test("drawdown rows: before → after vs guardrails, and whether this loop crossed them", () => {
+  const s = load();
+  const rows = drawdownRows(s.evidence.loops);
+  assert.equal(rows.length, s.evidence.loops.filter((l) => l.riskSummary).length);
+  for (const r of rows) {
+    const rs = s.evidence.loops.find((l) => l.loop === r.loop)!.riskSummary!;
+    assert.equal(r.before, rs.centerMaxDDBefore);
+    assert.equal(r.after, rs.centerMaxDDAfter);
+    assert.equal(r.guardrails, rs.guardrailsMaxDD);
+    assert.deepEqual(r.paired, rs.pairedChange);
+    assert.equal(r.aboveGuardrails, rs.centerMaxDDAfter > rs.guardrailsMaxDD);
+    assert.equal(r.standing, standing(rs.centerMaxDDBefore, rs.centerMaxDDAfter, rs.guardrailsMaxDD));
+  }
+  // The ledger (docs/loops/loop-1.json, loop-2.json): loop 1 took the center
+  // book's block-B drawdown ABOVE guardrails (6.62% → 7.58% vs 6.73%); loop 2
+  // lowered it but it is still above (8.07% → 7.75% vs 6.88%).
+  assert.equal(rows.find((r) => r.loop === 1)!.standing, "now-above");
+  assert.equal(rows.find((r) => r.loop === 2)!.standing, "still-above");
+  assert.equal(drawdownRows([]).length, 0);
+});
+
+test("win rates never round to a number the ledger contradicts", () => {
+  // docs/LOOPS.md: loop 1 block B "better in 74% of worlds" (0.745), after the fix "73%" (0.725).
+  assert.equal(winPct(0.745), "74.5%");
+  assert.equal(winPct(0.725), "72.5%");
+  assert.equal(winPct(0.68), "68%");
+  assert.equal(winPct(0.59), "59%");
+});
+
+/** The evidence panel rendered to HTML, with the collapsed <details> parts removed: what a reader sees by default. */
+function visibleEvidence(loops: LoopEvidence[]): string {
+  const html = renderToStaticMarkup(createElement(Evidence, { loops }));
+  return html
+    .replace(/<details[\s\S]*?<\/details>/g, "")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ");
+}
+
+test("the evidence panel states loop 1's drawdown damage and its corrected gain in the open", () => {
+  const s = load();
+  const ledger = s.evidence.loops.filter((l) => l.loop <= 2);
+  const text = visibleEvidence(ledger);
+  const [one, two] = text.split(/Loop 2 /) as [string, string];
+  // Loop 1 is what took the center book above guardrails: never "still above".
+  assert.match(one, /now above · was below before this loop/);
+  assert.doesNotMatch(one, /still above/);
+  // Loop 2 was already above and stayed above.
+  assert.match(two, /center book still above/);
+  // The ledger's own note, including its drawdown sentence, is visible, not collapsed.
+  const note = s.evidence.loops.find((l) => l.loop === 1)!.note!;
+  assert.match(note, /raised the center book's mean max drawdown above per-agent guardrails'/);
+  assert.ok(one.includes(note.replace(/\s+/g, " ")), "loop 1's ledger note is visible");
+  // The card leads with the corrected, shipped gain; the first confirmation follows, labelled.
+  const l1 = s.evidence.loops.find((l) => l.loop === 1)!;
+  const lead = one.indexOf(pp(l1.correctedB!.uplift.mean));
+  const firstAt = one.indexOf(`As first confirmed, before the fix: ${pp(l1.blockB!.allocator.mean)}`);
+  assert.ok(lead >= 0 && firstAt > lead, "corrected number first, first confirmation after it");
+  assert.match(one, /better in 72\.5% of worlds/);
+  // The block-A certainty-equivalent lines name their block and seeds.
+  assert.match(text, /Before loop 2, on block A \(200 sealed worlds, seeds 12000–12199\)/);
+});
+
+test("showcase context: the loop-2 disclosure (fixed facts of a sealed ledger entry)", () => {
+  const s = load();
+  // Pinned to loop 2's sealed numbers, so a later loop's result cannot break
+  // this test; the latest loop is tested against its own data below.
+  const upTo2 = { ...s, evidence: { ...s.evidence, loops: s.evidence.loops.filter((l) => l.loop <= 2) } };
+  const ctx = showcaseContext(upTo2);
+  assert.ok(ctx.sealed);
+  assert.equal(ctx.sealed.loop, 2);
+  assert.equal(ctx.sealed.worlds, 200);
+  assert.deepEqual(ctx.rows.map((r) => r.metric), ["Certainty equivalent", "Sharpe", "Max drawdown"]);
+  // Center book beats guardrails on certainty equivalent on the sealed block (11.7% vs 6.1%)…
+  assert.equal(ctx.sealed.utilityAbove, true);
+  assert.deepEqual(ctx.rows[0]!.sealed, { center: "+11.7%", guardrails: "+6.1%", better: "center" });
+  // …but its mean max drawdown is still ABOVE the guardrails' there (7.75% vs 6.88%).
+  assert.equal(ctx.sealed.drawdownAbove, true);
+  assert.deepEqual(ctx.rows[2]!.sealed, { center: "7.75%", guardrails: "6.88%", better: "guardrails" });
+  // Both columns of a row to the same precision.
+  for (const r of ctx.rows) {
+    if (!r.sealed) continue;
+    const dp = (x: string) => x.split(".")[1]?.replace(/\D/g, "").length ?? 0;
+    assert.equal(dp(r.world.center), dp(r.sealed.center), r.metric);
+  }
+});
+
+test("showcase context: the latest sealed loop, whatever its result, is reported as it came out", () => {
+  const s = load();
+  const latest = latestSealed(s.evidence.loops)!;
+  assert.equal(latest.loop, Math.max(...s.evidence.loops.filter((l) => l.confirmed && l.merged.length > 0 && l.booksB).map((l) => l.loop)));
+  const ctx = showcaseContext(s);
+  assert.ok(ctx.sealed);
+  const b = latest.booksB;
+  const c = s.books.center.summary;
+  const g = s.books.baseline.summary;
+  assert.equal(ctx.sealed.loop, latest.loop);
+  assert.equal(ctx.sealed.worlds, b.seeds.count);
+  assert.equal(ctx.sealed.drawdownAbove, b.center.maxDrawdown > b.guardrails.maxDrawdown);
+  assert.equal(ctx.sealed.utilityAbove, b.center.utility > b.guardrails.utility);
+  assert.equal(ctx.rows[2]!.sealed!.better === "guardrails", b.center.maxDrawdown > b.guardrails.maxDrawdown + 0.00005);
+  assert.equal(ctx.gapWorld, c.utility - g.utility);
+  assert.equal(ctx.sealed.gap, b.center.utility - b.guardrails.utility);
+  assert.equal(ctx.sealed.favourable, ctx.gapWorld > ctx.sealed.gap);
+
+  // A drawdown result that goes the other way is reported that way too.
+  const flipped = {
+    ...s,
+    evidence: {
+      ...s.evidence,
+      loops: s.evidence.loops.map((l) =>
+        l.loop === latest.loop ? { ...l, booksB: { ...b, center: { ...b.center, maxDrawdown: b.guardrails.maxDrawdown - 0.003 } } } : l,
+      ),
+    },
+  };
+  const f = showcaseContext(flipped);
+  assert.equal(f.sealed!.drawdownAbove, false);
+  assert.equal(f.rows[2]!.sealed!.better, "center");
+});
+
+test("showcase context without a sealed confirmation: the card stays and says so", () => {
+  const s = load();
+  const bare = { ...s, evidence: { ...s.evidence, loops: s.evidence.loops.map((l) => ({ ...l, booksB: null })) } };
+  const ctx = showcaseContext(bare);
+  assert.equal(ctx.sealed, null);
+  assert.equal(ctx.rows.length, 3, "this world's rows are still shown");
+  assert.ok(ctx.rows.every((r) => r.sealed === null));
+  const html = renderToStaticMarkup(createElement(SealedContext, { ctx, seed: s.world.seed }));
+  assert.match(html, /No sealed average yet/);
+  assert.match(html, /no average to be read\s+against/);
+
+  // A guardrails Sharpe the report could not vouch for is left out, not guessed.
+  const noSharpe = {
+    ...s,
+    evidence: {
+      ...s.evidence,
+      loops: s.evidence.loops.map((l) => (l.booksB ? { ...l, booksB: { ...l.booksB, guardrails: { ...l.booksB.guardrails, sharpe: null } } } : l)),
+    },
+  };
+  assert.equal(showcaseContext(noSharpe).rows[1]!.sealed, null);
 });

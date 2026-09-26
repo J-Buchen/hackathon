@@ -21,6 +21,7 @@ export type DecisionKind =
   | "RESTORE"
   | "STOP_OUT"
   | "CROWDING_CUT"
+  | "OPERATOR_CUT"
   | "GATE_CLIP";
 
 export interface FundDecision {
@@ -93,6 +94,32 @@ export interface Uplift {
   wins: number;
 }
 
+/** The center book's mean max drawdown on a sealed block, before → after the loop, vs guardrails (report `riskSummary`). */
+export interface RiskSummary {
+  block: string;
+  seeds: string;
+  centerMaxDDBefore: number;
+  centerMaxDDAfter: number;
+  guardrailsMaxDD: number;
+  /** Paired change with its 90% interval; null when the loop did not record it. */
+  pairedChange: { mean: number; lo: number; hi: number } | null;
+  note: string | null;
+}
+
+/** A candidate the loop did not merge, with the ledger's one-line reason. */
+export interface Rejection {
+  title: string;
+  reason: string;
+}
+
+/** Center book vs per-agent guardrails on a loop's confirmation block (means over its sealed virtual worlds). */
+export interface SealedBooks {
+  block: "B";
+  seeds: { from: number; count: number };
+  center: { utility: number; sharpe: number; maxDrawdown: number };
+  guardrails: { utility: number; sharpe: number | null; maxDrawdown: number };
+}
+
 export interface LoopEvidence {
   loop: number;
   title: string | null;
@@ -104,6 +131,11 @@ export interface LoopEvidence {
   confirmed: boolean;
   blockA: { allocator: Uplift; tiger: Uplift } | null;
   blockB: { allocator: Uplift; tiger: Uplift } | null;
+  /** Block-B uplift re-measured after a post-push correction, vs the commit named in `vs`. */
+  correctedB: { uplift: Uplift; vs: string | null } | null;
+  riskSummary: RiskSummary | null;
+  rejections: Rejection[];
+  booksB: SealedBooks | null;
   headVsBaseline: {
     worlds: number;
     utility: number;
@@ -214,7 +246,7 @@ function numOrNull(v: unknown, path: string): number | null {
 }
 
 const LADDER = ["active", "cut", "stopped"] as const;
-const KINDS = ["ALLOCATE", "REALLOCATE", "CUT", "RESTORE", "STOP_OUT", "CROWDING_CUT", "GATE_CLIP"] as const;
+const KINDS = ["ALLOCATE", "REALLOCATE", "CUT", "RESTORE", "STOP_OUT", "CROWDING_CUT", "OPERATOR_CUT", "GATE_CLIP"] as const;
 
 function summaryOf(v: unknown, path: string): void {
   const s = obj(v, path);
@@ -224,7 +256,7 @@ function summaryOf(v: unknown, path: string): void {
 function treeState(v: unknown, path: string, nodes: number, ticks: number): void {
   const s = obj(v, path);
   const t = num(s.t, `${path}.t`);
-  if (!Number.isInteger(t) || t < -1 || t >= ticks) fail(`${path}.t`, `integer in [-1, ${ticks - 1}]`, t);
+  if (!Number.isInteger(t) || t < -1 || t >= ticks) outOfRange(`${path}.t`, `integer in [-1, ${ticks - 1}]`, t);
   for (const k of ["budget", "spent", "reserved", "available"]) nums(s[k], `${path}.${k}`, nodes);
   for (const k of ["revoked", "present"]) {
     const a = arr(s[k], `${path}.${k}`);
@@ -242,6 +274,56 @@ function uplift(v: unknown, path: string): void {
   }
 }
 
+/** A value of the right type but out of range: the message names the value itself. */
+function outOfRange(path: string, expected: string, actual: number): never {
+  throw new FundSnapshotError(`fund-snapshot.json ${path}: expected ${expected}, got ${actual}`);
+}
+
+/** A drawdown as a fraction: finite and in [0, 1] (never negative; 7.75 would be percent units). */
+function fraction(v: unknown, path: string): number {
+  const x = num(v, path);
+  if (x < 0 || x > 1) outOfRange(path, "number in [0, 1]", x);
+  return x;
+}
+
+/** An interval: lo ≤ mean ≤ hi. */
+function interval(v: unknown, path: string, keys: readonly string[]): void {
+  const o = obj(v, path);
+  for (const k of keys) num(o[k], `${path}.${k}`);
+  const { mean, lo, hi } = o as { mean: number; lo: number; hi: number };
+  if (!(lo <= mean && mean <= hi)) {
+    throw new FundSnapshotError(`fund-snapshot.json ${path}: expected lo ≤ mean ≤ hi, got ${lo}, ${mean}, ${hi}`);
+  }
+}
+
+function riskSummary(v: unknown, path: string): void {
+  if (v === null) return;
+  const r = obj(v, path);
+  str(r.block, `${path}.block`);
+  str(r.seeds, `${path}.seeds`);
+  for (const k of ["centerMaxDDBefore", "centerMaxDDAfter", "guardrailsMaxDD"]) fraction(r[k], `${path}.${k}`);
+  if (r.pairedChange !== null) interval(r.pairedChange, `${path}.pairedChange`, ["mean", "lo", "hi"]);
+  if (r.note !== null) str(r.note, `${path}.note`);
+}
+
+function sealedBooks(v: unknown, path: string): void {
+  if (v === null) return;
+  const b = obj(v, path);
+  if (b.block !== "B") fail(`${path}.block`, '"B"', b.block);
+  const seeds = obj(b.seeds, `${path}.seeds`);
+  num(seeds.from, `${path}.seeds.from`);
+  const count = num(seeds.count, `${path}.seeds.count`);
+  if (!Number.isInteger(count) || count < 1) outOfRange(`${path}.seeds.count`, "positive integer", count);
+  const c = obj(b.center, `${path}.center`);
+  num(c.utility, `${path}.center.utility`);
+  num(c.sharpe, `${path}.center.sharpe`);
+  fraction(c.maxDrawdown, `${path}.center.maxDrawdown`);
+  const g = obj(b.guardrails, `${path}.guardrails`);
+  num(g.utility, `${path}.guardrails.utility`);
+  numOrNull(g.sharpe, `${path}.guardrails.sharpe`);
+  fraction(g.maxDrawdown, `${path}.guardrails.maxDrawdown`);
+}
+
 /**
  * Validate the untrusted JSON: every field the console dereferences, and that
  * the per-tick series line up (NAV and agent series have `world.ticks` entries,
@@ -256,10 +338,10 @@ export function parseFundSnapshot(raw: unknown): FundSnapshot {
 
   const w = obj(s.world, "world");
   const seed = num(w.seed, "world.seed");
-  if (!Number.isInteger(seed) || seed < 1 || seed >= 10_000) fail("world.seed", "research seed in [1, 9999]", seed);
+  if (!Number.isInteger(seed) || seed < 1 || seed >= 10_000) outOfRange("world.seed", "research seed in [1, 9999]", seed);
   str(w.seedRule, "world.seedRule");
   const ticks = num(w.ticks, "world.ticks");
-  if (!Number.isInteger(ticks) || ticks < 2) fail("world.ticks", "integer ≥ 2", ticks);
+  if (!Number.isInteger(ticks) || ticks < 2) outOfRange("world.ticks", "integer ≥ 2", ticks);
   str(w.fund, "world.fund");
   num(w.aum, "world.aum");
   strs(w.stocks, "world.stocks");
@@ -384,6 +466,18 @@ export function parseFundSnapshot(raw: unknown): FundSnapshot {
     bool(l.confirmed, `${p}.confirmed`);
     uplift(l.blockA, `${p}.blockA`);
     uplift(l.blockB, `${p}.blockB`);
+    if (l.correctedB !== null) {
+      const c = obj(l.correctedB, `${p}.correctedB`);
+      interval(c.uplift, `${p}.correctedB.uplift`, ["mean", "lo", "hi", "wins"]);
+      if (c.vs !== null) str(c.vs, `${p}.correctedB.vs`);
+    }
+    riskSummary(l.riskSummary, `${p}.riskSummary`);
+    arr(l.rejections, `${p}.rejections`).forEach((r, j) => {
+      const rr = obj(r, `${p}.rejections[${j}]`);
+      str(rr.title, `${p}.rejections[${j}].title`);
+      str(rr.reason, `${p}.rejections[${j}].reason`);
+    });
+    sealedBooks(l.booksB, `${p}.booksB`);
     if (l.headVsBaseline !== null) {
       const h = obj(l.headVsBaseline, `${p}.headVsBaseline`);
       for (const k of ["worlds", "utility", "baseline", "uplift", "lo", "hi", "winRate"]) num(h[k], `${p}.headVsBaseline.${k}`);

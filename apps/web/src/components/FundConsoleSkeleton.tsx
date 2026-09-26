@@ -1,10 +1,12 @@
 /**
  * Loading placeholder for the fund console, shaped like the console itself:
- * the world strip, six KPI tiles, the NAV chart, the tree + log pair, the
- * agents table and the evidence panel. Each block reserves the height the real
- * one renders at each breakpoint (styles.css `.fcs-*`, measured against the
- * committed snapshot), so the ready state swaps in without shifting the page
- * below it (DESIGN.md §11.1). Used for the fetch AND the lazy chunk's Suspense.
+ * the world strip, six KPI tiles and the sealed-average context card, the NAV
+ * chart, the tree + log pair, the agents table and the evidence panel (with
+ * its rejections collapsed). Each block reserves about the height the real
+ * one renders (styles.css `.fcs`: per width band, a line in the console's own
+ * width fitted to the committed snapshot), so the ready state swaps in with
+ * little shift of the page below it (DESIGN.md §11.1 gives the measured
+ * error). Used for the fetch AND the lazy chunk's Suspense.
  */
 
 const TILES = [0, 1, 2, 3, 4, 5];
@@ -16,10 +18,13 @@ export function FundConsoleSkeleton() {
         <div className="skeleton-line fcs-strip" />
         <div className="skeleton-line fcs-rule" />
       </div>
-      <div className="fc-kpis">
-        {TILES.map((i) => (
-          <div className="skeleton-tile fcs-tile" key={i} />
-        ))}
+      <div className="fc-top">
+        <div className="fc-kpis">
+          {TILES.map((i) => (
+            <div className="skeleton-tile fcs-tile" key={i} />
+          ))}
+        </div>
+        <div className="skeleton-tile fcs-tile fcs-context" />
       </div>
       <div className="panel fcs-panel fcs-chart">
         <div className="skeleton-line skeleton-line-title" />

@@ -132,7 +132,31 @@ const LOOP_FIXTURES: Record<string, unknown> = {
       { k: 0, angle: "(A) Better sizing: detail", track: "allocator", status: "winner-A", blockA: { allocator: u(0.02), tiger: u(0) } },
       { k: 1, angle: "x", track: "structure", status: "rejected-review" },
     ],
-    confirmation: { ok: true, kept: [0], blockB: { allocator: u(0.03), tiger: u(0) } },
+    confirmation: {
+      ok: true,
+      kept: [0],
+      blockB: { allocator: u(0.03), tiger: u(0) },
+      booksB: {
+        allocator: { utility: 0.11, sharpe: 1.2, maxDD: 0.078, baselineUtility: 0.06, baselineMaxDD: 0.069 },
+        tiger: { utility: -0.07, sharpe: 0, maxDD: 0.28, baselineUtility: -0.2, baselineMaxDD: 0.44 },
+      },
+      // The pre-change run on the same block: its guardrails numbers match booksB's.
+      baselineB: { allocator: { baseline: 0.06, baselineMaxDD: 0.069, baselineSharpe: 0.77 } },
+    },
+    correction: { loop2GainOnBAfterFix: { vs: "abc1234", mean: 0.025, lo: 0.015, hi: 0.035, wins: 0.58 } },
+    riskSummary: {
+      block: "B",
+      seeds: "12500-12699",
+      centerMaxDDBefore: 0.081,
+      centerMaxDDAfter: 0.078,
+      guardrailsMaxDD: 0.069,
+      pairedChange: { mean: -0.003, lo: -0.005, hi: -0.001 },
+    },
+    rejections: [
+      { title: "Looser crowding limits (G)", reason: "stopped by the risk guard" },
+      { title: "no reason" },
+      "not an object",
+    ],
     merged: { kept: [0] },
   },
   // A block-A winner that FAILED block B (loop-driver.mjs:114): block B is
@@ -144,7 +168,15 @@ const LOOP_FIXTURES: Record<string, unknown> = {
     candidates: [
       { k: 0, angle: "(G) Something: detail", track: "allocator", status: "winner-A", blockA: { allocator: u(0.01), tiger: u(0) } },
     ],
-    confirmation: { ok: false, kept: [0], blockB: { allocator: u(-0.004), tiger: u(0) } },
+    confirmation: {
+      ok: false,
+      kept: [0],
+      blockB: { allocator: u(-0.004), tiger: u(0) },
+      booksB: { allocator: { utility: 0.1, sharpe: 1, maxDD: 0.07, baselineUtility: 0.06, baselineMaxDD: 0.069 } },
+    },
+    // A malformed risk summary (a number is missing) on a loop that merged nothing.
+    riskSummary: { block: "B", seeds: "13500-13699", centerMaxDDBefore: 0.08, centerMaxDDAfter: null, guardrailsMaxDD: 0.07 },
+    rejections: [{ title: "Something (G)", reason: "failed block B" }],
     merged: null,
   },
   // Incomplete: no block ranges.
@@ -180,6 +212,60 @@ test("readEvidence never reports block B for a change that failed confirmation",
   assert.equal(three.blockB, null, "block B of an unmerged change is not the merged change's evidence");
   // A baseline summary with a missing number is dropped, not written as null fields.
   assert.equal(three.headVsBaseline, null);
+  // Nor are its block-B books or its drawdown summary the merged change's.
+  assert.equal(three.booksB, null);
+  assert.equal(three.riskSummary, null);
+  assert.equal(three.correctedB, null);
+  // Rejections are recorded whatever the verdict.
+  assert.deepEqual(three.rejections, [{ title: "Something (G)", reason: "failed block B" }]);
+});
+
+test("readEvidence carries the drawdown summary, the rejections and the sealed books of a confirmed loop", () => {
+  const two = readEvidence(fixtureDir(false)).find((l) => l.loop === 2)!;
+  assert.deepEqual(two.riskSummary, {
+    block: "B",
+    seeds: "12500-12699",
+    centerMaxDDBefore: 0.081,
+    centerMaxDDAfter: 0.078,
+    guardrailsMaxDD: 0.069,
+    pairedChange: { mean: -0.003, lo: -0.005, hi: -0.001 },
+    note: null,
+  });
+  // Entries without a title and a reason are dropped.
+  assert.deepEqual(two.rejections, [{ title: "Looser crowding limits (G)", reason: "stopped by the risk guard" }]);
+  assert.deepEqual(two.booksB, {
+    block: "B",
+    seeds: { from: 12500, count: 200 },
+    center: { utility: 0.11, sharpe: 1.2, maxDrawdown: 0.078 },
+    // booksB has no guardrails Sharpe; baselineB's is the same guardrails run, so it is used.
+    guardrails: { utility: 0.06, maxDrawdown: 0.069, sharpe: 0.77 },
+  });
+  assert.deepEqual(two.correctedB, { uplift: { mean: 0.025, lo: 0.015, hi: 0.035, wins: 0.58 }, vs: "abc1234" });
+});
+
+test("readEvidence leaves the guardrails Sharpe null when the report cannot vouch for it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "loops-"));
+  const body = JSON.parse(JSON.stringify(LOOP_FIXTURES["loop-2.json"])) as {
+    confirmation: { baselineB: { allocator: { baseline: number } } };
+  };
+  // A different guardrails run (utility differs): its Sharpe is not this block's.
+  body.confirmation.baselineB.allocator.baseline = 0.061;
+  writeFileSync(join(dir, "loop-2.json"), JSON.stringify(body));
+  const [two] = readEvidence(dir);
+  assert.equal(two!.booksB!.guardrails.sharpe, null);
+  assert.equal(two!.booksB!.guardrails.utility, 0.06);
+});
+
+test("the committed loop-2 evidence: the center book beats guardrails on utility but draws down more", () => {
+  const two = readEvidence(loopsDir).find((l) => l.loop === 2)!;
+  assert.ok(two.booksB, "docs/loops/loop-2.json confirmation.booksB");
+  assert.equal(two.booksB.seeds.count, 200);
+  assert.ok(two.booksB.center.utility > two.booksB.guardrails.utility);
+  // The disclosure the console must not hide: mean max drawdown is still above the guardrails'.
+  assert.ok(two.booksB.center.maxDrawdown > two.booksB.guardrails.maxDrawdown);
+  assert.ok(two.riskSummary && two.riskSummary.centerMaxDDAfter > two.riskSummary.guardrailsMaxDD);
+  assert.ok(two.riskSummary.pairedChange && two.riskSummary.pairedChange.hi < 0, "loop 2 lowered it, with a 90% interval below zero");
+  assert.ok(two.rejections.length >= 1);
 });
 
 test("a snapshot built from incomplete loop reports still passes the web console's parser", async () => {
@@ -192,6 +278,51 @@ test("a snapshot built from incomplete loop reports still passes the web console
   const parsed = parseFundSnapshot(wire);
   assert.deepEqual(parsed.evidence.loops.map((l) => l.loop), [1, 2, 3]);
   assert.equal(parsed.evidence.loops.find((l) => l.loop === 3)!.blockB, null);
+
+  // A CONFIRMED loop whose hand-written fields carry a value the parser refuses:
+  // readEvidence drops that field (null) instead of writing a snapshot the
+  // console cannot open. Each mutation of the confirmed loop-2 fixture below
+  // is refused by the parser when written as is, and accepted once read.
+  type Report = {
+    blocks: { B: { count: number } };
+    riskSummary: { centerMaxDDAfter: number; pairedChange: { mean: number; lo: number; hi: number } };
+    confirmation: { booksB: { allocator: { maxDD: number } } };
+    correction: { loop2GainOnBAfterFix: { mean: number; lo: number; hi: number } };
+  };
+  const cases: { what: string; field: keyof LoopEvidence; mutate: (r: Report) => void }[] = [
+    { what: "a drawdown in percent units", field: "riskSummary", mutate: (r) => void (r.riskSummary.centerMaxDDAfter = 7.75) },
+    { what: "a paired change with lo > hi", field: "riskSummary", mutate: (r) => void (r.riskSummary.pairedChange = { mean: -0.003, lo: -0.001, hi: -0.005 }) },
+    { what: "block-B books with a drawdown in percent units", field: "booksB", mutate: (r) => void (r.confirmation.booksB.allocator.maxDD = 7.75) },
+    { what: "a correction whose mean is outside its interval", field: "correctedB", mutate: (r) => void (r.correction.loop2GainOnBAfterFix.mean = 0.05) },
+    { what: "a block of zero worlds", field: "booksB", mutate: (r) => void (r.blocks.B.count = 0) },
+  ];
+  for (const c of cases) {
+    const dir = mkdtempSync(join(tmpdir(), "loops-"));
+    const body = JSON.parse(JSON.stringify(LOOP_FIXTURES["loop-2.json"])) as Report;
+    c.mutate(body);
+    writeFileSync(join(dir, "loop-2.json"), JSON.stringify(body));
+    const loops = readEvidence(dir);
+    const two = loops.find((l) => l.loop === 2)!;
+    assert.equal(two.confirmed, true, c.what);
+    assert.equal(two[c.field], null, `${c.what}: ${c.field} is dropped`);
+    const withLoops = JSON.parse(JSON.stringify({ ...snap, evidence: { ...snap.evidence, loops } })) as unknown;
+    assert.doesNotThrow(() => parseFundSnapshot(withLoops), c.what);
+    // Written as is, the same value would have made the whole console refuse the file.
+    const raw = JSON.parse(JSON.stringify(readEvidence(fixtureDir(false)).find((l) => l.loop === 2))) as Record<string, unknown>;
+    const bad = { ...raw };
+    if (c.field === "riskSummary") bad.riskSummary = { ...body.riskSummary, note: null };
+    if (c.field === "correctedB") bad.correctedB = { uplift: { ...body.correction.loop2GainOnBAfterFix, wins: 0.5 }, vs: null };
+    if (c.field === "booksB") {
+      const b = raw.booksB as { seeds: { count: number }; center: { maxDrawdown: number } };
+      bad.booksB = {
+        ...b,
+        seeds: { ...b.seeds, count: body.blocks.B.count },
+        center: { ...b.center, maxDrawdown: body.confirmation.booksB.allocator.maxDD },
+      };
+    }
+    const refused = JSON.parse(JSON.stringify({ ...snap, evidence: { ...snap.evidence, loops: [bad] } })) as unknown;
+    assert.throws(() => parseFundSnapshot(refused), /fund-snapshot\.json evidence\.loops\[0\]/, c.what);
+  }
 });
 
 test("observeBook refuses to overlap and always restores the tree prototype", async () => {
@@ -216,4 +347,10 @@ test("the committed loop-1 evidence is read", () => {
   assert.equal(l1.confirmed, true);
   assert.ok(l1.blockA && l1.blockB);
   assert.ok(l1.blockB.allocator.lo > 0);
+  // Its post-push correction (the 40% stop ceiling) re-measured the block-B gain lower.
+  assert.ok(l1.correctedB && l1.correctedB.uplift.mean < l1.blockB.allocator.mean);
+  // Paired drawdown changes were not recorded before loop 2.
+  assert.ok(l1.riskSummary);
+  assert.equal(l1.riskSummary.pairedChange, null);
+  assert.equal(l1.booksB, null, "loop 1's report has no confirmation.booksB");
 });

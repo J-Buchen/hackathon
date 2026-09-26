@@ -1,5 +1,5 @@
 /**
- * Zero-CLS loading placeholder for the live dashboard.
+ * Zero-CLS loading placeholder for the payment dashboard.
  *
  * It mirrors the real <Dashboard> layout exactly — the 6-tile `.summary` grid
  * and the two-panel `.grid` — reusing the SAME structural class names (`.summary`,

@@ -4,6 +4,7 @@ import type { FundAgent, FundSnapshot, LadderState } from "./types";
 import { MandateTree } from "./MandateTree";
 import { DecisionLog, entryKind } from "./DecisionLog";
 import { Evidence } from "./Evidence";
+import { SealedContext } from "./Context";
 import { parseConsoleHash } from "./hash";
 import {
   day,
@@ -11,6 +12,7 @@ import {
   groupCutStats,
   pct,
   replayIndexAt,
+  showcaseContext,
   signedPct,
   signedUsd,
   usdCompact,
@@ -111,8 +113,8 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
 
   const nav: Series[] = useMemo(
     () => [
-      { key: "center", label: "Center book (allocator)", color: CENTER, values: books.center.nav.map((v) => v / world.aum) },
-      { key: "baseline", label: "Per-agent guardrails only", color: BASELINE, values: books.baseline.nav.map((v) => v / world.aum) },
+      { key: "center", label: "Center book", color: CENTER, values: books.center.nav.map((v) => v / world.aum) },
+      { key: "baseline", label: "Per-agent guardrails", color: BASELINE, values: books.baseline.nav.map((v) => v / world.aum) },
     ],
     [books, world.aum],
   );
@@ -125,19 +127,22 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
   const b = books.baseline.summary;
   const pairs = [
     { label: "Total return", center: signedPct(c.totalReturn), base: signedPct(b.totalReturn) },
-    { label: "Max drawdown", center: pct(c.maxDrawdown), base: pct(b.maxDrawdown) },
+    // Two decimals, as in the context card below and the ledger's sealed means.
+    { label: "Max drawdown", center: pct(c.maxDrawdown, 2), base: pct(b.maxDrawdown, 2) },
     { label: "Sharpe", center: c.sharpe.toFixed(2), base: b.sharpe.toFixed(2) },
     { label: "Certainty equivalent", center: signedPct(c.utility), base: signedPct(b.utility) },
   ];
   const cuts = groupCutStats(snapshot.groupCuts);
   const freed = snapshot.stopOuts.reduce((s, x) => s + x.freed, 0);
   const sharedOps = world.operators.filter((o) => o.agents.length > 1);
+  const operatorCaps = snapshot.decisions.filter((d) => d.kind === "OPERATOR_CUT").length;
   const statusText: Record<LadderState, string> = {
-    active: "live",
+    active: "active",
     cut: `cut ×${snapshot.policy.center.cutFactor}`,
     stopped: "stopped out",
   };
   const worldCounts = [...new Set(snapshot.evidence.loops.flatMap((l) => [l.blocks.A.count, l.blocks.B.count]))];
+  const context = useMemo(() => showcaseContext(snapshot), [snapshot]);
 
   const agents = useMemo(
     () =>
@@ -178,50 +183,65 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
       <p className="fc-rule">
         <strong>How this world was picked:</strong> {world.seedRule} (seed {world.seed}). The rule looks at the world's
         make-up, never at either book's result. Every price, agent and operator here is simulated; nothing is market data.
+        {context.sealed?.favourable && (
+          <>
+            {" "}
+            It still turned out kinder to the center book than the sealed average, so its numbers sit next to that average{" "}
+            <a href="#fc-context">below</a>.
+          </>
+        )}
         {sharedOps.length > 0 && (
           <>
             {" "}
             In the roster, {sharedOps.map((o) => `${o.agents.join(" and ")} are run by one operator (${o.id})`).join("; ")}.
-            The allocator does not read operator identity yet: it groups agents by overlapping positions, and shared
-            operators are flagged on its cuts after the run.
+            The allocator treats an operator as one counterparty: if one of its agents is stopped out, its other
+            agents are capped together until each recovers on its own record.{" "}
+            {operatorCaps === 0
+              ? "In this world none of those agents was stopped out, so no operator cap fired; shared operators are flagged on the overlap cuts."
+              : `In this world that happened ${operatorCaps} ${operatorCaps === 1 ? "time" : "times"}.`}
           </>
         )}
       </p>
 
-      <div className="fc-kpis" role="list" aria-label="Center book vs per-agent guardrails (virtual world)">
-        {pairs.map((t) => (
-          <div key={t.label} className="cb-tile" role="listitem">
-            <div className="tile-label">{t.label}</div>
-            <div className="cb-tile-row">
-              <span className="chart-key" style={{ background: CENTER }} aria-hidden="true" />
-              <span className="cb-tile-value">{t.center}</span>
-              <span className="cb-tile-who">allocator</span>
+      <div className="fc-top">
+        <div className="fc-kpis" role="list" aria-label={`Center book vs per-agent guardrails, virtual world #${world.seed}`}>
+          {pairs.map((t) => (
+            <div key={t.label} className="cb-tile" role="listitem">
+              <div className="tile-label">{t.label}</div>
+              <div className="cb-tile-row">
+                <span className="chart-key" style={{ background: CENTER }} aria-hidden="true" />
+                <span className="cb-tile-value">{t.center}</span>
+                <span className="cb-tile-who">center book</span>
+              </div>
+              <div className="cb-tile-row">
+                <span className="chart-key" style={{ background: BASELINE }} aria-hidden="true" />
+                <span className="cb-tile-value cb-tile-value-dim">{t.base}</span>
+                <span className="cb-tile-who">per-agent guardrails</span>
+              </div>
             </div>
-            <div className="cb-tile-row">
-              <span className="chart-key" style={{ background: BASELINE }} aria-hidden="true" />
-              <span className="cb-tile-value cb-tile-value-dim">{t.base}</span>
-              <span className="cb-tile-who">guardrails only</span>
+          ))}
+          <div className="cb-tile fc-kpi-single" role="listitem">
+            <div className="tile-label">Group cuts (G)</div>
+            <div className="fc-kpi-value">{cuts.total}</div>
+            <div className="fc-kpi-sub">
+              {cuts.oneTrade} one-trade (overlapping books) · {cuts.bookWide} book-wide caps
             </div>
+            {cuts.oneTradeSharedOperator > 0 && (
+              <div className="fc-kpi-note">
+                <span aria-hidden="true">⚑</span> {cuts.oneTradeSharedOperator} one-trade cuts included both agents of one
+                operator (flagged); {operatorCaps} operator {operatorCaps === 1 ? "cap" : "caps"} (a stop-out capping the
+                operator's other agents).
+              </div>
+            )}
           </div>
-        ))}
-        <div className="cb-tile fc-kpi-single" role="listitem">
-          <div className="tile-label">Group cuts (G)</div>
-          <div className="fc-kpi-value">{cuts.total}</div>
-          <div className="fc-kpi-sub">
-            {cuts.oneTrade} one-trade (overlapping books) · {cuts.bookWide} book-wide caps
+          <div className="cb-tile fc-kpi-single" role="listitem">
+            <div className="tile-label">Stop-outs</div>
+            <div className="fc-kpi-value">{snapshot.stopOuts.length}</div>
+            <div className="fc-kpi-sub">Each one a single close; {usdCompact(freed)} USDC back to the pods</div>
           </div>
-          {cuts.oneTradeSharedOperator > 0 && (
-            <div className="fc-kpi-note">
-              <span aria-hidden="true">⚑</span> {cuts.oneTradeSharedOperator} one-trade cuts included both agents of one
-              operator, flagged after the run. The allocator groups by positions, not operator.
-            </div>
-          )}
         </div>
-        <div className="cb-tile fc-kpi-single" role="listitem">
-          <div className="tile-label">Stop-outs</div>
-          <div className="fc-kpi-value">{snapshot.stopOuts.length}</div>
-          <div className="fc-kpi-sub">Each one a single close; {usdCompact(freed)} USDC back to the pods</div>
-        </div>
+        {/* Always rendered: without a sealed average it says so (DESIGN.md §11.1). */}
+        <SealedContext ctx={context} seed={world.seed} />
       </div>
 
       <div className="panel cb-panel" id="fc-nav">
@@ -235,8 +255,10 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
           tableStep={20}
         />
         <p className="fc-caption">
-          Same agents, same prices, same leverage ({snapshot.policy.center.leverage}×), same deployment and the same
-          per-agent stop-loss. The only difference: the allocator looks <em>across</em> the agents.
+          Same agents, same prices, same leverage ({snapshot.policy.center.leverage}×) and the same deployment. The
+          center book (the allocator) looks <em>across</em> the agents (allocation, crowding and operator limits) and
+          judges each agent's drawdown against the risk it runs (a stop between 20% and a 40% ceiling); per-agent
+          guardrails keep each agent's fixed 20% stop-loss.
         </p>
       </div>
 
@@ -249,8 +271,8 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
             <p className="panel-sub">
               Fund → pods → agents: how much of the {usdCompact(world.aum)} USDC AUM each node is <em>allowed</em> to run.
               PnL accrues to the NAV above, not to the tree. Each allocator move is a <code>resize</code> on this tree (
-              {snapshot.resizes.toLocaleString("en-US")} in this run); a stop-out resizes the agent's mandate to 0 and
-              revokes it.
+              {snapshot.resizes.toLocaleString("en-US")} in this run). A stop-out is one <code>close</code> of the agent's
+              mandate (and anything it delegated); the unspent capital returns to its pod.
             </p>
           </div>
           <MandateTree
@@ -298,7 +320,7 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
                 <th scope="col">Capital path</th>
                 <th scope="col" className="num">PnL</th>
                 <th scope="col" className="num">Sharpe</th>
-                <th scope="col">Guardrails-only book</th>
+                <th scope="col">Per-agent guardrails book</th>
               </tr>
             </thead>
             <tbody>

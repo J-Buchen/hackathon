@@ -103,9 +103,9 @@ export interface GroupCut {
   members: string[];
   pods: string[];
   /**
-   * Operators that run two or more of the members, flagged AFTER the run for
-   * context. The allocator groups agents by overlapping positions (CLONES) or
-   * book-wide exposure (BOOK); it does not read operator identity.
+   * Operators that run two or more of the members, flagged for context. These
+   * cuts group agents by overlapping positions (CLONES) or book-wide exposure
+   * (BOOK); the allocator's operator rule is the separate OPERATOR_CUT.
    */
   sharedOperators: Array<{ operator: string; agents: string[] }>;
   share: number | null;
@@ -148,6 +148,44 @@ export interface Uplift {
   wins: number;
 }
 
+/**
+ * The center book's mean max drawdown on one sealed block, before and after a
+ * loop's change, next to per-agent guardrails' (the report's `riskSummary`).
+ */
+export interface RiskSummary {
+  block: string;
+  /** Seed range as the report writes it, e.g. "12500-12699". */
+  seeds: string;
+  centerMaxDDBefore: number;
+  centerMaxDDAfter: number;
+  guardrailsMaxDD: number;
+  /** Paired change in the center book's max drawdown with its 90% interval; null when the loop did not record it. */
+  pairedChange: { mean: number; lo: number; hi: number } | null;
+  note: string | null;
+}
+
+/** A candidate change the loop did not merge, with the one-line reason (the report's `rejections`). */
+export interface Rejection {
+  title: string;
+  reason: string;
+}
+
+/**
+ * Center book vs per-agent guardrails on a loop's confirmation block, with the
+ * loop's change merged (the report's `confirmation.booksB`): means over the
+ * block's sealed virtual worlds.
+ */
+export interface SealedBooks {
+  block: "B";
+  seeds: { from: number; count: number };
+  center: { utility: number; sharpe: number; maxDrawdown: number };
+  /**
+   * `sharpe` is null unless the report states the guardrails book's Sharpe for
+   * exactly this run (booksB, or baselineB when its guardrails numbers match).
+   */
+  guardrails: { utility: number; sharpe: number | null; maxDrawdown: number };
+}
+
 export interface LoopEvidence {
   loop: number;
   /** The ledger's own name for the merged change (docs/loops/loop-N.json `title`). */
@@ -162,8 +200,18 @@ export interface LoopEvidence {
   /** Paired uplift of the merged change vs the version before it, per track (single merged change only). */
   blockA: { allocator: Uplift; tiger: Uplift } | null;
   blockB: { allocator: Uplift; tiger: Uplift } | null;
+  /**
+   * Block-B uplift of the merged change after a post-push correction (the
+   * report's `correction.*GainOnBAfterFix`), with the commit it is measured
+   * against. Null when the loop was not corrected.
+   */
+  correctedB: { uplift: Uplift; vs: string | null } | null;
   /** Center book vs per-agent guardrails, before this loop's change, on block A. */
   headVsBaseline: { worlds: number; utility: number; baseline: number; uplift: number; lo: number; hi: number; winRate: number } | null;
+  riskSummary: RiskSummary | null;
+  rejections: Rejection[];
+  /** Only for a merged change that confirmed on block B. */
+  booksB: SealedBooks | null;
 }
 
 export interface FundSnapshot {
@@ -331,6 +379,100 @@ function perTrack(v: unknown): { allocator: Uplift; tiger: Uplift } | null {
 }
 
 const finite = (...xs: number[]) => xs.every(Number.isFinite);
+const strOrNull = (v: unknown): string | null => (typeof v === "string" ? v : null);
+
+/*
+ * riskSummary, rejections and correction are written into the reports by hand,
+ * not by loop-driver.mjs. The helpers below apply the SAME rules the console's
+ * parser (apps/web/src/fund/types.ts) enforces, and return null instead of
+ * throwing, so one bad hand-written value drops that field instead of making
+ * the whole snapshot unreadable:
+ *   - a drawdown is a fraction in [0, 1] (7.75, in percent units, is refused);
+ *   - an interval has lo ≤ mean ≤ hi;
+ *   - a block's world count is a positive integer.
+ */
+const isDrawdown = (x: number) => Number.isFinite(x) && x >= 0 && x <= 1;
+const ordered = (u: { mean: number; lo: number; hi: number }) => u.lo <= u.mean && u.mean <= u.hi;
+
+/**
+ * The report's `riskSummary`, or null when it is missing, a number in it is not
+ * finite, a drawdown is outside [0, 1] or its paired change is not an interval
+ * (lo ≤ mean ≤ hi).
+ */
+function riskSummary(v: unknown): RiskSummary | null {
+  if (!isObj(v) || typeof v.block !== "string" || typeof v.seeds !== "string") return null;
+  const before = num(v.centerMaxDDBefore);
+  const after = num(v.centerMaxDDAfter);
+  const guard = num(v.guardrailsMaxDD);
+  if (![before, after, guard].every(isDrawdown)) return null;
+  let pairedChange: RiskSummary["pairedChange"] = null;
+  if (v.pairedChange !== null && v.pairedChange !== undefined) {
+    if (!isObj(v.pairedChange)) return null;
+    const p = { mean: num(v.pairedChange.mean), lo: num(v.pairedChange.lo), hi: num(v.pairedChange.hi) };
+    if (!finite(p.mean, p.lo, p.hi) || !ordered(p)) return null;
+    pairedChange = p;
+  }
+  return {
+    block: v.block,
+    seeds: v.seeds,
+    centerMaxDDBefore: before,
+    centerMaxDDAfter: after,
+    guardrailsMaxDD: guard,
+    pairedChange,
+    note: strOrNull(v.note),
+  };
+}
+
+/** The report's `rejections`: entries without a title and a reason are dropped. */
+function rejections(v: unknown): Rejection[] {
+  if (!Array.isArray(v)) return [];
+  return v
+    .filter(isObj)
+    .filter((r) => typeof r.title === "string" && typeof r.reason === "string")
+    .map((r) => ({ title: r.title as string, reason: r.reason as string }));
+}
+
+/**
+ * `confirmation.booksB.allocator` as center book vs guardrails. The guardrails
+ * Sharpe is taken from booksB when the report has it; otherwise from
+ * `baselineB` (the pre-change run on the same block) only when its guardrails
+ * utility and drawdown are identical to booksB's, i.e. it is the same
+ * guardrails run. Anything else leaves it null rather than guess.
+ */
+function sealedBooks(conf: Json, B: { from: number; count: number }): SealedBooks | null {
+  const books = isObj(conf.booksB) && isObj(conf.booksB.allocator) ? conf.booksB.allocator : null;
+  // The console's parser needs a positive whole number of worlds and both
+  // drawdowns as fractions in [0, 1]; anything else is dropped, not written.
+  if (!books || !Number.isInteger(B.count) || B.count < 1) return null;
+  const center = { utility: num(books.utility), sharpe: num(books.sharpe), maxDrawdown: num(books.maxDD) };
+  const guard = { utility: num(books.baselineUtility), maxDrawdown: num(books.baselineMaxDD) };
+  if (!finite(center.utility, center.sharpe, guard.utility)) return null;
+  if (!isDrawdown(center.maxDrawdown) || !isDrawdown(guard.maxDrawdown)) return null;
+  let sharpe = num(books.baselineSharpe);
+  if (!Number.isFinite(sharpe)) {
+    const pre = isObj(conf.baselineB) && isObj(conf.baselineB.allocator) ? conf.baselineB.allocator : null;
+    const same = pre !== null && pre.baseline === books.baselineUtility && pre.baselineMaxDD === books.baselineMaxDD;
+    sharpe = same ? num(pre.baselineSharpe) : NaN;
+  }
+  return {
+    block: "B",
+    seeds: B,
+    center,
+    guardrails: { ...guard, sharpe: Number.isFinite(sharpe) ? sharpe : null },
+  };
+}
+
+/**
+ * A post-push correction's re-measured block-B gain
+ * (`correction.<name>GainOnBAfterFix`); null unless it is an interval.
+ */
+function correctedB(v: unknown): LoopEvidence["correctedB"] {
+  if (!isObj(v)) return null;
+  const key = Object.keys(v).find((k) => /GainOnBAfterFix$/.test(k));
+  const g = key ? v[key] : null;
+  const u = uplift(g);
+  return u && ordered(u) ? { uplift: u, vs: isObj(g) ? strOrNull(g.vs) : null } : null;
+}
 
 /**
  * Summarize every sealed loop report in `dir` (docs/loops/loop-<n>.json), oldest
@@ -342,6 +484,14 @@ const finite = (...xs: number[]) => xs.every(Number.isFinite);
  *   - uplift is kept only for a merged change. Block B in particular only when
  *     block B confirmed it: loop-driver.mjs also records block B for a block-A
  *     winner that then FAILED confirmation, and that change was never merged.
+ *     The same holds for the block-B books (`booksB`), the drawdown summary
+ *     (`riskSummary`: its "after" is the merged change) and a correction's
+ *     re-measured block-B gain;
+ *   - `riskSummary` and `rejections` are copied as the ledger states them (a
+ *     malformed risk summary becomes null, a malformed rejection is dropped);
+ *   - a hand-written value the console's parser would refuse (a drawdown
+ *     outside [0, 1], an interval whose mean is outside [lo, hi], a block of
+ *     no worlds) turns its field into null, so the snapshot always parses.
  */
 export function readEvidence(dir: string): LoopEvidence[] {
   let files: string[] = [];
@@ -398,7 +548,11 @@ export function readEvidence(dir: string): LoopEvidence[] {
       confirmed,
       blockA: keptCands.length === 1 ? perTrack(keptCands[0]!.blockA) : null,
       blockB: confirmed ? perTrack(conf?.blockB) : null,
+      correctedB: confirmed ? correctedB(j.correction) : null,
       headVsBaseline: head && finite(...Object.values(head)) ? head : null,
+      riskSummary: confirmed ? riskSummary(j.riskSummary) : null,
+      rejections: rejections(j.rejections),
+      booksB: confirmed && conf ? sealedBooks(conf, B) : null,
     });
   }
   return loops.sort((a, b) => a.loop - b.loop);

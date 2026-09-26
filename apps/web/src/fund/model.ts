@@ -5,7 +5,7 @@
  * tested in ../fund.test.ts.
  */
 
-import type { FundAgent, FundDecision, FundSnapshot, GroupCut, LoopEvidence, StopOut, TreeState, Uplift } from "./types";
+import type { FundAgent, FundDecision, FundSnapshot, GroupCut, LoopEvidence, SealedBooks, StopOut, TreeState, Uplift } from "./types";
 
 /* -------------------------------------------------------------------------- */
 /* Decision log                                                                */
@@ -24,7 +24,9 @@ export type LogEntry =
   | { id: string; t: number; type: "group"; cut: GroupCut }
   | { id: string; t: number; type: "stopout"; stop: StopOut }
   | { id: string; t: number; type: "ladder"; kind: "CUT" | "RESTORE"; agent: string; detail: string }
-  | { id: string; t: number; type: "gate"; agent: string; detail: string };
+  | { id: string; t: number; type: "gate"; agent: string; detail: string }
+  /** An operator cap: another agent of the same operator was stopped out (loop 3). */
+  | { id: string; t: number; type: "opcap"; agent: string; detail: string };
 
 export type LogFilter = "key" | "group" | "operator" | "stopout" | "ladder" | "rebalance" | "all";
 
@@ -96,6 +98,9 @@ export function buildLog(s: FundSnapshot): LogEntry[] {
         return;
       case "GATE_CLIP":
         out.push({ id, t: d.t, type: "gate", agent: label(d.node), detail: d.detail });
+        break;
+      case "OPERATOR_CUT":
+        out.push({ id, t: d.t, type: "opcap", agent: label(d.node), detail: d.detail });
         return;
     }
   });
@@ -109,13 +114,13 @@ export function filterLog(entries: readonly LogEntry[], f: LogFilter): LogEntry[
     case "key":
       return entries.filter((e) => e.type !== "rebalance");
     case "group":
-      return entries.filter((e) => e.type === "group");
+      return entries.filter((e) => e.type === "group" || e.type === "opcap");
     case "operator":
-      // One-trade (overlapping-book) cuts whose members include two agents of
-      // one operator. The operator is flagged after the run: the allocator
-      // groups by positions and does not read it. Book-wide cuts that merely
-      // swept up both agents of an operator are left out.
-      return entries.filter((e) => e.type === "group" && flaggedOperatorCut(e.cut));
+      // Operator caps (one of an operator's agents was stopped out, so its
+      // other agents are capped together), plus one-trade (overlapping-book)
+      // cuts whose members include two agents of one operator. Book-wide cuts
+      // that merely swept up both agents of an operator are left out.
+      return entries.filter((e) => e.type === "opcap" || (e.type === "group" && flaggedOperatorCut(e.cut)));
     case "stopout":
       return entries.filter((e) => e.type === "stopout");
     case "ladder":
@@ -138,6 +143,7 @@ export function entryAgents(e: LogEntry): string[] {
       return [e.stop.agent];
     case "ladder":
     case "gate":
+    case "opcap":
       return [e.agent];
   }
 }
@@ -153,7 +159,7 @@ export interface GroupCutStats {
   oneTrade: number;
   /** BOOK: the whole book's net exposure to one name over its cap; every holder scaled. */
   bookWide: number;
-  /** One-trade cuts that included two agents of one operator (flagged after the run). */
+  /** One-trade cuts that included two agents of one operator (flagged on the cut). */
   oneTradeSharedOperator: number;
   /** Book-wide cuts that happened to include two agents of one operator. */
   bookWideSharedOperator: number;
@@ -252,6 +258,14 @@ export interface EvidenceRow {
   label: string;
   sub: string;
   u: Uplift;
+  /**
+   * A result a later re-measurement replaced (loop 1's block-B gain before its
+   * post-push fix). Kept on the record, drawn hollow and dashed; the row that
+   * replaced it follows it.
+   */
+  superseded: boolean;
+  /** Provenance for the hover title and the data table (e.g. the commit a re-measurement is against). */
+  detail: string | null;
 }
 
 const seedRange = (b: { from: number; count: number }) => `seeds ${b.from}–${b.from + b.count - 1}`;
@@ -260,17 +274,212 @@ const seedRange = (b: { from: number; count: number }) => `seeds ${b.from}–${b
  * The uplift rows the evidence chart plots: block A and block B of each loop
  * whose change was merged AND confirmed on block B. A block-A winner that
  * failed block B was never merged, so it is never plotted as "the merged
- * change", even if a report carries its block-B numbers.
+ * change", even if a report carries its block-B numbers. When a post-push
+ * correction re-measured the block-B gain, the confirmed number stays on the
+ * record, marked superseded, and the re-measured one (the number that stands)
+ * follows it.
  */
 export function evidenceRows(loops: readonly LoopEvidence[]): EvidenceRow[] {
   const rows: EvidenceRow[] = [];
+  const worlds = (b: { from: number; count: number }) => `${b.count} worlds, ${seedRange(b)}`;
   for (const l of loops) {
     if (!l.confirmed || l.merged.length === 0) continue;
     const track = l.merged[0]?.track === "tiger" ? "tiger" : "allocator";
-    if (l.blockA) rows.push({ key: `${l.loop}A`, label: `Loop ${l.loop} · block A`, sub: `${l.blocks.A.count} worlds, ${seedRange(l.blocks.A)}`, u: l.blockA[track] });
-    if (l.blockB) rows.push({ key: `${l.loop}B`, label: `Loop ${l.loop} · block B`, sub: `${l.blocks.B.count} worlds, ${seedRange(l.blocks.B)}`, u: l.blockB[track] });
+    const corrected = l.correctedB && track === "allocator" ? l.correctedB : null;
+    if (l.blockA) {
+      rows.push({ key: `${l.loop}A`, label: `Loop ${l.loop} · block A`, sub: worlds(l.blocks.A), u: l.blockA[track], superseded: false, detail: null });
+    }
+    if (l.blockB) {
+      rows.push({
+        key: `${l.loop}B`,
+        label: `Loop ${l.loop} · block B`,
+        sub: corrected ? "first confirmed · before the fix" : worlds(l.blocks.B),
+        u: l.blockB[track],
+        superseded: corrected !== null,
+        detail: corrected ? `${worlds(l.blocks.B)}; replaced by the re-measurement after the fix` : null,
+      });
+    }
+    if (corrected) {
+      rows.push({
+        key: `${l.loop}Bc`,
+        label: `Loop ${l.loop} · block B`,
+        sub: "re-measured after the fix",
+        u: corrected.uplift,
+        superseded: false,
+        detail: `the same ${l.blocks.B.count} worlds, on the code that shipped${corrected.vs ? `, vs ${corrected.vs}` : ""}`,
+      });
+    }
   }
   return rows;
+}
+
+/**
+ * Where the center book's mean max drawdown stands against per-agent
+ * guardrails' after a loop, and whether that loop moved it across:
+ * "still-above" (above before and after), "now-above" (this loop took it
+ * above), "now-below" (this loop brought it below), "below" (below throughout).
+ */
+export type Standing = "still-above" | "now-above" | "now-below" | "below";
+
+export function standing(before: number, after: number, guardrails: number): Standing {
+  const was = before > guardrails;
+  const is = after > guardrails;
+  return was && is ? "still-above" : is ? "now-above" : was ? "now-below" : "below";
+}
+
+export interface DrawdownRow {
+  key: string;
+  loop: number;
+  label: string;
+  sub: string;
+  before: number;
+  after: number;
+  guardrails: number;
+  /** The center book's paired change (after − before) with its 90% interval, when the loop recorded it. */
+  paired: { mean: number; lo: number; hi: number } | null;
+  /** The center book's mean max drawdown after this loop is above per-agent guardrails'. */
+  aboveGuardrails: boolean;
+  /** …and whether this loop is what moved it there (see `standing`). */
+  standing: Standing;
+  note: string | null;
+}
+
+/**
+ * One row per loop whose report carries a drawdown summary: the center book's
+ * mean max drawdown on the confirmation block before → after the loop's
+ * change, next to per-agent guardrails' on the same worlds.
+ */
+export function drawdownRows(loops: readonly LoopEvidence[]): DrawdownRow[] {
+  return loops
+    .filter((l): l is LoopEvidence & { riskSummary: NonNullable<LoopEvidence["riskSummary"]> } => l.riskSummary !== null)
+    .map((l) => {
+      const r = l.riskSummary;
+      return {
+        key: `dd${l.loop}`,
+        loop: l.loop,
+        label: `Loop ${l.loop} · block ${r.block}`,
+        sub: `seeds ${r.seeds.replace("-", "–")}`,
+        before: r.centerMaxDDBefore,
+        after: r.centerMaxDDAfter,
+        guardrails: r.guardrailsMaxDD,
+        paired: r.pairedChange,
+        aboveGuardrails: r.centerMaxDDAfter > r.guardrailsMaxDD,
+        standing: standing(r.centerMaxDDBefore, r.centerMaxDDAfter, r.guardrailsMaxDD),
+        note: r.note,
+      };
+    });
+}
+
+/**
+ * The latest loop that merged a change and confirmed it on block B with the
+ * block's book-level numbers recorded: "where the center book stands" on
+ * worlds nobody tuned on.
+ */
+export function latestSealed(loops: readonly LoopEvidence[]): (LoopEvidence & { booksB: SealedBooks }) | null {
+  let best: (LoopEvidence & { booksB: SealedBooks }) | null = null;
+  for (const l of loops) {
+    if (l.confirmed && l.merged.length > 0 && l.booksB && (!best || l.loop > best.loop)) best = l as LoopEvidence & { booksB: SealedBooks };
+  }
+  return best;
+}
+
+export type Better = "center" | "guardrails" | "tie";
+
+export interface ContextRow {
+  metric: "Certainty equivalent" | "Sharpe" | "Max drawdown";
+  /** Formatted, to the same precision in both columns: this world's center book / guardrails, and the sealed mean's. */
+  world: { center: string; guardrails: string; better: Better };
+  sealed: { center: string; guardrails: string; better: Better } | null;
+}
+
+export interface SealedAverage {
+  loop: number;
+  worlds: number;
+  seeds: string;
+  /** The center book's certainty-equivalent edge over guardrails on the sealed block. */
+  gap: number;
+  /** This world flatters the center book relative to the sealed average. */
+  favourable: boolean;
+  /** On the sealed block the center book's mean max drawdown is above the guardrails'. */
+  drawdownAbove: boolean;
+  utilityAbove: boolean;
+}
+
+export interface ShowcaseContext {
+  rows: ContextRow[];
+  /** The center book's certainty-equivalent edge over guardrails in this world. */
+  gapWorld: number;
+  /**
+   * The latest sealed confirmation, or null when no loop has recorded its
+   * block-B books yet: the card then says this world has no sealed average to
+   * be read against, instead of disappearing.
+   */
+  sealed: SealedAverage | null;
+}
+
+const better = (center: number, guardrails: number, higherIsBetter: boolean, eps: number): Better =>
+  Math.abs(center - guardrails) < eps ? "tie" : center > guardrails === higherIsBetter ? "center" : "guardrails";
+
+/**
+ * The showcase world next to the latest sealed confirmation, metric by metric,
+ * center book vs per-agent guardrails. The showcase world's rows are always
+ * there; `sealed` (and each row's sealed column) is null when no loop recorded
+ * its block-B books.
+ */
+export function showcaseContext(s: FundSnapshot): ShowcaseContext {
+  const l = latestSealed(s.evidence.loops);
+  const b = l ? l.booksB : null;
+  const c = s.books.center.summary;
+  const g = s.books.baseline.summary;
+  const rows: ContextRow[] = [
+    {
+      metric: "Certainty equivalent",
+      world: { center: signedPct(c.utility), guardrails: signedPct(g.utility), better: better(c.utility, g.utility, true, 0.0005) },
+      sealed: b && {
+        center: signedPct(b.center.utility),
+        guardrails: signedPct(b.guardrails.utility),
+        better: better(b.center.utility, b.guardrails.utility, true, 0.0005),
+      },
+    },
+    {
+      metric: "Sharpe",
+      world: { center: c.sharpe.toFixed(2), guardrails: g.sharpe.toFixed(2), better: better(c.sharpe, g.sharpe, true, 0.005) },
+      sealed:
+        b === null || b.guardrails.sharpe === null
+          ? null
+          : {
+              center: b.center.sharpe.toFixed(2),
+              guardrails: b.guardrails.sharpe.toFixed(2),
+              better: better(b.center.sharpe, b.guardrails.sharpe, true, 0.005),
+            },
+    },
+    {
+      metric: "Max drawdown",
+      // Two decimals in both columns: the ledger quotes the sealed means that way (7.75% vs 6.88%).
+      world: { center: pct(c.maxDrawdown, 2), guardrails: pct(g.maxDrawdown, 2), better: better(c.maxDrawdown, g.maxDrawdown, false, 0.00005) },
+      sealed: b && {
+        center: pct(b.center.maxDrawdown, 2),
+        guardrails: pct(b.guardrails.maxDrawdown, 2),
+        better: better(b.center.maxDrawdown, b.guardrails.maxDrawdown, false, 0.00005),
+      },
+    },
+  ];
+  const gapWorld = c.utility - g.utility;
+  if (!l || !b) return { rows, gapWorld, sealed: null };
+  const gap = b.center.utility - b.guardrails.utility;
+  return {
+    rows,
+    gapWorld,
+    sealed: {
+      loop: l.loop,
+      worlds: b.seeds.count,
+      seeds: seedRange(b.seeds),
+      gap,
+      favourable: gapWorld > gap,
+      drawdownAbove: b.center.maxDrawdown > b.guardrails.maxDrawdown,
+      utilityAbove: b.center.utility > b.guardrails.utility,
+    },
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -291,6 +500,15 @@ export const pct = (x: number, dp = 1) => `${(x * 100).toFixed(dp)}%`;
 export const signedPct = (x: number, dp = 1) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(dp)}%`;
 export const signedUsd = (x: number) => `${x >= 0 ? "+" : "−"}${usdCompact(Math.abs(x))}`;
 export const pp = (x: number, dp = 2) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(dp)} pp`;
+/**
+ * A share of worlds (e.g. "better in 72.5% of worlds"): a whole percent prints
+ * without decimals, anything else with one, so a rate over 200 worlds is never
+ * rounded to a number the ledger (docs/LOOPS.md) contradicts.
+ */
+export const winPct = (x: number) => {
+  const tenths = Math.round(x * 1000);
+  return `${(tenths / 10).toFixed(tenths % 10 === 0 ? 0 : 1)}%`;
+};
 export const day = (t: number) => (t < 0 ? "At grant" : `Day ${t + 1}`);
 
 /** Each agent's ladder state (by node name) at the end of tick `t`, replayed from the decisions. */

@@ -157,5 +157,13 @@ export function parseSwarmSnapshot(raw: unknown): SwarmSnapshot {
   if (!Array.isArray(s.decisions)) fail("decisions");
   if (!Array.isArray(s.ablation)) fail("ablation");
   if (!s.sweep || !s.sweep.centerMean || !s.sweep.naiveMean) fail("sweep");
+  // The worked example states its result from these means (swarm/verdict.ts).
+  const finite = (v: unknown) => typeof v === "number" && Number.isFinite(v);
+  if (!finite(s.sweep!.seeds) || s.sweep!.seeds < 1) fail("sweep.seeds");
+  for (const book of ["centerMean", "naiveMean"] as const) {
+    for (const k of ["totalReturn", "sharpe", "maxDrawdown", "crashWindowReturn"] as const) {
+      if (!finite(s.sweep![book][k])) fail(`sweep.${book}.${k}`);
+    }
+  }
   return s as SwarmSnapshot;
 }

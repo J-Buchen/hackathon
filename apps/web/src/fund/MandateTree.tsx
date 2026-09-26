@@ -82,12 +82,12 @@ export function MandateTree({ snapshot, index, onIndex, highlight, selectedKind,
   const stoppedAt = useMemo(() => new Map(snapshot.stopOuts.map((s) => [s.name, s])), [snapshot]);
   const anySpent = state.spent.some((x) => x > 0);
   const cutText = `cut ×${snapshot.policy.center.cutFactor}`;
-  const statusText = { active: "live", cut: cutText, stopped: "stopped out" } as const;
+  const statusText = { active: "active", cut: cutText, stopped: "stopped out" } as const;
 
   const podStats = (pod: string) => {
     const agents = rows.filter((r) => r.depth === 2 && r.pod === pod);
-    const live = agents.filter((r) => !state.revoked[r.index]).length;
-    return { total: agents.length, live };
+    const active = agents.filter((r) => !state.revoked[r.index]).length;
+    return { total: agents.length, active };
   };
 
   const renderRow = (r: TreeRow) => {
@@ -125,7 +125,7 @@ export function MandateTree({ snapshot, index, onIndex, highlight, selectedKind,
             const p = podStats(r.pod!);
             return (
               <span className="fc-node-meta">
-                {p.total === 0 ? "no agents" : `${p.live} of ${p.total} agents live`}
+                {p.total === 0 ? "no agents" : `${p.active} of ${p.total} agents active`}
               </span>
             );
           })()}

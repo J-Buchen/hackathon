@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { buildFundSnapshot, SHOWCASE_RULE, type BookSummaryView } from "./fund";
 
-const pct = (x: number) => `${(x * 100).toFixed(1)}%`;
+const pct = (x: number, dp = 1) => `${(x * 100).toFixed(dp)}%`;
 const signed = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`;
 const pp = (x: number) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)} pp`;
 const usd = (x: number) => `${Math.round(x).toLocaleString("en-US")} USDC`;
@@ -46,14 +46,15 @@ async function main(): Promise<void> {
   line(`crowd: piles into ${w.crowd.instrument} from day ${w.crowd.startTick + 1}, unwinds on day ${w.crowd.crashTick + 1}`);
   line(`${snap.agents.length} agents in ${w.pods.length} pods, ${w.operators.length} operators; ${w.skilled} skilled pickers`);
   for (const o of w.operators.filter((x) => x.agents.length > 1)) line(`operator ${o.id} runs ${o.agents.join(" and ")} under different names`);
-  line("(the allocator does not read operator identity yet; operators are flagged on its cuts after the run)");
+  const opCaps = snap.decisions.filter((d) => d.kind === "OPERATOR_CUT").length;
+  line(`(an operator is one counterparty: a stop-out caps its other agents; ${opCaps} operator ${opCaps === 1 ? "cap" : "caps"} in this world)`);
 
   header("2. SAME AGENTS, TWO BOOKS", "Both books hold the same agents with the same limits each. Only one looks across them.");
   const row = (name: string, f: (s: BookSummaryView) => string) =>
     line(`${name.padEnd(30)} ${f(snap.books.baseline.summary).padStart(12)} ${f(snap.books.center.summary).padStart(12)}`);
   line(`${"(virtual world)".padEnd(30)} ${"guardrails".padStart(12)} ${"center book".padStart(12)}`);
   row("total return", (s) => signed(s.totalReturn));
-  row("max drawdown", (s) => pct(s.maxDrawdown));
+  row("max drawdown", (s) => pct(s.maxDrawdown, 2));
   row("sharpe", (s) => s.sharpe.toFixed(2));
   row("certainty equivalent (γ=3)", (s) => signed(s.utility));
   row("stop-outs", (s) => String(s.stopOuts));
@@ -69,7 +70,7 @@ async function main(): Promise<void> {
   );
   const flagged = oneTrade.filter((g) => g.sharedOperators.length > 0);
   line(
-    `shared operator (flagged after the run; the allocator groups by positions, not operator): ` +
+    `shared operator (flagged on the overlap cut): ` +
       `${flagged.length} of the one-trade cuts included both agents of one operator`,
   );
   for (const g of flagged.slice(0, 4)) {
@@ -89,7 +90,57 @@ async function main(): Promise<void> {
     line(`loop ${l.loop}: ${l.title ?? merged}`);
     if (l.note) line(`  note: ${l.note}`);
     if (l.blockA) line(`  block A (${l.blocks.A.count} worlds from ${l.blocks.A.from}): ${pp(l.blockA.allocator.mean)} [${pp(l.blockA.allocator.lo)}, ${pp(l.blockA.allocator.hi)}] 90% CI`);
-    if (l.blockB) line(`  block B (${l.blocks.B.count} worlds from ${l.blocks.B.from}): ${pp(l.blockB.allocator.mean)} [${pp(l.blockB.allocator.lo)}, ${pp(l.blockB.allocator.hi)}] 90% CI`);
+    if (l.blockB) {
+      line(
+        `  block B (${l.blocks.B.count} worlds from ${l.blocks.B.from})${l.correctedB ? ", as first confirmed, before the fix" : ""}: ` +
+          `${pp(l.blockB.allocator.mean)} [${pp(l.blockB.allocator.lo)}, ${pp(l.blockB.allocator.hi)}] 90% CI`,
+      );
+    }
+    if (l.correctedB) {
+      const u = l.correctedB.uplift;
+      line(
+        `  block B re-measured after the fix, on the code that shipped${l.correctedB.vs ? ` (vs ${l.correctedB.vs})` : ""}: ` +
+          `${pp(u.mean)} [${pp(u.lo)}, ${pp(u.hi)}] 90% CI — this is the number that stands`,
+      );
+    }
+    const r = l.riskSummary;
+    if (r) {
+      const paired = r.pairedChange
+        ? `paired ${pp(r.pairedChange.mean)} [${pp(r.pairedChange.lo)}, ${pp(r.pairedChange.hi)}]`
+        : "paired change not recorded";
+      // Where the center book stands against guardrails after this loop, and
+      // whether this loop is what moved it there.
+      const before = r.centerMaxDDBefore > r.guardrailsMaxDD;
+      const after = r.centerMaxDDAfter > r.guardrailsMaxDD;
+      const vs =
+        before && after
+          ? " — still ABOVE the guardrails'"
+          : after
+            ? " — this loop took it ABOVE the guardrails' (it was below before)"
+            : before
+              ? " — this loop brought it below the guardrails'"
+              : "";
+      line(
+        `  center-book max drawdown, block ${r.block} (seeds ${r.seeds}): ${pct(r.centerMaxDDBefore, 2)} -> ${pct(r.centerMaxDDAfter, 2)} ` +
+          `(${paired}); per-agent guardrails ${pct(r.guardrailsMaxDD, 2)}${vs}`,
+      );
+    }
+    for (const x of l.rejections) line(`  not merged: ${x.title} — ${x.reason}`);
+  }
+  const sealed = [...snap.evidence.loops].reverse().find((l) => l.booksB);
+  if (sealed?.booksB) {
+    const s = sealed.booksB;
+    const c = w.seed;
+    line("");
+    line(`showcase world #${c} vs the latest sealed confirmation (loop ${sealed.loop}, block B, ${s.seeds.count} virtual worlds):`);
+    line(`  certainty equivalent  this world ${signed(snap.books.center.summary.utility)} vs ${signed(snap.books.baseline.summary.utility)}; sealed mean ${signed(s.center.utility)} vs ${signed(s.guardrails.utility)}`);
+    line(`  max drawdown          this world ${pct(snap.books.center.summary.maxDrawdown, 2)} vs ${pct(snap.books.baseline.summary.maxDrawdown, 2)}; sealed mean ${pct(s.center.maxDrawdown, 2)} vs ${pct(s.guardrails.maxDrawdown, 2)}`);
+    const gapWorld = snap.books.center.summary.utility - snap.books.baseline.summary.utility;
+    const gapSealed = s.center.utility - s.guardrails.utility;
+    line(
+      `  (center book vs per-agent guardrails; the showcase world's gap is ${pp(gapWorld)} vs ${pp(gapSealed)} on average, ` +
+        `so it is ${gapWorld > gapSealed ? "MORE" : "less"} favourable than the sealed average)`,
+    );
   }
 
   const out = resolve(repoRoot, "apps/web/public/fund-snapshot.json");
