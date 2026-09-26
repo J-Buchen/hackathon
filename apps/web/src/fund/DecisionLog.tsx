@@ -1,5 +1,6 @@
 import { useEffect, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import type { FundSnapshot } from "./types";
+import { ScrollRegion } from "../components/ScrollRegion";
 import { buildLog, day, filterLog, flaggedOperatorCut, pct, usdCompact, type LogEntry, type LogFilter } from "./model";
 
 /**
@@ -263,7 +264,7 @@ export function DecisionLog({ snapshot, filter, onFilter, selected, onSelect }: 
         Use the up and down arrow keys to move between decisions, Enter to replay one on the mandate tree.
       </p>
       <div className="fc-log-fill">
-        <div className="fc-log-scroll" tabIndex={0} role="region" aria-label="Decision log" aria-describedby={hintId}>
+        <ScrollRegion label="Decision log" className="fc-log-scroll" wrapClassName="fc-log-wrap" describedBy={hintId}>
           {shown.length === 0 ? (
             <p className="panel-empty-text fc-log-empty">No decisions of this kind in this world.</p>
           ) : (
@@ -292,7 +293,7 @@ export function DecisionLog({ snapshot, filter, onFilter, selected, onSelect }: 
               })}
             </ol>
           )}
-        </div>
+        </ScrollRegion>
       </div>
     </div>
   );

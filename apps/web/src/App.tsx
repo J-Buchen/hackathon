@@ -30,6 +30,7 @@ import {
   type Integration,
 } from "./site";
 import { bindOpenMenu, focusSection } from "./nav-menu";
+import { startSectionGates, useSectionGate } from "./section-gate";
 import "./styles.css";
 
 // Code-split the payment dashboard: it renders only below the fold AND only after
@@ -306,6 +307,9 @@ export function App() {
   const fund = useFundSnapshot();
   useSmoothScroll();
   useHashNavigation();
+  useEffect(() => startSectionGates(), []);
+  const dashRef = useRef<HTMLElement>(null);
+  const dashOpen = useSectionGate(dashRef);
 
   useEffect(() => {
     let cancelled = false;
@@ -370,7 +374,7 @@ export function App() {
       <EnsWow />
       <Pipeline />
 
-      <section className="section" id="dashboard" data-nav="under-the-hood">
+      <section className="section" id="dashboard" data-nav="under-the-hood" ref={dashRef}>
         <div className="container">
           <Reveal className="dash-head">
             <span className="overline">The primitive at work · agent payments · deterministic mocks</span>
@@ -387,7 +391,7 @@ export function App() {
           {/* Both the initial fetch (`loading`) and the code-split chunk resolve
               (Suspense fallback) render the same skeleton, which mirrors the real
               dashboard's box — so there's no CLS jump when either resolves. */}
-          {state.status === "loading" && <DashboardSkeleton />}
+          {(state.status === "loading" || (state.status === "ready" && !dashOpen)) && <DashboardSkeleton />}
           {state.status === "error" && (
             <div className="notice notice-error">
               Could not load <code>/demo-snapshot.json</code>: {state.message}
@@ -396,7 +400,7 @@ export function App() {
               </div>
             </div>
           )}
-          {state.status === "ready" && (
+          {state.status === "ready" && dashOpen && (
             <SectionBoundary what="the payment dashboard" hint={<>Reload the page. If it keeps failing, run <code>npm run demo</code> at the repo root to regenerate its data.</>}>
               <Suspense fallback={<DashboardSkeleton />}>
                 <Dashboard snapshot={state.snapshot} panelHeading="h4" stageLabels={PAYMENT_STAGES} />
@@ -424,8 +428,10 @@ const PAYMENT_STAGES = {
 /* Fund console — the product, on one virtual world (npm run demo:fund)        */
 /* -------------------------------------------------------------------------- */
 function FundConsoleSection({ state }: { state: FundLoad }) {
+  const ref = useRef<HTMLElement>(null);
+  const open = useSectionGate(ref);
   return (
-    <section className="section section-console" id="fund-console" data-nav="fund-console">
+    <section className="section section-console" id="fund-console" data-nav="fund-console" ref={ref}>
       <div className="container">
         <Reveal className="dash-head">
           <span className="overline">Fund console · virtual world</span>
@@ -438,7 +444,7 @@ function FundConsoleSection({ state }: { state: FundLoad }) {
             once under the allocator (the center book) and once with per-agent guardrails only.
           </p>
         </Reveal>
-        {state.status === "loading" && <FundConsoleSkeleton />}
+        {(state.status === "loading" || (state.status === "ready" && !open)) && <FundConsoleSkeleton />}
         {state.status === "error" && (
           <div className="notice notice-error">
             Could not load <code>/fund-snapshot.json</code>: {state.message}
@@ -455,7 +461,7 @@ function FundConsoleSection({ state }: { state: FundLoad }) {
             </div>
           </div>
         )}
-        {state.status === "ready" && (
+        {state.status === "ready" && open && (
           <SectionBoundary what="the fund console" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:fund</code> at the repo root to regenerate <code>fund-snapshot.json</code>.</>}>
             <Suspense fallback={<FundConsoleSkeleton />}>
               <FundConsole snapshot={state.snapshot} />
@@ -474,8 +480,10 @@ function FundConsoleSection({ state }: { state: FundLoad }) {
 // ledger's rule, and the terms are defined here only (the console's context
 // card links to them).
 function EvidenceSection({ state }: { state: FundLoad }) {
+  const ref = useRef<HTMLElement>(null);
+  const open = useSectionGate(ref);
   return (
-    <section className="section section-alt section-evidence" id="evidence" data-nav="evidence" aria-labelledby="evidence-h">
+    <section className="section section-alt section-evidence" id="evidence" data-nav="evidence" aria-labelledby="evidence-h" ref={ref}>
       <div className="container">
         <Reveal className="dash-head">
           <span className="overline">Sealed evidence · virtual worlds</span>
@@ -492,7 +500,7 @@ function EvidenceSection({ state }: { state: FundLoad }) {
             ))}
           </dl>
         </Reveal>
-        {state.status === "loading" && <EvidenceSkeleton />}
+        {(state.status === "loading" || (state.status !== "error" && !open)) && <EvidenceSkeleton />}
         {state.status === "error" && (
           <div className="notice notice-error">
             Could not load <code>/fund-snapshot.json</code>: {state.message}
@@ -501,7 +509,7 @@ function EvidenceSection({ state }: { state: FundLoad }) {
             </div>
           </div>
         )}
-        {(state.status === "ready" || state.status === "empty") && (
+        {(state.status === "ready" || state.status === "empty") && open && (
           <SectionBoundary what="the sealed evidence" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:fund</code> at the repo root to regenerate <code>fund-snapshot.json</code>.</>}>
             <Suspense fallback={<EvidenceSkeleton />}>
               <EvidencePanel snapshot={state.snapshot} />
@@ -523,6 +531,8 @@ type SwarmLoad =
 
 function CenterBookSection() {
   const [state, setState] = useState<SwarmLoad>({ status: "loading" });
+  const ref = useRef<HTMLElement>(null);
+  const open = useSectionGate(ref);
   useEffect(() => {
     let cancelled = false;
     fetch("/swarm-snapshot.json")
@@ -544,7 +554,7 @@ function CenterBookSection() {
   }, []);
 
   return (
-    <section className="section" id="center-book" data-nav="center-book">
+    <section className="section" id="center-book" data-nav="center-book" ref={ref}>
       <div className="container">
         <Reveal className="dash-head">
           <span className="overline">A worked example · one trend, three Tiger Cubs · simulated prices</span>
@@ -558,7 +568,7 @@ function CenterBookSection() {
             is one <code>close</code>.
           </p>
         </Reveal>
-        {state.status === "loading" && <DashboardSkeleton />}
+        {(state.status === "loading" || (state.status === "ready" && !open)) && <DashboardSkeleton />}
         {state.status === "error" && (
           <div className="notice notice-error">
             Could not load <code>/swarm-snapshot.json</code>: {state.message}
@@ -567,7 +577,7 @@ function CenterBookSection() {
             </div>
           </div>
         )}
-        {state.status === "ready" && (
+        {state.status === "ready" && open && (
           <SectionBoundary what="the center book" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:swarm</code> at the repo root to regenerate its data.</>}>
             <Suspense fallback={<DashboardSkeleton />}>
               <CenterBook snapshot={state.snapshot} />
@@ -671,9 +681,9 @@ const AGENTHIRE_FACTS: Array<{ k: string; v: ReactNode }> = [
     k: "Real",
     v: (
       <>
-        The HTTP calls to an unmodified, keyless AgentHire on this machine (its quotes and 402 challenges) and every check
-        Allowance makes before signing. Rendered from <code>agenthire-snapshot.json</code>, written by{" "}
-        <code>npm run demo:agenthire</code>.
+        The HTTP calls to an unmodified, keyless AgentHire (its quotes and 402 challenges) and every check Allowance makes
+        before signing. What you see is recorded from a local run into <code>agenthire-snapshot.json</code>; regenerate it
+        with <code>npm run demo:agenthire</code>.
       </>
     ),
   },
@@ -701,6 +711,8 @@ const AGENTHIRE_FACTS: Array<{ k: string; v: ReactNode }> = [
 
 function AgentHirePanel() {
   const [state, setState] = useState<AgentHireLoad>({ status: "loading" });
+  const ref = useRef<HTMLDivElement>(null);
+  const open = useSectionGate(ref);
   useEffect(() => {
     let cancelled = false;
     const getJson = (path: string) =>
@@ -726,7 +738,7 @@ function AgentHirePanel() {
   }, []);
 
   return (
-    <div className="ah" id="agenthire">
+    <div className="ah" id="agenthire" ref={ref}>
       <Reveal className="dash-head">
         <span className="overline">AgentHire, up close · run locally · settlement simulated</span>
         <h3 className="h2 h2-sub">
@@ -763,7 +775,7 @@ function AgentHirePanel() {
           </div>
         )}
       </Reveal>
-      {state.status === "loading" && <DashboardSkeleton />}
+      {(state.status === "loading" || (state.status === "ready" && !open)) && <DashboardSkeleton />}
       {state.status === "error" && (
         <div className="notice notice-error">
           Could not load <code>/agenthire-snapshot.json</code>: {state.message}
@@ -773,7 +785,7 @@ function AgentHirePanel() {
           </div>
         </div>
       )}
-      {state.status === "ready" && (
+      {state.status === "ready" && open && (
         <SectionBoundary what="the AgentHire run" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:agenthire</code> at the repo root to regenerate its data.</>}>
           <Suspense fallback={<DashboardSkeleton />}>
             <Dashboard snapshot={state.snapshot} panelHeading="h4" stageLabels={AGENTHIRE_STAGES} />

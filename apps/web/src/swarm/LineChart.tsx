@@ -1,4 +1,6 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import { flushSync } from "react-dom";
+import { spreadLabels } from "./labels";
 
 /**
  * Minimal, dependency-free SVG line chart for the center-book section.
@@ -74,20 +76,26 @@ export function LineChart({
   const svgRef = useRef<SVGSVGElement>(null);
   const plotRef = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(WIDE);
-  // Measure once before the first paint, so the chart never shows at the
-  // design width and then jumps to its real height (a layout shift that moved
-  // everything below a freshly loaded section). The observer keeps it current.
+  // Draw at the plot's true width, measured before the first paint so the
+  // chart never shows at the design width and then jumps to its real height
+  // (a layout shift that moved everything below a freshly loaded section).
+  // The observer is registered in a layout effect, so its first callback runs
+  // in the same frame, after the browser's own layout and before paint, and
+  // commits synchronously (flushSync). Reading getBoundingClientRect() here
+  // instead forced a synchronous layout of the whole page per chart (about
+  // 450 ms of a 4× throttled load, DESIGN.md §11 Performance).
   useLayoutEffect(() => {
-    const w = Math.round(plotRef.current?.getBoundingClientRect().width ?? 0);
-    if (w > 0) setW(Math.max(300, w));
-  }, []);
-  useEffect(() => {
     const el = plotRef.current;
-    if (!el || typeof ResizeObserver === "undefined") return;
+    if (!el) return;
+    if (typeof ResizeObserver === "undefined") {
+      const w = Math.round(el.getBoundingClientRect().width);
+      if (w > 0) setW(Math.max(300, w));
+      return;
+    }
     const ro = new ResizeObserver(([entry]) => {
       const w = Math.round(entry?.contentRect.width ?? 0);
-      // Draw at the true width (never below 300), so 11px text stays 11px.
-      if (w > 0) setW(Math.max(300, w));
+      // Never below 300, so 12px text stays 12px.
+      if (w > 0) flushSync(() => setW(Math.max(300, w)));
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -140,10 +148,11 @@ export function LineChart({
     });
   };
 
-  // End labels: skip them when the two ends are too close to separate cleanly
-  // (the legend + tooltip still carry identity).
+  // End labels: each sits by its own end point; labels that would collide
+  // (ends closer than 16px) are moved apart instead of dropped, keeping their
+  // order, so a narrow chart still labels every line (spreadLabels).
   const ends = series.map((s) => geo.y(s.values[s.values.length - 1] ?? 0));
-  const endLabels = ends.length < 2 || Math.abs(ends[0]! - ends[1]!) >= 16;
+  const labelYs = spreadLabels(ends, 16, PAD.top + 6, h - PAD.bottom - 6);
 
   const tipLeft = hover === null ? 0 : (geo.x(hover) / W) * 100;
   const rows = [];
@@ -222,11 +231,9 @@ export function LineChart({
             return (
               <g key={s.key}>
                 <circle cx={geo.x(last)} cy={ends[k]} r={4} fill={s.color} className="chart-dot" />
-                {endLabels && (
-                  <text className="chart-end" x={geo.x(last) + 9} y={ends[k]} dominantBaseline="middle">
-                    {format(s.values[last] ?? 0)}
-                  </text>
-                )}
+                <text className="chart-end" x={geo.x(last) + 9} y={labelYs[k]} dominantBaseline="middle">
+                  {format(s.values[last] ?? 0)}
+                </text>
               </g>
             );
           })}

@@ -93,7 +93,7 @@ code {
   background: var(--bg-elev-2);
   padding: 1px 6px;
   border-radius: var(--radius-xs);
-  font-size: 0.88em;
+  font-size: max(12px, 0.88em);
   color: var(--gold-bright);
 }
 
@@ -769,7 +769,7 @@ a { color: inherit; }
 .tile-neutral { border-top-color: var(--border); }
 
 .tile-label {
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-faint);
@@ -889,14 +889,21 @@ a { color: inherit; }
   transition: border-color 0.18s ease, transform 0.18s var(--ease);
 }
 .node-card:hover { border-color: var(--gold-deep); transform: translateX(2px); }
-.node-card.is-revoked { opacity: 0.5; filter: grayscale(0.55) sepia(0.15); }
+/* Revoked subtrees read as closed without fading their text below 4.5:1
+   (opacity dimmed the names and scopes to 2.4:1): a dashed border, a darker
+   card, and greyed-out bars and chips. */
+.node-card.is-revoked { background: var(--bg-1); border-style: dashed; }
+.node-card.is-revoked .node-label { color: var(--text-dim); }
+.node-card.is-revoked .usage-bar { opacity: 0.45; filter: grayscale(0.8); }
+.node-card.is-revoked .chip, .node-card.is-revoked .badge-identity, .node-card.is-revoked .stat-highlight { filter: grayscale(0.85); }
+.node-card.is-revoked:hover { transform: none; }
 .node-card.self-revoked { border-color: var(--terra); border-style: dashed; }
 
 .node-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
 .node-title { display: flex; flex-direction: column; }
 .node-label { font-size: 17px; font-weight: 800; letter-spacing: -0.01em; }
 .self-revoked .node-label { text-decoration: line-through; text-decoration-color: var(--terra); }
-.node-fqn { font-family: var(--mono); font-size: 11px; color: var(--text-faint); overflow-wrap: anywhere; }
+.node-fqn { font-family: var(--mono); font-size: 12px; color: var(--text-faint); overflow-wrap: anywhere; }
 .node-badges { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .usage-bar {
@@ -920,24 +927,24 @@ a { color: inherit; }
 .node-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
 .stat { min-width: 0; background: var(--bg-1); border: 1px solid var(--border-soft); border-radius: var(--radius-xs); padding: 7px 9px; }
 .stat-highlight { border-color: var(--gold-deep); background: var(--gold-bg); }
-.stat-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
+.stat-label { display: block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); }
 .stat-value { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 4px; font-family: var(--mono); font-size: 14px; font-weight: 700; }
 .stat-num { overflow-wrap: anywhere; }
 .stat-highlight .stat-value { color: var(--gold-bright); }
-.stat-unit { font-size: 10px; color: var(--text-faint); font-weight: 400; }
+.stat-unit { font-size: 12px; color: var(--text-faint); font-weight: 400; }
 
 .node-scope { display: flex; flex-direction: column; gap: 6px; }
 .allowlist { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
-.allowlist-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); min-width: 72px; }
+.allowlist-label { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-faint); min-width: 72px; }
 .allowlist-items { display: inline-flex; gap: 5px; flex-wrap: wrap; }
 
 /* chips / badges */
-.chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; }
+.chip { display: inline-block; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid transparent; white-space: nowrap; }
 .chip-allow { background: var(--gold-bg); color: var(--gold-bright); border-color: var(--gold-deep); font-family: var(--mono); }
 .chip-any { background: var(--bg-elev-2); color: var(--text-dim); border-color: var(--border); }
 .chip-none { background: var(--terra-bg); color: var(--terra-bright); border-color: var(--terra); }
 
-.badge { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid transparent; }
+.badge { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; padding: 2px 9px; border-radius: 999px; border: 1px solid transparent; }
 .badge-identity.id-verified { background: var(--gold-bg); color: var(--gold-bright); border-color: var(--gold-deep); }
 .badge-identity.id-expired { background: var(--terra-bg); color: var(--terra-bright); border-color: var(--terra); }
 .badge-identity.id-none { background: var(--revoked-bg); color: var(--text-dim); border-color: var(--border); }
@@ -950,9 +957,11 @@ a { color: inherit; }
 .event { display: grid; grid-template-columns: auto auto 1fr auto; gap: 11px; align-items: center; padding: 11px 8px; border-bottom: 1px solid var(--border-soft); }
 .event:last-child { border-bottom: none; }
 .event-loud { background: var(--terra-bg); border-radius: var(--radius-sm); border-bottom-color: transparent; margin: 5px 0; box-shadow: inset 3px 0 0 var(--terra); }
-.event-revoked { opacity: 0.65; }
-.event-seq { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
-.event-type { font-size: 11px; font-weight: 800; letter-spacing: 0.03em; color: var(--text-dim); white-space: nowrap; }
+/* A revoke line is de-emphasised by weight, not opacity (which took its text
+   below 4.5:1). */
+.event-revoked .event-line, .event-revoked .event-merchant { color: var(--text-dim); }
+.event-seq { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
+.event-type { font-size: 12px; font-weight: 800; letter-spacing: 0.03em; color: var(--text-dim); white-space: nowrap; }
 .type-payment { color: var(--gold); }
 .type-fund { color: var(--gold-bright); }
 .type-delegate { color: var(--gold-deep); }
@@ -964,13 +973,13 @@ a { color: inherit; }
 .event-merchant { font-size: 13px; color: var(--text-dim); }
 .event-detail { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
 .event-result { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-.result-chip { font-family: var(--mono); font-size: 10px; letter-spacing: 0.02em; }
+.result-chip { font-family: var(--mono); font-size: 12px; letter-spacing: 0.02em; }
 .res-ok { background: var(--gold-bg); color: var(--gold-bright); border-color: var(--gold-deep); }
 .res-settled { background: var(--gold-bg); color: var(--gold-bright); border-color: var(--gold); }
 .res-blocked { background: var(--terra-bg); color: var(--terra-bright); border-color: var(--terra); }
 .res-denied { background: var(--terra); color: #2a0f07; border-color: var(--terra); }
 .res-revoked { background: var(--revoked-bg); color: var(--text-dim); border-color: var(--revoked); }
-.result-stage { font-size: 10px; color: var(--text-faint); font-style: italic; }
+.result-stage { font-size: 12px; color: var(--text-faint); font-style: italic; }
 
 /* ---------- Footer ---------- */
 .site-footer {
@@ -994,6 +1003,9 @@ a { color: inherit; }
   *::before,
   *::after {
     animation-duration: 0.001ms !important;
+    /* No stagger either: a delayed entrance holds its first frame (opacity 0,
+       fill-mode both) for the whole delay. */
+    animation-delay: 0s !important;
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }
@@ -1029,7 +1041,7 @@ a { color: inherit; }
 .cb-tile-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .cb-tile-value { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
 .cb-tile-value-dim { font-size: 15px; font-weight: 600; color: var(--text-dim); }
-.cb-tile-who { font-size: 11.5px; color: var(--text-faint); margin-left: auto; min-width: 0; overflow-wrap: anywhere; text-align: right; }
+.cb-tile-who { font-size: 12px; color: var(--text-faint); margin-left: auto; min-width: 0; overflow-wrap: anywhere; text-align: right; }
 
 /* Charts */
 .chart { margin: 0; }
@@ -1043,10 +1055,10 @@ a { color: inherit; }
 .chart svg:focus-visible { outline: 2px solid var(--gold); outline-offset: 4px; border-radius: 4px; }
 .chart-grid { stroke: var(--border-soft); stroke-width: 1; }
 .chart-baseline { stroke: var(--border); stroke-width: 1; }
-.chart-axis { fill: var(--text-faint); font-size: 11px; font-family: var(--mono); }
+.chart-axis { fill: var(--text-faint); font-size: 12px; font-family: var(--mono); }
 .chart-band { fill: rgba(243, 177, 63, 0.06); }
 .chart-marker { stroke: var(--terra); stroke-width: 1; }
-.chart-marker-label { fill: var(--text-dim); font-size: 11px; }
+.chart-marker-label { fill: var(--text-dim); font-size: 12px; }
 .chart-crosshair { stroke: var(--text-faint); stroke-width: 1; }
 .chart-dot { stroke: var(--bg-elev); stroke-width: 2; }
 .chart-end { fill: var(--text); font-size: 12px; font-family: var(--mono); font-weight: 700; }
@@ -1082,7 +1094,7 @@ a { color: inherit; }
   vertical-align: top;
 }
 .cb-table thead th, .chart-table thead th {
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-faint);
@@ -1091,7 +1103,7 @@ a { color: inherit; }
 }
 .cb-table tbody th { font-weight: 700; white-space: nowrap; }
 .cb-table .num { text-align: right; font-variant-numeric: tabular-nums; font-family: var(--mono); }
-.cb-style { display: block; font-weight: 400; font-size: 11.5px; color: var(--text-faint); white-space: normal; }
+.cb-style { display: block; font-weight: 400; font-size: 12px; color: var(--text-faint); white-space: normal; }
 /* Stopped rows: tint the row and fade only the graphics. Text keeps its full
    colour, since the status text IS the stop-out information (WCAG AA 4.5:1). */
 .cb-row-stopped,
@@ -1122,7 +1134,7 @@ a { color: inherit; }
 .cb-log-detail { font-size: 12.5px; margin-top: 3px; }
 
 /* Thesis */
-.cb-thesis .panel-head h2 { margin: 6px 0 0; }
+.cb-thesis .panel-head h3 { margin: 6px 0 0; }
 .cb-thesis-body { padding: 16px 20px 20px; display: flex; flex-direction: column; gap: 18px; }
 .cb-evidence { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--text-dim); display: grid; gap: 6px; }
 .cb-evidence a { color: var(--gold-bright); }
@@ -1143,8 +1155,8 @@ a { color: inherit; }
 .cb-row-short { background: rgba(228, 96, 67, 0.06); }
 .cb-verdict { font-size: 12px; font-weight: 700; white-space: nowrap; }
 .cb-pick { display: grid; grid-template-columns: 1.3fr 1fr; gap: 22px; }
-.cb-pick h3 { margin: 0 0 10px; font-size: 15px; }
-.cb-pick-col > h3:not(:first-child) { margin-top: 18px; }
+.cb-pick h4 { margin: 0 0 10px; font-size: 15px; }
+.cb-pick-col > h4:not(:first-child) { margin-top: 18px; }
 .cb-q { margin-bottom: 12px; }
 .cb-q-head { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13.5px; }
 .cb-q ul, .cb-catalysts, .cb-pms { margin: 6px 0 0; padding-left: 18px; font-size: 13px; color: var(--text-dim); display: grid; gap: 4px; }
@@ -1195,7 +1207,7 @@ a { color: inherit; }
 .hc-root { font-family: var(--mono); font-weight: 800; font-size: 14px; }
 .hc-kind {
   font-family: var(--sans);
-  font-size: 10px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-faint);
@@ -1203,7 +1215,7 @@ a { color: inherit; }
   margin-right: 4px;
 }
 .hc-tag {
-  font-size: 10.5px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-faint);
@@ -1228,12 +1240,12 @@ a { color: inherit; }
 /* Stopped: the bar is hatched and empty; the text keeps full contrast. */
 .hc-agent.is-closed { background: rgba(122, 108, 86, 0.08); }
 .hc-name { font-weight: 700; }
-.hc-op { font-family: var(--mono); font-size: 10.5px; color: var(--text-dim); }
+.hc-op { font-family: var(--mono); font-size: 12px; color: var(--text-dim); }
 .is-hl .hc-op { color: var(--gold-bright); }
 .hc-bar { height: 8px; border-radius: 3px; background: var(--bg-1); border: 1px solid var(--border-soft); overflow: hidden; }
 .is-closed .hc-bar { background: repeating-linear-gradient(135deg, transparent 0 5px, rgba(122, 108, 86, 0.3) 5px 7px), var(--bg-1); }
 .hc-fill { display: block; height: 100%; background: linear-gradient(90deg, var(--gold-deep), var(--gold)); transform-origin: left center; }
-.hc-state { font-size: 11px; color: var(--text-dim); white-space: nowrap; text-align: right; }
+.hc-state { font-size: 12px; color: var(--text-dim); white-space: nowrap; text-align: right; }
 .is-closed .hc-state { color: var(--terra-bright); }
 .hc-notes { display: flex; flex-direction: column; gap: 8px; border-top: 1px solid var(--border-soft); padding-top: 12px; }
 .hc-note { display: flex; gap: 9px; align-items: flex-start; font-size: 12.5px; color: var(--text-dim); line-height: 1.45; }
@@ -1251,7 +1263,7 @@ a { color: inherit; }
   font-weight: 900;
   font-family: var(--mono);
 }
-.hero-proof-k { width: 22px; height: 22px; font-size: 11px; }
+.hero-proof-k { width: 22px; height: 22px; font-size: 12px; }
 .hero-proof-stop { background: var(--terra-bg); color: var(--terra-bright); border: 1px solid var(--terra); font-size: 12px; }
 
 .guarantees {
@@ -1287,7 +1299,7 @@ a { color: inherit; }
   border: 1px solid var(--border-soft);
 }
 .guarantee-how-label {
-  font-size: 11px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-faint);
@@ -1381,7 +1393,7 @@ a { color: inherit; }
   border: 1px solid var(--gold-deep);
   background: var(--gold-bg);
   color: var(--gold-bright);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -1394,7 +1406,7 @@ a { color: inherit; }
 .fc-kpi-single { display: flex; flex-direction: column; }
 .fc-kpi-value { font-size: 26px; font-weight: 800; margin-top: 6px; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .fc-kpi-sub { font-size: 12px; color: var(--text-dim); margin-top: 4px; }
-.fc-kpi-note { font-size: 11.5px; color: var(--text-faint); margin-top: 6px; line-height: 1.4; }
+.fc-kpi-note { font-size: 12px; color: var(--text-faint); margin-top: 6px; line-height: 1.4; }
 .fc-kpi-note span { color: var(--gold-bright); }
 /* Narrow two-column tiles: the "center book / per-agent guardrails" caption
    goes under its value instead of squeezing beside it. */
@@ -1619,7 +1631,7 @@ a { color: inherit; }
 .fc-key { display: inline-block; width: 14px; height: 9px; border-radius: 2px; position: relative; }
 .fc-key-tick { width: 2px; height: 12px; background: var(--text); border-radius: 1px; }
 .fc-key-hl { border: 1px solid var(--gold); background: var(--gold-bg); }
-.fc-legend .fc-legend-scale { display: block; flex-basis: 100%; color: var(--text-faint); font-size: 11.5px; }
+.fc-legend .fc-legend-scale { display: block; flex-basis: 100%; color: var(--text-faint); font-size: 12px; }
 .fc-close-line { color: var(--text-dim); }
 
 .fc-nodes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -1662,19 +1674,19 @@ a { color: inherit; }
 .fc-node-label { font-weight: 800; font-size: 14px; white-space: nowrap; }
 .fc-depth-0 .fc-node-label { font-family: var(--mono); font-size: 14px; }
 .fc-node-kind {
-  font-size: 10px;
+  font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: var(--text-faint);
   font-weight: 700;
   margin-right: 2px;
 }
-.fc-node-meta { font-size: 11.5px; color: var(--text-faint); }
+.fc-node-meta { font-size: 12px; color: var(--text-faint); }
 .fc-node-badges { display: inline-flex; flex-wrap: wrap; gap: 5px; }
 .fc-node-amt { text-align: right; font-family: var(--mono); font-size: 13px; line-height: 1.25; white-space: nowrap; }
 .fc-node-amt strong { color: var(--text); }
-.fc-node-sub { display: block; font-size: 10.5px; color: var(--text-faint); font-family: var(--sans); }
-.fc-node-closed { font-size: 11.5px; color: var(--text-dim); font-family: var(--sans); }
+.fc-node-sub { display: block; font-size: 12px; color: var(--text-faint); font-family: var(--sans); }
+.fc-node-closed { font-size: 12px; color: var(--text-dim); font-family: var(--sans); }
 
 .fc-bar {
   position: relative;
@@ -1714,7 +1726,7 @@ a { color: inherit; }
   align-items: center;
   gap: 4px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   padding: 1px 8px;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -1754,17 +1766,21 @@ a { color: inherit; }
 }
 .fc-filter:hover { border-color: var(--gold-deep); color: var(--text); }
 .fc-filter[aria-pressed="true"] { background: var(--gold-bg); border-color: var(--gold); color: var(--gold-bright); font-weight: 700; }
-.fc-filter-n { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.fc-filter-n { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
 .fc-filter[aria-pressed="true"] .fc-filter-n { color: var(--gold-bright); }
 
 /* On desktop the log fills whatever height the tree panel beside it sets:
    the scroller is absolutely positioned, so the log's own length never
    stretches the row. */
 .fc-log-fill { position: relative; flex: 1; min-height: 520px; }
-.fc-log-scroll { position: absolute; inset: 0; padding: 12px 16px 16px; overflow-y: auto; }
+/* The log is a ScrollRegion (fade + "More below" tag): its wrapper fills the
+   panel's remaining height on a wide screen and caps it on a narrow one. */
+.fc-log-fill > .fc-log-wrap { position: absolute; inset: 0; }
+.fc-log-scroll.panel-scroll { flex: 1; min-height: 0; max-height: none; padding: 12px 16px 16px; overflow-x: hidden; overflow-y: auto; }
 @media (max-width: 980px) {
   .fc-log-fill { min-height: 0; }
-  .fc-log-scroll { position: static; max-height: 620px; }
+  .fc-log-fill > .fc-log-wrap { position: relative; }
+  .fc-log-scroll.panel-scroll { max-height: 620px; }
 }
 .fc-log-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .fc-log-item {
@@ -1794,16 +1810,16 @@ a { color: inherit; }
 }
 .fc-log-select:hover .fc-log-kind { color: var(--gold-bright); }
 .fc-log-head { display: flex; align-items: center; gap: 8px; font-size: 12.5px; }
-.fc-log-g { width: 18px; height: 18px; font-size: 10px; }
+.fc-log-g { width: 18px; height: 18px; font-size: 12px; }
 .fc-log-kind { font-weight: 700; }
-.fc-log-t { margin-left: auto; color: var(--text-faint); font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.fc-log-t { margin-left: auto; color: var(--text-faint); font-family: var(--mono); font-size: 12px; white-space: nowrap; }
 .fc-log-body { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--text-dim); }
 .fc-log-body strong { color: var(--text); }
 .fc-log-detail { font-size: 12.5px; color: var(--text-dim); }
 .fc-members { display: flex; flex-wrap: wrap; gap: 4px; }
 .fc-member {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 12px;
   padding: 1px 7px;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -1818,7 +1834,7 @@ a { color: inherit; }
 .fc-move { display: flex; justify-content: space-between; gap: 12px; font-family: var(--mono); font-size: 12px; }
 .fc-move-agent { color: var(--text); }
 .fc-moves-hint { font-size: 12px; color: var(--text-faint); }
-.fc-log-g-stop { background: var(--terra-bg); color: var(--terra-bright); border: 1px solid var(--terra); font-size: 11px; }
+.fc-log-g-stop { background: var(--terra-bg); color: var(--terra-bright); border: 1px solid var(--terra); font-size: 12px; }
 .fc-filter-note { margin: 0; padding: 8px 16px; font-size: 12px; color: var(--text-dim); border-bottom: 1px solid var(--border-soft); background: var(--bg-1); }
 .fc-log-empty, .fc-evidence-empty { padding: 20px 0; }
 
@@ -1871,7 +1887,7 @@ a { color: inherit; }
 }
 .fc-forest-id { display: flex; flex-direction: column; min-width: 0; }
 .fc-forest-label { font-weight: 700; font-size: 13px; }
-.fc-forest-sub { font-family: var(--mono); font-size: 11px; color: var(--text-faint); }
+.fc-forest-sub { font-family: var(--mono); font-size: 12px; color: var(--text-faint); }
 .fc-forest-track { position: relative; height: 34px; }
 .fc-forest-grid { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border-soft); }
 .fc-forest-zero { position: absolute; top: -4px; bottom: -4px; width: 0; border-left: 1px dashed var(--text-faint); }
@@ -1911,7 +1927,7 @@ a { color: inherit; }
   top: 0;
   transform: translateX(-50%);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-faint);
   white-space: nowrap;
 }
@@ -1928,7 +1944,7 @@ a { color: inherit; }
   .fc-node .fc-bar { grid-column: 1 / -1; grid-row: 2; }
   .fc-tree { padding: 0 12px 14px; }
   .fc-replay { margin: 0 -12px; padding: 10px 12px 8px; }
-  .fc-log-scroll { max-height: 560px; padding: 10px 12px 12px; }
+  .fc-log-scroll.panel-scroll { max-height: 560px; padding: 10px 12px 12px; }
   .fc-filters { padding: 10px 12px; }
   .fc-evidence-body { padding: 14px 12px 16px; }
   .fc-caption { padding: 0 14px 14px; }
@@ -1959,14 +1975,14 @@ a { color: inherit; }
   .fx { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 12px 32px; padding: 16px 20px; }
   .fx-aside { justify-content: center; border-left: 1px solid var(--border-soft); padding-left: 28px; }
 }
-.fx-over { font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
+.fx-over { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
 .fx-title { margin: 3px 0 0; font-size: 16px; letter-spacing: -0.01em; }
 .fx-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; font-size: 12px; color: var(--text-dim); }
 .fx-legend > span { display: inline-flex; align-items: center; gap: 6px; }
 .fx-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .fx-table thead th {
   text-align: left;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1974,7 +1990,7 @@ a { color: inherit; }
   padding: 0 6px 6px;
   vertical-align: bottom;
 }
-.fx-th-sub { display: block; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 11px; }
+.fx-th-sub { display: block; text-transform: none; letter-spacing: 0; font-weight: 400; font-size: 12px; }
 .fx-table tbody th {
   text-align: left;
   font-weight: 600;
@@ -2012,7 +2028,7 @@ a { color: inherit; }
   align-items: baseline;
   gap: 7px;
   margin-top: 5px;
-  font-size: 11.5px;
+  font-size: 12px;
   line-height: 1.35;
   color: var(--text-dim);
   white-space: normal;
@@ -2031,7 +2047,7 @@ a { color: inherit; }
 .fc-flag {
   display: inline-block;
   font-family: var(--sans);
-  font-size: 10.5px;
+  font-size: 12px;
   font-weight: 700;
   line-height: 1.5;
   color: var(--terra-bright);
@@ -2045,21 +2061,21 @@ a { color: inherit; }
 .fx-na { font-size: 12px; color: var(--text-faint); }
 .fx-text { margin: 0; font-size: 13.5px; line-height: 1.55; color: var(--text-dim); }
 .fx-text strong { color: var(--text); }
-.fx-src { margin: 0; font-size: 11.5px; color: var(--text-faint); }
-.fx-src code { font-size: 11px; }
+.fx-src { margin: 0; font-size: 12px; color: var(--text-faint); }
+.fx-src code { font-size: 12px; }
 .fc-rule a { color: var(--gold-bright); }
 
 /* --- Evidence v2: per-loop facts, rejections, drawdown chart -------------- */
 .fc-facts { margin: 10px 0 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 @media (max-width: 760px) { .fc-facts { grid-template-columns: minmax(0, 1fr); } }
 .fc-fact { padding: 10px 12px; border-radius: var(--radius-xs); background: var(--bg-elev); border: 1px solid var(--border-soft); min-width: 0; }
-.fc-fact dt { font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.fc-fact dt { font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
 .fc-fact dd { margin: 5px 0 0; font-size: 12.5px; line-height: 1.45; color: var(--text-dim); }
 .fc-fact-v { font-family: var(--mono); font-size: 15px; color: var(--text); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .fc-fact-sub strong { font-family: var(--mono); color: var(--text); font-weight: 700; }
 /* The flag may wrap inside itself on a narrow card ("now above · was below before this loop"). */
 .fc-fact-sub .fc-flag { margin-left: 8px; vertical-align: 1px; white-space: normal; border-radius: 9px; }
-.fc-fact-note { font-size: 11.5px; color: var(--text-faint); }
+.fc-fact-note { font-size: 12px; color: var(--text-faint); }
 .fc-loop .fc-loop-note { margin-top: 10px; }
 
 .fc-rejects { margin-top: 10px; border-top: 1px solid var(--border-soft); padding-top: 6px; }
@@ -2092,6 +2108,8 @@ a { color: inherit; }
 .fc-rejects-list { list-style: none; margin: 6px 0 2px; padding: 0; display: grid; gap: 9px; }
 .fc-rejects-list li { display: grid; gap: 2px; padding-left: 12px; border-left: 2px solid var(--revoked); font-size: 12.5px; line-height: 1.45; }
 .fc-rejects-list strong { color: var(--text); font-size: 13px; }
+.fc-rejects-k { margin: 10px 0 0; font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+.fc-rejects-list + .fc-rejects-k { margin-top: 14px; }
 .fc-rejects-list span { color: var(--text-dim); }
 
 .fc-dd-legend { margin: 0; }
@@ -2154,7 +2172,7 @@ a { color: inherit; }
   .fc-forest-row { grid-template-columns: minmax(0, 1fr) 124px; }
   .fc-dd .fc-forest-val strong { font-size: 12.5px; }
 }
-.fc-loop-note-k { font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; font-size: 10.5px; margin-right: 6px; }
+.fc-loop-note-k { font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; margin-right: 6px; }
 
 /* --- Worked example (center book) ---------------------------------------- */
 .cb-result {
@@ -2168,12 +2186,12 @@ a { color: inherit; }
   background: var(--bg-elev);
 }
 @media (max-width: 860px) { .cb-result { grid-template-columns: minmax(0, 1fr); } }
-.cb-result-over { font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
+.cb-result-over { font-size: 12px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--gold); }
 .cb-result-h { margin: 4px 0 0; font-size: 17px; letter-spacing: -0.01em; }
 .cb-result-p { margin: 8px 0 0; font-size: 13px; line-height: 1.5; color: var(--text-dim); }
 .cb-result-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 .cb-result-list li { padding: 9px 11px; border-radius: var(--radius-xs); background: var(--bg-1); border: 1px solid var(--border-soft); }
-.cb-result-k { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.cb-result-k { display: block; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
 .cb-result-w { display: block; margin-top: 3px; font-weight: 700; font-size: 14px; }
 .cb-result-w.is-good { color: var(--gold-bright); }
 .cb-result-w.is-bad { color: var(--terra-bright); }
@@ -2243,7 +2261,7 @@ a { color: inherit; }
   border: 1px solid var(--gold-deep);
   background: var(--gold-bg);
   color: var(--gold-bright);
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 700;
   white-space: nowrap;
   pointer-events: none;
@@ -2324,7 +2342,7 @@ a { color: inherit; }
 
 /* The center book's drawdown per unit of risk, under its raw number. */
 .fc-fact-perrisk strong { color: var(--text); }
-.fc-fact-why { display: block; margin-top: 3px; font-size: 11.5px; color: var(--text-faint); }
+.fc-fact-why { display: block; margin-top: 3px; font-size: 12px; color: var(--text-faint); }
 .fc-dd-vol {
   position: absolute;
   top: 50%;
@@ -2395,7 +2413,7 @@ a { color: inherit; }
 .integ-used { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-faint); }
 .integ-used-k {
   margin-right: 6px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -2416,7 +2434,7 @@ a { color: inherit; }
   padding: 1px 8px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -2429,5 +2447,50 @@ a { color: inherit; }
   .ah-fact { grid-template-columns: minmax(0, 1fr); gap: 3px; }
 }
 .ah .h2 { max-width: 30ch; }
-.ah-audit { margin-top: 24px; text-align: left; font-size: 14px; line-height: 1.55; }
+.ah-audit { margin-top: 24px; text-align: left; font-size: 14px; line-height: 1.55; overflow-wrap: anywhere; }
 .ah-honesty { margin: 12px 0 0; padding-left: 18px; }
+
+/* ========================================================================== */
+/* Loop 5: accessibility and mobile polish (DESIGN.md §11, Accessibility)      */
+/* ========================================================================== */
+/* Tap targets of at least 24 × 24 px (WCAG 2.5.8) for every stand-alone link
+   and disclosure. Links inside a sentence keep their line height (the inline
+   exception). */
+.guarantee-see,
+.integ-links a,
+.footer-links a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+}
+.guarantee-see { align-self: flex-start; }
+/* Padding, not display: flex, so the summary keeps its disclosure marker. */
+.chart-table summary { padding: 4px 0; }
+.badge-mock { font-weight: 500; }
+
+/* The sealed-evidence dot plots on phones up to 400 px: at 320 px, with the
+   value column beside it the track was ~130 px and the 12 px axis ticks ran
+   into each other. Stack each row instead (label, track, values), so the track
+   gets the full width and the values read on one line under it. */
+.fc-forest-axis-top { display: none; }
+@media (max-width: 400px) {
+  .fc-forest-row { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .fc-forest-val { flex-direction: row; flex-wrap: wrap; align-items: baseline; column-gap: 10px; margin-bottom: 8px; }
+  .fc-forest-axis > div:last-child { display: none; }
+  /* Stacked, the plot runs a screen or more tall: a copy of the axis at the
+     top sticks under the nav while its rows scroll past, so no row is read
+     without a scale (the bottom axis stays for the last rows). */
+  .fc-forest-axis-top {
+    display: grid;
+    position: sticky;
+    top: var(--nav-h);
+    z-index: 2;
+    padding: 4px 0 2px;
+    background: var(--bg-elev);
+    box-shadow: 0 1px 0 var(--border-soft);
+  }
+  /* overflow: hidden on the panel would make it the sticky axis's scroll
+     container (so it never sticks); clip rounds the corners the same way
+     without being one. */
+  .panel:has(.fc-forest-axis-top) { overflow: clip; }
+}

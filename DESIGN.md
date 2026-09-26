@@ -801,6 +801,72 @@ Each top-level section carries `data-nav` with the nav entry it lights up
   reads `useReducedMotion()` to render a static equivalent (no parallax, no
   reveal, no inertia scroll).
 
+- **No forced layout at mount (loop 5).** Nothing reads layout
+  (`getBoundingClientRect`, `scrollHeight`, …) in a mount effect. `LineChart`
+  takes its width from a `ResizeObserver` registered in a layout effect (its
+  first callback runs after the browser's own layout and before paint, and
+  commits with `flushSync`, so the chart never paints at the design width);
+  `ScrollRegion` takes its first "More below" check from the same observer. The
+  old reads forced a full-page layout per chart and per scroll region: about
+  650 ms of main thread on a 4× throttled load.
+- **Deferred mounting of heavy sections (loop 5, `section-gate.ts`).** The fund
+  console, the sealed evidence, the worked example and the two dashboards fetch
+  their data at once but mount behind a gate that opens when the section comes
+  within one viewport, when the page is idle after load (one gate per idle
+  callback, in page order, so find-in-page and assistive tech get the whole page
+  within about a second), or at once on any URL fragment or in-page jump (deep
+  links and the nav see real heights, exactly as before). Until then the
+  section shows its skeleton, which reserves the same height.
+
+### 11.2b Accessibility (WCAG 2.1 AA), audited in loop 5
+
+A manual pass with Playwright (axe-core is not available offline), at 320, 360,
+390, 414, 768 and 1280 px, on the dev and the built app. What was checked, what
+was found, and what changed:
+
+- **Keyboard.** A Tab walk of the whole page (72 stops at 1280 px, 67 at 390 px
+  where the section links fold into the Menu button): every stop is visible and
+  on screen when focused and draws a focus ring (scroll regions draw theirs on
+  their wrapper, above the fade), no traps, and focus leaves the document after
+  the footer. The skip link is the first stop and moves focus to `<main>`. The
+  decision log is one tab stop with arrow-key roving; charts take ←/→.
+- **Headings.** One `h1`. Found: the console's panels (Mandate tree, Decision
+  log, Agents) and the worked example's panels were `h2` inside a section whose
+  own heading is `h2`; they are now `h3` (and the thesis sub-heads `h4`), so the
+  outline is section → panel → sub-head with no skipped level.
+- **Text alternatives.** Every `svg` is either `aria-hidden` or `role="img"`
+  with a name (charts also have a data-table fallback); no `img` without `alt`;
+  every button, link, region and control has an accessible name.
+- **Contrast** (computed from `getComputedStyle` against the composited
+  background, 4.5:1 for text, 3:1 for large text). Found: revoked delegation
+  nodes and revoke lines in the event log were dimmed with `opacity` (0.5 and
+  0.65), which took their names, scopes and details to 2.4–3.3:1. They now read
+  as closed through a dashed border, a darker card and greyed-out bars and chips,
+  with text at full contrast. The only remaining sub-4.5 text is a disabled
+  replay button (exempt).
+- **Text size.** No text below 12 px anywhere (it was 10–11.5 px in 50-odd
+  rules: tags, table heads, chart axes, badges); raised to 12 px.
+- **Target size.** Every stand-alone link and disclosure is at least 24 × 24 px
+  (the guarantee "See the …" links, integration and footer links, chart
+  "Show data table" summaries were 20–21 px). Links inside a sentence keep their
+  line height (the inline exception).
+- **Reduced motion.** Honoured by CSS and by every animated component. Found: a
+  staggered entrance (`animation-delay`) still held its first frame (opacity 0)
+  for its delay under reduced motion; delays are now zeroed too.
+- **Live regions.** Only the chart tooltips (polite, they follow the keyboard
+  cursor) and the mandate tree's status line (polite, it says which decision
+  the tree is replaying). Nothing else announces.
+- **Honest labels.** Identity badges say "verified (mock)" in the badge itself,
+  not only in a tooltip.
+
+Performance at load (built app, CPU ×4, Playwright; LCP is the hero lede):
+390 px LCP ≈ 0.65 s, 1280 px LCP ≈ 0.8 s, CLS 0.000 at both, including a
+scroll through the whole page. Long tasks in the first 5 s went from ≈ 860 ms
+of blocking time to ≈ 270 ms (390 px) and ≈ 290 ms (1280 px); what remains is
+the entry bundle (React and framer-motion) evaluating. Every section is its own
+lazy chunk (entry 62 KB, React 134 KB, motion 95 KB; the console 30 KB, the
+evidence 17 KB, the worked example 16 KB, the dashboard 10 KB, before gzip).
+
 ### 11.3 Self-contained constraint
 
 `apps/web` ships **no external fonts, CDNs, or network calls** beyond fetching

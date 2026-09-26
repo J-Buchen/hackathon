@@ -13,12 +13,13 @@ export const REPO_URL = "https://github.com/J-Buchen/hackathon";
  * The commit every GitHub link on the page points at. GitHub's `main` lags the
  * branch the loops are pushed to (`claude/busy-albattani-6iq8tj`) and does not
  * carry docs/LOOPS.md or docs/AGENTHIRE.md, so the links are pinned to a
- * pushed commit on that branch that carries every linked file: bc90ba6 (after
- * loop 5 and the cumulative out-of-sample check), whose docs/loops/*.json hold
- * loops 1-5, the ledger this page's evidence is read from. site.test.ts checks that this commit is in the page's own history and
+ * pushed commit on that branch that carries every linked file: f0754d2 (loop
+ * 6 and its docs), whose docs/loops/*.json hold loops 1-6, the ledger this
+ * page's evidence is read from. site.test.ts checks that this commit is in the
+ * page's own history and
  * holds every linked file. Move it forward when a later loop is pushed.
  */
-export const REPO_REF = "bc90ba63b225a5e763b1eb1aa33112c2f244a7f5";
+export const REPO_REF = "f0754d2e34d298e816ff5942ad819b7ebec6b7f1";
 
 /** A repo file at REPO_REF on GitHub. */
 export const repoFile = (path: string): string => `${REPO_URL}/blob/${REPO_REF}/${path}`;
@@ -123,8 +124,8 @@ export const INTEGRATIONS: readonly Integration[] = [
       "A PM hires data agents from a budget carved out of its capital mandate: hires are priced at AgentHire's own quote, " +
       "overspends are blocked and recorded Allowance-side, and one close takes the unspent budget back.",
     usedIn:
-      "the AgentHire run below, against an unmodified, keyless AgentHire on this machine; its settlement and " +
-      "agent-to-agent routes are simulated.",
+      "the AgentHire run below, recorded from a local run against an unmodified, keyless AgentHire (regenerate with " +
+      "npm run demo:agenthire); its settlement and agent-to-agent routes are simulated.",
     file: "docs/AGENTHIRE.md",
     see: { href: "#agenthire", label: "See the run" },
   },

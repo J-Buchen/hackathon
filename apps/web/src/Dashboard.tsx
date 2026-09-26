@@ -120,14 +120,14 @@ function Dashboard({
         ]
       : []),
     { label: "Agents", value: String(snapshot.nodes.length), sub: "in tree", tone: "neutral" },
-    { label: "Settled", value: String(stats.settled), sub: "payments", tone: "good" },
+    { label: "Settled", value: String(stats.settled), sub: stats.settled === 1 ? "payment" : "payments", tone: "good" },
     {
       label: "Blocked / denied",
       value: String(stats.blocked),
       sub: "policy · screening · identity",
       tone: "bad",
     },
-    { label: "As of", value: formatDate(snapshot.asOf), sub: snapshot.currency, tone: "neutral" },
+    { label: "As of", value: formatDate(snapshot.asOf), sub: "recorded run · your local time", tone: "neutral" },
   ];
 
   return (
@@ -153,7 +153,7 @@ function Dashboard({
             <PanelHeading>Delegation tree</PanelHeading>
             <p className="panel-sub">
               Budget <strong>attenuates</strong> down the chain — each child's available
-              balance is a slice of its parent's. Revoked subtrees are dimmed. Identity
+              balance is a slice of its parent's. Revoked subtrees are dashed and greyed out. Identity
               badges are issued by {identitySource}.
             </p>
           </div>
