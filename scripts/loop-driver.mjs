@@ -42,7 +42,12 @@ const L = Number(loopArg);
 const REPO = execSync("git rev-parse --show-toplevel").toString().trim();
 const A = { from: 10000 + L * 1000, count: 200 };
 const B = { from: 10000 + L * 1000 + 500, count: 200 };
-const proposals = JSON.parse(readFileSync(proposalsFile, "utf8")).proposals ?? [];
+const input = JSON.parse(readFileSync(proposalsFile, "utf8"));
+const proposals = input.proposals ?? [];
+// Pre-composed combinations (from loop 4): when winners' diffs conflict with
+// each other, the orchestrator composes them BEFORE the sealed run, and a
+// composition is used only if the block-A winners are exactly its members.
+const compositions = input.compositions ?? [];
 const root = `/tmp/loops/L${L}`;
 mkdirSync(root, { recursive: true });
 const HEAD = execSync("git rev-parse HEAD", { cwd: REPO }).toString().trim();
@@ -155,10 +160,21 @@ const winners = live.filter((c) => c.entry.status === "winner-A")
     return score(y) - score(x);
   });
 const tryConfirm = (set, label) => {
+  const ks = set.map((c) => c.k).sort((a, b) => a - b).join(",");
+  const comp = compositions.find((c) => [...c.members].sort((a, b) => a - b).join(",") === ks);
+  if (comp) {
+    const wt = worktree(`${label}-composed`, [comp.diff]);
+    if (!wt.applied.length || !testsPass(wt.dir)) return null;
+    return confirmIn(wt.dir, set, [], label + " (pre-composed)");
+  }
   const wt = worktree(label, set.map((c) => c.p.diff));
   const kept = wt.applied.map((i) => set[i]);
   const dropped = set.filter((_, i) => !wt.applied.includes(i)).map((x) => x.k);
   if (!kept.length || !testsPass(wt.dir)) return null;
+  return confirmIn(wt.dir, kept, dropped, label);
+};
+function confirmIn(dir, kept, dropped, label) {
+  const wt = { dir };
   const res = judge(B, [wt.dir]);
   const c = res.candidates[0];
   const tracks = [...new Set(kept.flatMap((x) => target(x.p)))];
@@ -175,7 +191,7 @@ const tryConfirm = (set, label) => {
       : untargeted.every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002));
   report.confirmations.push({ label, kept: kept.map((x) => x.k), dropped, ok, allocator: c.allocator, risk: c.risk });
   return { ok, kept: kept.map((x) => x.k), dropped, blockB: { allocator: c.allocator, tiger: c.tiger, risk: c.risk }, booksB: books(c.summary), baselineB: { ...res.baseline, dir: undefined, books: books(res.baseline) }, dir: wt.dir };
-};
+}
 if (winners.length) {
   let conf = winners.length > 1 ? tryConfirm(winners, "combined") : null;
   if (!conf?.ok) conf = tryConfirm([winners[0]], "best");

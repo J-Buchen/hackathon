@@ -40,6 +40,14 @@ multi-manager fund whose PMs are AI agents**, where
 4. **Confirmation.** Winners are combined and must **confirm on a separate sealed block B** (target
    track lower bound > 0; every other track neutral as above; risk guard held). Only then does
    anything merge.
+   **Combinations (from loop 4).** When block-A winners' diffs conflict with each other, the
+   orchestrator composes them by hand (three-way merges, all suites green) before the sealed run,
+   and the driver uses a composition only if the winners are exactly its members. A diff the
+   driver cannot apply is recorded, never silently dropped (loop 3's defect).
+   **Simulator harvests (from loop 4).** A change whose gain disappears when a known, hard-coded
+   feature of the arena's market generator is switched off is a harvest of the yardstick, not an
+   improvement, and is rejected before judging: the sealed blocks come from the same generator,
+   so the judge cannot catch it.
 5. **Record.** Each report (`docs/loops/loop-N.json`) carries the commit judged against, every
    candidate's diff (`docs/loops/loop-N/`), and each book's utility, Sharpe and max drawdown, not
    just the paired uplift (from loop 2; loop 1's baseline commit was re-derived by verification).
