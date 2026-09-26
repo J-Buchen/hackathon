@@ -1,0 +1,592 @@
+{
+ "loop": 4,
+ "title": "The Tiger overlay hedges its full shrunk beta and halves a crowded long",
+ "note": "Both tiger-track changes; the allocator is untouched. The crowding gate's gain is concentrated in worlds where the arena's Tiger panel picked the crowded name as its primary, and the arena picks that primary by whole-year variance (crash included): a hindsight bias in the yardstick, fixed before loop 5 and re-measured there.",
+ "riskSummary": {
+  "block": "B",
+  "seeds": "14500-14699",
+  "track": "tiger",
+  "tigerMaxDDAfter": 0.25775053674056075,
+  "buyHoldMaxDD": 0.43302415887798146,
+  "tigerMaxDDBefore": 0.282897514551927,
+  "pairedChange": {
+   "mean": 0,
+   "lo": 0,
+   "hi": 0,
+   "wins": 0
+  },
+  "centerMaxDDBefore": 0.07577163781617498,
+  "centerMaxDDAfter": 0.07577163781617498,
+  "guardrailsMaxDD": 0.06849239548845748,
+  "tigerPairedChange": {
+   "mean": -0.025146977811366416,
+   "lo": -0.0305003634028101,
+   "hi": -0.01979359221992273,
+   "wins": 0.26
+  }
+ },
+ "rejections": [
+  {
+   "title": "Capital follows evidence: credibility-weighted shares (risk track)",
+   "reason": "block A: max drawdown -0.13 pp [-0.23, -0.03] but utility -0.34 pp [-0.58, -0.11], over the 0.1 pp tolerance (its researcher flagged the risk)"
+  },
+  {
+   "title": "Crowd-unwind cool-off (wildcard)",
+   "reason": "rejected before judging as a simulator harvest: with the arena generator's hard-coded 3-tick aftershock switched off, its gain went neutral to negative"
+  },
+  {
+   "title": "Ladder cut under an operator cap (structure)",
+   "reason": "rejected in review: with three or more names per operator the cap and the ladder can still compound to cutFactor squared"
+  }
+ ],
+ "head": "9dab3e5acc624bebc24897f84ca62dbb20a00cf5",
+ "blocks": {
+  "A": {
+   "from": 14000,
+   "count": 200
+  },
+  "B": {
+   "from": 14500,
+   "count": 200
+  }
+ },
+ "riskGuard": {
+  "maxDDUp": 0.005,
+  "sharpeDown": 0.03
+ },
+ "candidates": [
+  {
+   "k": 0,
+   "angle": "ramp (capital follows evidence), claimed on the RISK track",
+   "track": "risk",
+   "hypothesis": "RISK claim. Capital should follow evidence. Today the allocator applies the record's verdict in full from the first reallocation (t=30), where each Sharpe has a standard error of sqrt(252/30) ≈ 2.9. The n/(n+60) shrinkage cancels because every agent starts together, so a 30-tick record can win a full 25% slot. It can also defund an agent outright on 30 ticks.\n\nThe change is limited-fluctuation credibility. Each agent's share = Z × (the record's verdict, i.e. today's capped share) + (1 − Z) × (the book's own grant with no record: an equal slice of the live agents, capped). Z = min(1, sqrt(n/252)) = min(1, 1/SE of the agent's Sharpe) for a score estimated on n returns. 252 comes from the Sharpe SE (full credibility at SE = 1, a year of record); it was not tuned.\n\nGuarantees:\n- No agent holds more than Z·maxAgentShare + (1 − Z)·prior slice. That ceiling grows with the record: about 17% of deployable on day 30 with 8 agents, 25% at a year.\n- A record the allocator would defund keeps only a fading (1 − Z) slice.\n- Capital the record's capped leaders cannot take stays in cash.\n- A year of record reproduces today's allocation exactly. `fullCredibilityObs: 0` is bit-identical to 2ed5107.\n- It never moves a ladder.\n\nWhy it lowers drawdown more cheaply than deleveraging: it diversifies early. At t=30–44, capital at work rises from 47% to 60% of NAV while book vol falls from 10.3% to 9.5%. The largest single slot falls from 15.7% to 11.9% of NAV. The worst agent's share of the loss in each world's max-drawdown window falls from 45.4% to 41.8%.\n\nResults:\n- dev: maxDD −0.23 pp (significant) for −0.20 pp utility.\n- check: maxDD −0.23 pp (significant) for −0.01 pp utility.\n- A third research block, 7400–7799 (400 worlds, run after the variant was fixed): maxDD −0.28 pp [−0.35, −0.21] for −0.11 pp [−0.27, +0.05], Sharpe +0.018 (significant).\n- Pooled over 750 worlds: about 2.2 pp of maxDD per pp of utility. Uniform deleveraging buys 0.6–1.0 on the same blocks (deploy 0.77 on 7400–7799: −0.12 pp utility for only −0.09 pp maxDD).\n- The risk guard holds on every block: maxDD falls, Sharpe rises.\n\nHONEST CAVEAT: the expected utility cost (~0.11 pp) sits right at the risk track's 0.1 pp tolerance. The dev block fails it: −0.20 pp, ratio 1.15, under the 1.3 bar. The check block passes easily. The sealed judgement may fail on the utility tolerance.\n\nThe literal angle (a sqrt(n/252) cap on each agent's max share, with freed capital to cash) is a NULL. It is dominated by uniform deleveraging and fails the Sharpe guard. In the arena, early concentration is informative: the top-capped agents at t=30–40 have the best forward Sharpe (0.92–0.95 vs 0.53–0.65 for other funded agents), and the book's best period is t=30–59 (book Sharpe 1.66–1.73 vs 1.13–1.27 later).",
+   "reviewOk": true,
+   "reviewProblems": [
+    "NON-BLOCKING, judge risk: on a fresh research block I chose (8400-8599, 200 worlds) the allocator utility change is -0.1001 pp [-0.356, +0.156]. That breaches the risk track's 'mean utility falls by no more than 0.1 pp' rule by 0.0001 pp. The dev block (1601-1800) breaches it clearly: -0.197 pp, with a ratio of 1.15, under the 1.3 bar. Only the check block (6200-6349: -0.015 pp) passes comfortably. As the researcher says, the sealed verdict is a coin flip on the utility tolerance. This is disclosed honestly and is not a reject criterion.",
+    "NON-BLOCKING, the 'bit-identical' claim is not guaranteed in principle. credibleShares renormalizes whenever total > 1, and capShares sums to 1 + 1 ulp in floating point on about 1.9% of random rosters (3744 of 200000 in my probe). So at Z = 1 (fullCredibilityObs: 0, or any reallocation at t >= 252, e.g. t = 255 in the arena) the shares can differ from 2ed5107 by 1 ulp. Empirically this never mattered: with fullCredibilityObs defaulted to 0, all 200 worlds of 8400-8599 were bit-identical to 2ed5107 (paired mean 0, sd 0 on utility, maxDD, Sharpe and the naive baseline), and the swarm demo's '- credibility' row equals the pre-loop-4 numbers. Suggested fix: skip renormalization when every w === 1, or use total > 1 + 1e-12.",
+    "NON-BLOCKING, doc error in the credibility() docstring (packages/swarm/src/allocator.ts): 'a quarter 0.6' is wrong. A quarter is 63 ticks, so Z = sqrt(63/252) = 0.5, which credibility.test.ts itself asserts. 0.6 corresponds to about 90 ticks.",
+    "NON-BLOCKING, priorShares' docstring calls the prior 'the book's grant at t = 0 ... capped at cap'. The actual t = 0 grant (book.ts, perAgent = aum * deploy / N) is uncapped. The two differ only once fewer than 4 agents are live (arena rosters are 4-15 agents at the start).",
+    "NON-BLOCKING: the two allocator.test.ts tests ('losers and stopped agents get nothing', 'one lucky quarter does not outrank a persistent edge') are now pinned to fullCredibilityObs: 0, so they no longer describe the default policy. Their assertions are unchanged, and the new default behaviour is covered by credibility.test.ts (the defunded record keeps only its (1-Z) slice; stopped agents take no slice). I count this as scoping, not weakening.",
+    "NON-BLOCKING: apps/web/public/swarm-snapshot.json is not regenerated. After merge the dashboard's data will lag the updated CENTER-BOOK.md numbers until demo:swarm is re-run."
+   ],
+   "diffFile": "docs/loops/loop-4/candidate-0.diff",
+   "blockA": {
+    "allocator": {
+     "mean": -0.003411981972289499,
+     "lo": -0.005773180362187939,
+     "hi": -0.0010507835823910594,
+     "wins": 0.445
+    },
+    "tiger": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": -0.0012996448217204154,
+      "lo": -0.002251350631456083,
+      "hi": -0.00034793901198474796,
+      "wins": 0.41
+     },
+     "allocatorSharpe": {
+      "mean": -0.0023747308446319193,
+      "lo": -0.02566732462766311,
+      "hi": 0.020917862938399274,
+      "wins": 0.485
+     },
+     "tigerMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     }
+    }
+   },
+   "booksA": {
+    "allocator": {
+     "utility": 0.1240811716539819,
+     "sharpe": 1.2648523766167707,
+     "maxDD": 0.07167660142584331,
+     "baselineUtility": 0.05764426913991368,
+     "baselineMaxDD": 0.07190584857403734
+    },
+    "tiger": {
+     "utility": -0.16454005637164573,
+     "sharpe": -0.3098775359329409,
+     "maxDD": 0.30218221850591515,
+     "baselineUtility": -0.3316442170425388,
+     "baselineMaxDD": 0.47005185894404655
+    }
+   },
+   "status": "no-risk-cut-A",
+   "reviewSummary": "I recommend ACCEPT: none of the reject criteria is met. The one real risk is that the sealed judge may fail it on the 0.1 pp utility tolerance.\n\nHow I checked:\n- The diff under review has exactly the blob hashes of the staged contents in the researcher's worktree (.claude/worktrees/wf_7e46500a-501-1), so that is what I tested.\n- It applies cleanly to 2ed5107 (git apply --check).\n- Worktrees: /tmp/loop-review-4-ramp/base (2ed5107), /tmp/loop-review-4-ramp/wt (patched), /tmp/loop-review-4-ramp/off (patched, with fullCredibilityObs defaulted to 0).\n- The full Node suite passes (268/268; 11 new tests, none deleted) and `tsc -b` is clean. The web typecheck is clean and its 46/46 tests pass.\n\nIntegrity:\n- Point-in-time: Z = min(1, sqrt(n/252)) reads only the length of the trailing window (unitReturns before tick t), and the prior reads only the current live count from the ladder state. It uses no market.ticks[k >= t], no drift, no events and no whole-sample statistics.\n- It does not identify skill by strategy class or internals.\n- It does not edit arena.ts, arena-cli.ts, loop-judge.mjs or worktree-setup.sh; lab changes are one new test file and the test list.\n- It hard-codes no seed-specific values; 252 is argued from the Sharpe standard error, and the arena tests use research seeds 1-40.\n- Step 6c in book.ts (an empty applyTargets after stop-outs) changes nothing measurable. Orders size from the agent's own `available`, and every later plan shrinks pods first anyway. The new arena test (pods hold exactly what they delegate at every tick boundary) would fail at base, so it does prove that change.\n- \"Credibility never moves a ladder\" holds by construction: the ladder reads per-unit returns, which do not depend on capital.\n\nClaims reproduced:\n- Dev block 1601-1800: utility -0.197 pp, maxDD -0.226 pp [-0.352, -0.101]. Claimed -0.20 / -0.23.\n- Check block 6200-6349: utility -0.015 pp, maxDD -0.231 pp. Claimed -0.01 / -0.23.\n- `npm run demo:swarm` reproduces every new number in CENTER-BOOK.md: 5.3% / -2.6% / 0.47 / +2.4%, the '- credibility' row at 5.6 / -2.5 / 0.50 / +2.8, and seed 7 at 4.6% vs 6.6% maxDD, Sharpe 1.09 vs 1.08.\n\nRISK GUARD on a fresh research block, 8400-8599 (200 worlds, not used by the researcher), vs 2ed5107:\n- Mean maxDD: -0.279 pp [-0.383, -0.176]. The guard allows a rise of up to 0.5 pp: PASS, and the 90% upper bound is below zero.\n- Mean Sharpe: +0.0217 [-0.003, +0.047]. The guard allows a fall of up to 0.03: PASS.\n- Allocator utility: -0.1001 pp [-0.356, +0.156]. Tiger track: exactly 0.\n- Drawdown bought per pp of utility: 2.79 (the bar is 1.3).\n- Uniform deleveraging on the same block buys only 0.49-0.73: deploy 0.78 costs -0.087 pp utility for -0.043 pp maxDD, and deploy 0.75 costs -0.223 for -0.163. So credibility clearly beats deleveraging.\n- The utility cost sits exactly at the 0.1 pp tolerance (-0.1001), and fails it on dev (-0.197).\n\nBit-identity: with fullCredibilityObs 0, the result is bit-identical to 2ed5107 on all 200 worlds. There is a theoretical 1-ulp renormalization edge case in credibleShares, and two small docstring errors; details are in 'problems'.",
+   "research": {
+    "checkBefore": "Check block, seeds 6200–6349 (150 worlds), code at 2ed5107:\n- allocator: utility 11.69% vs guardrails 6.12%; uplift 5.57% [90% 4.18%, 6.97%]; wins 74%; Sharpe 1.175 vs 0.725; maxDD 7.30% vs 7.40%; 6.45% at the guardrails' vol.\n- tiger: utility −12.89% vs buy-and-hold −29.49%; uplift 16.60% [13.56%, 19.65%]; Sharpe −0.249 vs −0.236; maxDD 29.06% vs 45.73%.\n- Uniform deleveraging on this block (deploy 0.80 → 0.75): utility −0.17 pp [−0.26, −0.09], maxDD −0.18 pp [−0.21, −0.15], i.e. 1.03 pp of maxDD per pp of utility.",
+    "checkAfter": "Check block, seeds 6200–6349 (150 worlds), with the change:\n- allocator: utility 11.68% vs guardrails 6.12%; uplift 5.56% [4.20%, 6.92%]; wins 75%; Sharpe 1.193 vs 0.725; maxDD 7.07% vs 7.40%; 6.39% at the guardrails' vol.\n- tiger: bit-identical (utility −12.89%, Sharpe −0.249, maxDD 29.06%).\n- Paired vs before:\n  - utility −0.01 pp [−0.30, +0.27]\n  - maxDD −0.23 pp [−0.36, −0.10], significant\n  - Sharpe +0.018 [−0.012, +0.047]\n  - tiger 0.00\n  - 15.6 pp of maxDD per pp of utility\n- Risk guard holds: maxDD falls, Sharpe rises.\n- Risk-track criteria all pass on this block.",
+    "devBefore": "Dev block, seeds 1601–1800 (200 worlds), code at 2ed5107:\n- allocator: utility 12.37% vs guardrails 6.88%; uplift 5.50% [90% 4.24%, 6.76%]; wins 72%; Sharpe 1.237 vs 0.844; maxDD 7.46% vs 6.73%; 6.44% at the guardrails' vol.\n- tiger: utility −11.16% vs buy-and-hold −29.43%; uplift 18.27% [15.52%, 21.02%]; Sharpe −0.226 vs −0.214; maxDD 27.58% vs 44.43%.\n- Uniform deleveraging on this block:\n  - deploy 0.78: utility −0.09 pp, maxDD −0.08 pp (0.83 pp of maxDD per pp)\n  - deploy 0.75: utility −0.28 pp, maxDD −0.17 pp (0.60)",
+    "devAfter": "Dev block, seeds 1601–1800 (200 worlds), with the change:\n- allocator: utility 12.18% vs guardrails 6.88%; uplift 5.30% [4.13%, 6.46%]; wins 69%; Sharpe 1.243 vs 0.844; maxDD 7.24% vs 6.73%; 6.39% at the guardrails' vol.\n- tiger: bit-identical (utility −11.16%, Sharpe −0.226, maxDD 27.58%).\n- Paired vs before:\n  - utility −0.20 pp [−0.47, +0.08]\n  - maxDD −0.23 pp [−0.35, −0.10], significant\n  - Sharpe +0.006 [−0.021, +0.033]\n  - tiger 0.00\n  - 1.15 pp of maxDD per pp of utility\n- The risk guard holds (maxDD falls, Sharpe rises).\n- On this block the risk claim FAILS the 0.1 pp utility tolerance (−0.20 pp) and the 1.3 bar (1.15). It still beats this block's uniform-deleveraging line of 0.60–0.83.",
+    "variantsTried": 5
+   },
+   "rebased": {
+    "from": "2ed5107",
+    "onto": "f61804c"
+   }
+  },
+  {
+   "k": 1,
+   "angle": "tigerhedge (loop 4): replace the Tiger overlay's half hedge with a hedge of the long's full trailing beta. The beta is shrunk toward 0.5 by its own standard error and clipped to [0, 1.5], so the short VIDX leg cancels the market exposure the single-name thesis does not claim.",
+   "track": "tiger",
+   "hypothesis": "The Tiger thesis is the single name. Its market beta is risk nobody is paid for: in the arena the risk-on factor has zero mean, and the short's rf rebate exceeds borrow plus the index's carry. The minimum-variance hedge is the OLS beta of the primary on the hedge index. Correction to the angle's premise: the code did not hedge a fixed 0.5 notional. It already hedged 0.5 x (raw trailing beta, clipped [0,3]). With the primary's beta to VIDX averaging about 0.67, that was about 0.33 short per unit long, and half the market exposure stayed on (the book's realized beta to VIDX was 0.23-0.25). The change estimates the full beta point-in-time: OLS over the trailing 120 returns (indices <= t). It is shrunk toward a prior of 0.5 with Vasicek precision weighting, k = priorSd^2/(priorSd^2 + SE(beta_hat)^2), priorSd 0.5, so a short or noisy record leans on the prior. It is clipped to [0, 1.5] and the full amount is hedged (hedgeRatio 1). Expected effect: the book's beta goes to about 0 and a zero-mean variance term leaves the book. CRRA utility and max drawdown improve. The allocator track is untouched, since only RECOMMENDED_TIGER and runTiger change.",
+   "reviewOk": true,
+   "reviewProblems": [
+    "NON-BLOCKING, evidence: the Vasicek shrinkage adds nothing measurable. Setting only hedgeRatio 0.5 -> 1 on the existing legacy path (raw OLS, clip [0,3], hedgeBeta null, no new code) does as well or better on all three research blocks. Tiger dU vs old: seeds 1-200 +1.95 pp (proposal +1.86); 401-600 +1.70 (proposal +1.36); 5000-5199 +2.07 (proposal +1.63). dMaxDD: -1.61/-1.50/-1.90 pp vs the proposal's -1.49/-1.25/-1.57. Raw OLS clipped [0,1.5] at ratio 1 also gives +1.88/+1.68/+2.06. The gain comes from the hedge ratio. shrunkBetaSeries, the HedgeBeta field and its three constants (prior 0.5, priorSd 0.5, max 1.5) are not supported by the evidence. hedgeRatio 1 is already a value in defaultSpace.",
+    "NON-BLOCKING, the attribution in the claim is overstated: a large share of the gain comes from the gross cap (maxGross 1.5), not from cancelling beta. The bigger hedge makes the cap bind on 20-24% of days instead of 9-10%. Mean long weight falls from 0.595 to 0.572 (seeds 1-200), because runTiger scales wL and wH down together. With the cap lifted on both sides (maxGross 10), new minus old is only +0.45 [-0.58,+1.48] / +0.47 [-0.42,+1.35] / +0.84 [+0.02,+1.67] pp, with dMaxDD -0.46/-0.66/-0.60 pp. So under half of the headline gain is the 'zero-mean variance term leaves the book' mechanism. The rest is state-dependent deleveraging of the long through the cap. It lowers risk, so the risk guard is not engaged, but the explanation in the claim is incomplete.",
+    "Minor: the new NO LOOK-AHEAD test for the shrunk hedge never checks that the fork actually changes the future. It relies on the existing fork test for that. A mutation that reads index t+1 inside shrunkBetaSeries IS caught (tests 12 and 14 fail), so the test is not vacuous.",
+    "Minor: HedgeBeta is not validated. A negative max, or priorSd <= 0 or NaN, gives silently degenerate hedges, where the legacy clip was hard-coded. The agenthire demo (services/orchestrator/src/agenthire-demo.ts:589) uses RECOMMENDED_TIGER, so its tiger numbers and any regenerated UI snapshot will change. No committed docs describe the half hedge, so nothing in the docs goes stale."
+   ],
+   "diffFile": "docs/loops/loop-4/candidate-1.diff",
+   "blockA": {
+    "allocator": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tiger": {
+     "mean": 0.03215576037748441,
+     "lo": 0.021236194269258636,
+     "hi": 0.043075326485710184,
+     "wins": 0.625
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "allocatorSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerMaxDD": {
+      "mean": -0.019980912621800618,
+      "lo": -0.024274498871632154,
+      "hi": -0.015687326371969082,
+      "wins": 0.315
+     },
+     "tigerSharpe": {
+      "mean": 0.020525013805327456,
+      "lo": -0.007859500954426835,
+      "hi": 0.048909528565081746,
+      "wins": 0.52
+     }
+    }
+   },
+   "booksA": {
+    "allocator": {
+     "utility": 0.1274931536262714,
+     "sharpe": 1.2672271074614023,
+     "maxDD": 0.07297624624756377,
+     "baselineUtility": 0.05764426913991368,
+     "baselineMaxDD": 0.07190584857403734
+    },
+    "tiger": {
+     "utility": -0.13238429599416132,
+     "sharpe": -0.28935252212761337,
+     "maxDD": 0.28220130588411463,
+     "baselineUtility": -0.3316442170425388,
+     "baselineMaxDD": 0.47005185894404655
+    }
+   },
+   "status": "winner-A",
+   "reviewSummary": "PASS on every hard criterion. It is a tiger-track performance change, and the Vasicek machinery is superfluous next to a plain hedgeRatio change.\n\nApplies cleanly to 2ed5107. `git apply --check` is clean, and the blob hashes match both sides of the diff's index lines: 1b8cbae/2df5c3f/ae22451/5a63905 become 8b5cdf2/1ee71ad/cb58499/a8e56d6. The diff touches only packages/lab/src/{strategy,research}.ts and their tests. No arena, arena-cli, judge or worktree-setup edits. No tests are deleted or weakened: 5 tests are added and one assertion block is extended. The loop driver's full gate passes in /tmp/loop-review-4-tigerhedge/wt: tsc -b clean, npm test 262/262 (base 257), lab 55/55, web 46/46, web tsc clean.\n\nPoint-in-time: shrunkBetaSeries uses returns r[max(1,t-L+1)..t] only, and the hedge sizes day t+1 from beta[t]. The prior, priorSd and max are fixed constants, not whole-sample statistics. A mutation that makes it read index t+1 is caught by 2 of the new tests. The cache key includes prior and priorSd, and the clip at max is applied outside the cache. The legacy path (hedgeBeta null) is byte-identical in behaviour. canonical() collapses hedgeBeta when unhedged, so the trial count stays honest. No seed-specific values appear in production code. The researcher's measurements reproduce: the primary's full-sample beta to VIDX is 0.68-0.77. Book beta to VIDX is 0.25/0.23/0.27 at base and 0.056/0.046/0.069 with the proposal. Old hedge was about 0.36 short per unit long, new is about 0.67.\n\nRISK GUARD on research blocks, vs 2ed5107, 200 worlds each, paired: the guard holds everywhere.\n- Allocator is bit-identical: 200/200 zero differences on utility, maxDD and Sharpe in every block.\n- Tiger, seeds 1-200: utility -10.41% -> -8.56%, paired +1.86 pp [90% +0.80, +2.91]. Mean maxDD 27.65% -> 26.16% (-1.49 pp [-1.85, -1.13]). Mean Sharpe -0.2058 -> -0.1923 (+0.0135).\n- Tiger, seeds 401-600: +1.36 pp [+0.31, +2.40]. maxDD 28.26% -> 27.01% (-1.25 pp). Sharpe -0.2188 -> -0.2084 (+0.0104).\n- Tiger, seeds 5000-5199: +1.63 pp [+0.74, +2.52]. maxDD 28.70% -> 27.13% (-1.57 pp). Sharpe -0.2229 -> -0.2212 (+0.0017).\n\nNon-blocking caveats (details in problems):\n1. Legacy code with hedgeRatio 1 matches or beats the new shrunk-beta estimator on all 3 blocks. The new mechanism adds complexity without measured benefit.\n2. More than half of the headline gain comes from the 1.5 gross cap binding about twice as often, which trims the long. With the cap lifted on both sides the gain is +0.45/+0.47/+0.84 pp, and its 90% lower bound is below 0 on 2 of the 3 blocks.\n\nScratch: worktrees /tmp/loop-review-4-tigerhedge/wt (diff applied) and /tmp/loop-review-4-tigerhedge/base. The patch is /tmp/loop-review-4-tigerhedge/proposal.diff. Eval JSONs are /tmp/loop-review-4-tigerhedge/{base,cand}-{1-200,401,5000}.json.",
+   "research": {
+    "checkBefore": "Seeds 6200-6349 (150 worlds), commit 2ed5107:\nallocator utility 11.69% vs baseline 6.12% | uplift 5.57% [90% 4.18%, 6.97%] | wins 74% | Sharpe 1.18 vs 0.73 | maxDD 7.30% vs 7.40% (6.45% at the baseline's vol)\ntiger     utility -12.89% vs baseline -29.49% | uplift 16.60% [90% 13.56%, 19.65%] | wins 81% | Sharpe -0.25 vs -0.24 | maxDD 29.06% vs 45.73%",
+    "checkAfter": "Seeds 6200-6349 (150 worlds), with the change:\nallocator utility 11.69% vs baseline 6.12% | uplift 5.57% [90% 4.18%, 6.97%] | wins 74% | Sharpe 1.18 vs 0.73 | maxDD 7.30% vs 7.40% (6.45% at the baseline's vol)\ntiger     utility -10.84% vs baseline -29.49% | uplift 18.65% [90% 15.37%, 21.93%] | wins 80% | Sharpe -0.22 vs -0.24 | maxDD 27.59% vs 45.73%\nPAIRED new - old (tiger overlay):\nutility +2.047 pp [90% +0.951, +3.143], better in 79 worlds, worse in 71\nmaxDD -1.465 pp [90% -1.928, -1.001]\nSharpe +0.026 [90% -0.007, +0.060]\nAllocator: identical in all 150 worlds (all diffs 0.000).",
+    "devBefore": "Seeds 1601-1800 (200 worlds), commit 2ed5107:\nallocator utility 12.37% vs baseline 6.88% | uplift 5.50% [90% 4.24%, 6.76%] | wins 72% | Sharpe 1.24 vs 0.84 | maxDD 7.46% vs 6.73% (6.44% at the baseline's vol)\ntiger     utility -11.16% vs baseline -29.43% | uplift 18.27% [90% 15.52%, 21.02%] | wins 82% | Sharpe -0.23 vs -0.21 | maxDD 27.58% vs 44.43%",
+    "devAfter": "Seeds 1601-1800 (200 worlds), with the change:\nallocator utility 12.37% vs baseline 6.88% | uplift 5.50% [90% 4.24%, 6.76%] | wins 72% | Sharpe 1.24 vs 0.84 | maxDD 7.46% vs 6.73% (6.44% at the baseline's vol)\ntiger     utility -10.00% vs baseline -29.43% | uplift 19.42% [90% 16.59%, 22.26%] | wins 82% | Sharpe -0.25 vs -0.21 | maxDD 26.50% vs 44.43%\nPAIRED new - old (tiger overlay):\nutility +1.157 pp [90% +0.273, +2.040], better in 111 worlds, worse in 89\nmaxDD -1.078 pp [90% -1.443, -0.714]\nSharpe -0.021 [90% -0.051, +0.009], within the -0.03 guard\nAllocator: identical in all 200 worlds (utility, maxDD and Sharpe diffs all 0.000).",
+    "variantsTried": 1
+   },
+   "rebased": {
+    "from": "2ed5107",
+    "onto": "f61804c"
+   }
+  },
+  {
+   "k": 2,
+   "angle": "tigersize (loop 4, TIGER track): a crowding gate for the single-name overlay. When the name's market-adjusted return over the last ~quarter is abnormal, it runs at half size. This replaces sizing by trailing realized vol alone.",
+   "track": "tiger",
+   "hypothesis": "Diagnosis on the dev block (1601-1800) comes first. The overlay's negative CE is almost entirely one day. In 27.5% of worlds the Tiger primary is the arena's crowded name. Replacing just the crash day's return with cash moves mean CE from -11.16% to +1.38%, so that day costs 12.5 pp. Print days cost about 1.7 pp and aftershocks 0.4 pp. On the other days the overlay is roughly at cash.\n\nRealized-vol targeting cannot see this risk. A steady rally driven by flows looks calm, so on the eve of the crash the overlay typically held its full vol-targeted size, about 0.6-1.2x. A one-day gap of 10-40% at that size is exactly what a gamma=3 investor pays most for.\n\nA Tiger PM cannot see flows, but the price shows their footprint: the name outruns what its own beta to the market and its own risk explain. The rule is: if the t-statistic of the mean idiosyncratic daily return over the last 60 days is above 2, the long runs at 0.5x until the run is no longer abnormal. The idiosyncratic return is the name's return minus its trailing 120-day beta times the hedge index. The rule is point-in-time and stateless, and uses only panel returns up to t. It cuts risk mainly where the gap risk sits, not uniformly. So it should buy more CE per point of maxDD than lowering volTarget does.\n\nUniform deleveraging buys about 0.92-0.98 pp of CE per pp of maxDD here (vt 0.30: +2.42 CE / -2.62 maxDD; vt 0.25: +5.79 / -6.07). The gate buys about 2 pp of CE per pp of maxDD.",
+   "reviewOk": true,
+   "reviewProblems": [
+    "NON-BLOCKING (latent correctness bug in research.ts): canonical() still collapses hedgeSymbol to null and resets betaLookback whenever hedgeRatio === 0, but with this diff both settings now change behaviour when crowdZ !== null. runTiger builds betaH whenever H && crowdZ !== null, so the gate is market-adjusted with a hedge symbol set, and on raw returns without one. Repro in /tmp/loop-review-4-tigersize/s/canon.mts: paramKey({...DEFAULT_PARAMS, hedgeSymbol:'HG', hedgeRatio:0, crowdZ:2}) === paramKey({... hedgeSymbol:null ...}) === paramKey({... betaLookback:40}), yet on the candidate's own seed-23 market-rally panel the gate trims 0 days vs 15 days. expandGrid({...DEFAULT_PARAMS, crowdZ:2}, {hedgeSymbol:[null,'HG'], hedgeRatio:[0,0.5], betaLookback:[60,120]}) returns 3 variants and quietly swaps the market-adjusted/ratio-0 variants for the raw one. It is latent today, because cli.ts grids from DEFAULT_PARAMS (crowdZ null) and defaultSpace has no crowd keys. The new research test does not cover this case. Fix: skip the hedge collapse when crowdZ !== null, or keep hedgeSymbol and betaLookback whenever the gate is on.",
+    "NON-BLOCKING doc inaccuracy: the TigerParams.crowdLookback comment says the gate uses 'the raw return when unhedged'. In fact raw returns are used only when hedgeSymbol is null; a book with hedgeRatio 0 and a hedge symbol set is still market-adjusted. This is the same ambiguity canonical() gets wrong.",
+    "CAVEAT on the headline number (not a reject reason): most of the +2.2 pp is available from plain deleveraging. On 1601-1800, volTarget 0.30 without the gate reaches CE -8.74% / maxDD 24.96%, which beats the gate's -8.96% / 26.55% on both axes. The fair comparison is at the same maxDD: the gate beats deleveraging by about 1.4-1.5 pp of CE. Base CE at a matched maxDD, interpolated between vt 0.32 and 0.33, is about -10.4% vs the gate's -8.96% on 1601, and about -8.6% vs -7.12% on 2001. The two stack: gate + vt0.30 gives -6.91% on 1601 and -4.86% on 2001. The claimed ~2 pp of CE per pp of maxDD holds on 1601 (2.2) but falls to 1.1 on 5001-5200.",
+    "CAVEAT: the gain is concentrated in worlds where the primary is the crowded name: +5.5 to +8.3 pp CE in those worlds vs -0.64 to +0.32 pp elsewhere. tigerPanel (arena.ts, which this diff does not touch) picks the primary by whole-sample variance, crash included, so crowded names are over-represented. That look-ahead is in the arena, not in the candidate's rule, and affects the baseline equally.",
+    "COSMETIC: events are stateless (read from t and t-1), so a fresh book that starts inside a crowded run trims the long but emits no CROWDED event. CROWDED/UNCROWDED events are also still emitted while the book is stopped out."
+   ],
+   "diffFile": "docs/loops/loop-4/candidate-2.diff",
+   "blockA": {
+    "allocator": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tiger": {
+     "mean": 0.026727959664780317,
+     "lo": 0.011715787419152258,
+     "hi": 0.04174013191040837,
+     "wins": 0.265
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "allocatorSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerMaxDD": {
+      "mean": -0.015767531772100992,
+      "lo": -0.020643620691918645,
+      "hi": -0.010891442852283339,
+      "wins": 0.075
+     },
+     "tigerSharpe": {
+      "mean": 0.0195079416832475,
+      "lo": -0.0027488609243865175,
+      "hi": 0.04176474429088152,
+      "wins": 0.24
+     }
+    }
+   },
+   "booksA": {
+    "allocator": {
+     "utility": 0.1274931536262714,
+     "sharpe": 1.2672271074614023,
+     "maxDD": 0.07297624624756377,
+     "baselineUtility": 0.05764426913991368,
+     "baselineMaxDD": 0.07190584857403734
+    },
+    "tiger": {
+     "utility": -0.1378120967068654,
+     "sharpe": -0.29036959424969333,
+     "maxDD": 0.2864146867338142,
+     "baselineUtility": -0.3316442170425388,
+     "baselineMaxDD": 0.47005185894404655
+    }
+   },
+   "status": "winner-A",
+   "reviewSummary": "Verdict: accept. None of the reject criteria are triggered, and the tiger track improves on four research blocks while both risk guards hold.\n\nClean apply and tests: the diff applies cleanly to 2ed5107 (git apply --check in /tmp/loop-review-4-tigersize/wt). It only touches packages/lab/src/{strategy,research}.ts and their tests, not the arena or judge files. `tsc -b` passes, and so do all suites: npm test 264/264, lab 57/57, web 46/46. The strategy and research tests pass 26/26. No test is weakened or removed. Adding crowd params to EVERYTHING extends two existing tests to cover the gate: NO LOOK-AHEAD (with a new assert that a CROWDED event fires before the fork) and the threaded-book test.\n\nNo future information: crowdingSeries at t uses only e[t-L+1..t], with e[i] = y[i] − beta[i]·x[i] and beta the trailing betaSeries through i. It uses no whole-sample statistics, latent drift or crash tick, and has no seed-specific constants: 60/2/0.5 are round numbers, and all ±variants still beat base. I also ran my own truncation test on arena worlds 1601-1660 with RECOMMENDED_TIGER at k = 90/130/170/220 (/tmp/loop-review-4-tigersize/s/pit.mts). Across 22,680 weight checks there were 0 mismatches in weights or CROWD events, with 54 CROWDED events in the full runs. The 'stateless, threads across windows' claim also checks out: two halves equal one run, weights and events included.\n\nThe researcher's diagnosis reproduces exactly on 1601-1800 (s/diag.mts). Base CE is -11.16%, replacing the crash day with cash gives +1.38%, the crowded name is the primary in 27.5% of worlds, and eve-of-crash wLong is p10/p50/p90 = 0.34/0.83/1.13. The deleveraging numbers also match: vt0.30 gives +2.42 CE / -2.62 maxDD, and vt0.25 gives +5.79 / -6.07.\n\nRisk guard vs 2ed5107, 200 worlds per block (loop-judge.mjs, or s/tiger.mts where marked), candidate − base:\n\n| Block | Tiger CE uplift [90%] | Tiger maxDD | Tiger Sharpe |\n|---|---|---|---|\n| 1601-1800 | +2.20 pp [+0.84, +3.56] | 27.58% → 26.55% (paired -1.02 pp [-1.49, -0.56]) | -0.226 → -0.187 (+0.039) |\n| 2001-2200 | +2.60 pp [+1.33, +3.87] | 28.11% → 26.64% (-1.47 pp) | -0.113 → -0.083 (+0.030) |\n| 3001-3200 | +2.01 pp [+0.71, +3.31] | 27.99% → 26.76% (paired -1.23 pp) | -0.142 → -0.117 (+0.025) |\n| 5001-5200 (s/tiger.mts) | +1.38 pp [+0.11, +2.66] | 28.73% → 27.50% (-1.22 pp) | -0.228 → -0.218 (+0.010) |\n\nThe allocator track is identical on 1601, 2001 and 3001: +0.00 pp uplift, maxDD 7.46/7.24/7.49% unchanged, Sharpe 1.237/1.244/1.156 unchanged. So the guard (maxDD rise ≤ 0.5 pp, Sharpe fall ≤ 0.03) holds for both tracks on every block. The agenthire demo's seed-3 path still cuts at day 49 and stops out at day 84 (checked by replicating its ladder logic in s/demo3.mts; the demo itself was not run).\n\nNon-blocking issues are listed in problems:\n- **canonical() bug:** it collapses hedgeSymbol and betaLookback when hedgeRatio is 0 even though they matter once the gate is on. This is latent, because the CLI grid never turns the gate on.\n- **Headline gain:** most of the +2.2 pp is plain deleveraging, which vt 0.30 alone gets. At the same maxDD the gate adds about 1.4-1.5 pp of CE.\n- **Where it helps:** the benefit comes from worlds where the primary is the crowded name, which the arena's own whole-sample choice of primary over-represents.\n\nScratch files: worktrees /tmp/loop-review-4-tigersize/{base,wt}, the diff at /tmp/loop-review-4-tigersize/cand.diff, scripts in /tmp/loop-review-4-tigersize/s/, and judge outputs in /tmp/loop-review-4-tigersize/judge-{1601,2001,3001}.json.",
+   "research": {
+    "checkBefore": "Seeds 6200-6349 (150 worlds), code at 2ed5107:\nallocator utility 11.69% vs baseline 6.12% | uplift 5.57% [90% 4.18%, 6.97%] | wins 74% | Sharpe 1.18 vs 0.73 | maxDD 7.30% vs 7.40% (6.45% at the baseline's vol)\ntiger     utility -12.89% vs baseline -29.49% | uplift 16.60% [90% 13.56%, 19.65%] | wins 81% | Sharpe -0.25 vs -0.24 | maxDD 29.06% vs 45.73%",
+    "checkAfter": "Seeds 6200-6349 (150 worlds), with the crowding gate:\nallocator utility 11.69% vs baseline 6.12% | uplift 5.57% [90% 4.18%, 6.97%] | wins 74% | Sharpe 1.18 vs 0.73 | maxDD 7.30% vs 7.40% (6.45% at the baseline's vol)   (identical)\ntiger     utility -10.72% vs baseline -29.49% | uplift 18.77% [90% 15.61%, 21.94%] | wins 81% | Sharpe -0.24 vs -0.24 | maxDD 27.85% vs 45.73%\n\nPaired vs 2ed5107, 90% CI:\n- Tiger CE: +2.17 pp [+0.57, +3.76]. 62 of 150 worlds changed: 34 better, 28 worse.\n- Tiger maxDD: -1.20 pp [-1.75, -0.66]. It rose in 9 worlds, by at most +1.0 pp. The worst world fell from 59.36% to 57.42%.\n- Tiger Sharpe: -0.249 -> -0.236 (+0.012 [-0.008, +0.033]).\n- Allocator CE, maxDD and Sharpe, and the buy-and-hold baseline: bit-identical (0 of 150 worlds changed).\n- Against uniform deleveraging at equal maxDD: the old overlay at volTarget about 0.328 has CE -11.63% and Sharpe -0.251. The gate is +0.92 pp [-0.62, +2.46] ahead. That is positive but NOT significant on this 150-world block.\n- Split by world type: in the crowded-primary worlds, CE +7.58 pp. In the other worlds, CE +0.13 pp and maxDD -0.16 pp.\n\nBefore the check block I validated the already-fixed choice on a broad research block, seeds 2000-2999 (1000 worlds):\n- CE +2.50 pp [+1.95, +3.06]; maxDD -1.25 pp [-1.46, -1.05]; Sharpe +0.028.\n- Against equal-maxDD deleveraging (volTarget about 0.326): +1.34 pp [+0.77, +1.90].\n- Crowded-primary worlds +9.19 pp; other worlds CE -0.11 pp, maxDD -0.13 pp.",
+    "devBefore": "Seeds 1601-1800 (200 worlds), code at 2ed5107:\nallocator utility 12.37% vs baseline 6.88% | uplift 5.50% [90% 4.24%, 6.76%] | wins 72% | Sharpe 1.24 vs 0.84 | maxDD 7.46% vs 6.73% (6.44% at the baseline's vol)\ntiger     utility -11.16% vs baseline -29.43% | uplift 18.27% [90% 15.52%, 21.02%] | wins 82% | Sharpe -0.23 vs -0.21 | maxDD 27.58% vs 44.43%",
+    "devAfter": "Seeds 1601-1800 (200 worlds), with the crowding gate:\nallocator utility 12.37% vs baseline 6.88% | uplift 5.50% [90% 4.24%, 6.76%] | wins 72% | Sharpe 1.24 vs 0.84 | maxDD 7.46% vs 6.73% (6.44% at the baseline's vol)   (identical)\ntiger     utility -8.96% vs baseline -29.43% | uplift 20.47% [90% 17.46%, 23.48%] | wins 84% | Sharpe -0.19 vs -0.21 | maxDD 26.55% vs 44.43%\n\nPaired vs 2ed5107, 90% CI:\n- Tiger CE: +2.20 pp [+0.84, +3.56]. 64 of 200 worlds changed: 40 better, 24 worse.\n- Tiger maxDD: -1.02 pp [-1.49, -0.56]. It rose in 9 worlds, by at most +7.3 pp. The worst world is unchanged at 59.74%.\n- Tiger Sharpe: -0.226 -> -0.187 (+0.039 [+0.018, +0.060]).\n- Allocator CE, maxDD and Sharpe, and the buy-and-hold baseline: bit-identical (0 of 200 worlds changed).\n- Against uniform deleveraging at equal maxDD: the old overlay at volTarget about 0.328 has CE -10.35% and Sharpe -0.253. The gate is +1.39 pp [+0.14, +2.64] ahead of it.\n- Split by world type: in the 55 worlds whose primary is the crowded name, CE +8.29 pp. In the other 145, CE -0.11 pp and maxDD -0.12 pp.",
+    "variantsTried": 23
+   },
+   "rebased": {
+    "from": "2ed5107",
+    "onto": "f61804c"
+   }
+  },
+  {
+   "k": 3,
+   "angle": "Loop 4 wildcard, allocator track. The change is a crowd-unwind cool-off, which is (G) applied to the unwind. The arena's crowd follows a public viral signal. When that signal is withdrawn, the crowd has left all at once, and forced sellers keep hitting the name for several days after the gap (market.ts: \"Aftershock: forced sellers keep hitting the crowded name for a few ticks\"). On the dev block, the center book was still net long the crowded name in those ticks by about 4.4% of NAV on average in crowd worlds. The longs were mostly mean-reversion agents buying the crash, slow trend-followers, and in the coffee demo the Tiger Cubs holding their thesis long. That exposure lost about 0.30% of NAV per crowd world across the three aftershock ticks. New rule: for `unwindCoolOff` = 5 ticks (one trading week), starting the tick the signal is withdrawn, the book may not be net long the crowded name. Every agent long the name is scaled by one common factor, as a group, in one applyTargets plan, until the book is flat. Shorts are never touched. It is not a standing cap: capital comes back at the first reallocation after the cool-off.",
+   "track": "allocator",
+   "hypothesis": "A crowd's unwind is a fire sale. Once the signal the crowd followed is withdrawn, the price pressure keeps going for days after the gap. A book that is still net long the name in that window is taking a predictable, unpaid loss. The allocator cannot see this from track records, because the loss belongs to the event, not to the agent's skill. Avoiding it should raise utility and cut drawdown together. This does not take more risk: capital at work only goes down, briefly, in crowd worlds.\n\nResults confirm it on both research blocks. Utility rises, max drawdown falls and Sharpe rises, all paired and significant at 90%. Nothing changes in worlds without a crowd (bit-identical), and in crowd worlds nothing changes before the unwind.\n\nPoint-in-time: the rule reads `tick.viralSignal` for the current tick. By MarketTick's contract that signal is \"visible BEFORE this tick's return\", and it is the same observation the book hands every agent in step 2 (herders go all-in on it that same tick). It reads no returns at or after t, no drift, no config.events and no crash parameters. A literal reading of the rule \"never read market.ticks[k] for k >= t\" could object to this, so I report a one-tick-lagged robustness variant in the notes. The rule does not read strategy internals: it uses the sized orders' weights (positions) and the public signal.",
+   "reviewOk": false,
+   "reviewProblems": [
+    "Rejected by the orchestrator under the simulator-harvest rule: its reviewer switched off the arena generator's hard-coded 3-tick aftershock (packages/swarm/src/market.ts, r -= crowd.crashSize * 0.1 on ticks crashTick+1..crashTick+3) in both base and candidate, and the gain went neutral to negative (seeds 1601-1800 -0.073 pp [-0.168, +0.023]; 3001-3200 -0.050 pp). The review itself passed it on the listed criteria.",
+    "NON-BLOCKING, but the orchestrator and the docs need to know this: all of the uplift comes from the arena generator's hard-coded aftershock. In packages/swarm/src/market.ts lines 195-198, `r -= crowd.crashSize * 0.1` is applied to the crowded name on ticks crashTick+1..crashTick+3. The signal is withdrawn at exactly crashTick+1, the aftershock's first tick. I disabled the aftershock in both base and candidate (scratch-only env flag) and the change comes out neutral to slightly negative: seeds 1601-1800 utility -0.073 pp [-0.168, +0.023], maxDD -0.007 pp, Sharpe -0.003; seeds 3001-3200 utility -0.050 pp [-0.133, +0.034], maxDD -0.029 pp, Sharpe -0.000. With the aftershock on, the gain peaks at a cool-off of 3 ticks, the aftershock's length. On seeds 3001-3200: coolOff 1 gives +0.218 pp, 2 gives +0.295, 3 gives +0.340, 5 (the default) gives +0.311, 10 gives +0.238. The default of 5 is not the argmax, so it is not over-tuned. The mechanism is still a harvest of known simulator structure, and the sealed judge uses the same generator. README and CENTER-BOOK present 'forced sellers keep hitting the price for days' as a general fact. They should say plainly that the arena models a deterministic 3-tick aftershock and that the gain depends on it.",
+    "Point-in-time: not a reject, but flagged. book.ts 4b reads market.ticks[t].viralSignal at decision tick t, so a literal 'k >= t' rule would object. The Observation contract says 'The viral signal published for tick t' (strategies.ts:26-27) and MarketTick says 'visible BEFORE this tick's return' (market.ts:81-84). The base code already hands tick.viralSignal to every agent at t (book.ts:651). The withdrawal at crashTick+1 only reveals that crashTick, already realized, was the crash. The mechanism reads no returns, drift, config.events or crowd parameters. The researcher's one-tick-lagged variant is weaker: seeds 1601-1800 +0.263 pp [+0.173, +0.352]; seeds 6200-6349 +0.074 pp [-0.022, +0.170], not significant.",
+    "Minor doc overstatement: 'capital comes back at the first reallocation after the cool-off'. On crowd worlds in seeds 1601-1800, 54 of 376 unwind-cut agents were not resized at that reallocation: either the change was inside the 10% rebalanceBand or the allocator's target was 0 or lower. There is no standing cap, so the substance holds, but the sentence is too strong.",
+    "Minor: unwind cuts reuse kind CROWDING_CUT with the detail prefix 'book net X exposure'. services/orchestrator/src/fund.ts groupCut() therefore labels them BOOK with a '0% limit' in the fund snapshot and UI. The new CrowdBreach kind 'UNWIND' never reaches the UI.",
+    "Minor: the committed dashboard snapshots in apps/web/public (swarm-snapshot.json, fund-snapshot.json) are not regenerated. Running `npm run demo:swarm` on the patched tree rewrites swarm-snapshot.json, so the web console would keep showing pre-change numbers while the docs show the new ones.",
+    "Minor: the last test in packages/lab/src/arena-unwind.test.ts ('the arena checks above could fail') depends on module-level counters that the 24 earlier tests fill. Run alone (for example with --test-name-pattern), it fails."
+   ],
+   "diffFile": "docs/loops/loop-4/candidate-3.diff",
+   "status": "rejected-review",
+   "reviewSummary": "Verdict: passes. None of the reject criteria apply, but the whole gain depends on a hard-coded aftershock in the arena's market generator (details below and in problems).\n\nSetup: the diff applies cleanly to 2ed5107 (`git apply --check` passes). I used the researcher's copy at scratchpad/L4-wild/final.diff (copied to /tmp/loop-review-4-wildcard/proposed.diff) and checked it against the task text; they match. Worktrees: /tmp/loop-review-4-wildcard/wt (candidate) and /tmp/loop-review-4-wildcard/base (2ed5107), both wired with scripts/worktree-setup.sh.\n\nChecks against the reject criteria:\n- **Arena/judge:** no edits.\n- **Tests:** none weakened, skipped or deleted; the only changes are two new test files and test-list entries.\n- **Seed-specific values:** none. Tests use seeds 7, 9, 11 and arena seeds 1-24; the mechanism has no seed values.\n- **Skill by strategy class or internals:** not used. The rule reads only the sized orders' weights and the public signal.\n- **Point-in-time:** holds under the codebase's own contract. It reads `tick.viralSignal`, which Observation and MarketTick define as visible before tick t's return, and which base code already gives agents at t (book.ts:651).\n\nTests and gates, all on the patched tree:\n- `tsc -b` and the web `tsc` both clean.\n- `npm test`: 292/292. `@allowance/lab`: 75/75. `allowance-web`: 46/46. `@allowance/swarm`: 68/68. The two new files: 35/35.\n- Mutation tests show the new tests catch breakage: a wrong scale fails 24 tests, a cool-off one tick short fails 9, a late start fails 11.\n- An outside probe on seeds 1601-1800 (151 crowd worlds) found 0 cool-off ticks net long the crowded name (worst +1e-6 USDC) and 0 unwind cuts outside the cool-off.\n- No-crowd worlds are bit-identical (49 of 49 and 40 of 40).\n- The ablation and docs numbers in the diff match my run of `npm run demo:swarm`.\n\nPerformance, candidate minus base, allocator track, paired with 90% intervals. My runs reproduce the researcher's JSON exactly.\n\n| Seeds | Utility (pp) | Max drawdown (pp) | Sharpe |\n|---|---|---|---|\n| 1601-1800 | +0.370 [+0.264, +0.477] | -0.159 [-0.213, -0.105] | +0.041 [+0.031, +0.052] |\n| 6200-6349 | +0.176 [+0.078, +0.274] | -0.061 [-0.111, -0.011] | +0.024 [+0.012, +0.036] |\n| 3001-3200 (not used by the researcher) | +0.311 [+0.207, +0.414] | -0.152 [-0.214, -0.090] | +0.036 [+0.025, +0.047] |\n\nMean levels for the center book, base to candidate:\n- 1601-1800: CE 12.37% to 12.74%, max drawdown 7.46% to 7.30%, Sharpe 1.237 to 1.279.\n- 6200-6349: max drawdown 7.30% to 7.24%, Sharpe 1.175 to 1.199.\n- 3001-3200: max drawdown 7.49% to 7.34%, Sharpe 1.156 to 1.192.\n\nThe tiger track is bit-identical on every block.\n\nRisk guard: passes with margin on all three blocks. Max drawdown falls (limit is a rise of at most 0.5 pp) and Sharpe rises (limit is a fall of at most 0.03).\n\nMain caveat: the market generator (market.ts:195-198) subtracts 0.1 × crashSize from the crowded name for the 3 ticks after the crash. The signal is withdrawn on the first of those ticks, and that hard-coded aftershock is the entire source of the gain. With it switched off in both trees, the change is neutral to slightly negative (-0.07 pp and -0.05 pp). The gain also peaks at a 3-tick cool-off, the aftershock's length. So the change avoids a modelled post-crash drift, timed by a public signal. That is not look-ahead at runtime, but the docs should say so plainly.\n\nEverything else is minor (details in problems): the 'capital comes back' sentence is too strong, the UI labels unwind cuts as BOOK, the web snapshots are not regenerated, and the final arena test fails when run alone.",
+   "research": {
+    "checkBefore": "Seeds 6200–6349 (150 worlds), code at 2ed5107, using evaluate() directly. The CLI's `eval` subcommand was blocked by this sandbox's command guard, so I called the same function.\n- allocator: CE 11.69% vs 6.12% for guardrails, uplift +5.57% [90% +4.18, +6.97], Sharpe 1.175 vs 0.725, maxDD 7.30% vs 7.40% (6.45% at the guardrails' vol).\n- tiger: −12.89% vs −29.49%, uplift +16.60% [+13.56, +19.65], Sharpe −0.249, maxDD 29.06% vs 45.73%.",
+    "checkAfter": "Seeds 6200–6349 (150 worlds), final code.\n- allocator: CE 11.87% vs 6.12%, uplift +5.75% [+4.35, +7.15], Sharpe 1.199 vs 0.725, maxDD 7.24% vs 7.40% (6.39% at the guardrails' vol).\n- tiger: identical (−12.89%, Sharpe −0.249, maxDD 29.06%).\n\nPaired against the current code:\n- utility +0.176 pp [90% +0.078, +0.274]\n- maxDD −0.061 pp [−0.111, −0.011]\n- Sharpe +0.024 [+0.012, +0.036]\n- tiger 0.000\n\nThe 40 no-crowd worlds are bit-identical. In the 110 crowd worlds (96 changed), utility is +0.24 pp and maxDD −0.08 pp. Risk guard holds: maxDD down, Sharpe up.",
+    "devBefore": "Seeds 1601–1800 (200 worlds), code at 2ed5107.\n- allocator: CE 12.37% vs 6.88% for guardrails, uplift +5.50% [90% +4.24, +6.76], Sharpe 1.237 vs 0.844, maxDD 7.46% vs 6.73% (6.44% at the guardrails' vol).\n- tiger: −11.16% vs −29.43%, uplift +18.27% [+15.52, +21.02], Sharpe −0.226, maxDD 27.58% vs 44.43%.",
+    "devAfter": "Seeds 1601–1800 (200 worlds), final code.\n- allocator: CE 12.74% vs 6.88%, uplift +5.87% [+4.60, +7.13], Sharpe 1.279 vs 0.844, maxDD 7.30% vs 6.73% (6.32% at the guardrails' vol).\n- tiger: identical.\n\nPaired against the current code:\n- utility +0.370 pp [90% +0.264, +0.477]\n- maxDD −0.159 pp [−0.213, −0.105]\n- Sharpe +0.041 [+0.031, +0.052]\n- tiger 0.000\n\nThe 49 no-crowd worlds are bit-identical. In the 151 crowd worlds (129 changed), utility is +0.49 pp and maxDD −0.21 pp; per-world changes range from −3.96 to +3.95 pp because paths diverge after the cut.",
+    "variantsTried": 4
+   },
+   "rebased": {
+    "from": "2ed5107",
+    "onto": "f61804c"
+   }
+  },
+  {
+   "k": 4,
+   "angle": "operatorlift: (G) structure follow-up to loop 3's operator credit event. A capped name's OWN ladder cut now cuts what the name would hold WITHOUT the cap (a tracked \"uncapped budget\"), with the cap's ceiling still on top. It lands at min(capital, cf x min(fullSize, uncapped)). The cut is never lighter than the name's own ladder alone and never compounds to cf^2.",
+   "track": "structure",
+   "hypothesis": "Loop 3 cut a capped name's own ladder to cutToCeiling(capital, fullSize, cf). So a name that already sat at or below cf x fullSize was not cut at all. That happens when the name was cut and restored by its own ladder, or cut by the crowding check. So was a name the cap had only partly cut, i.e. one below full size when capped. Operator labels therefore weakened an agent's own ladder.\n\nOn research seeds 1-1600 there are 116 such cuts in 1002 shared-operator worlds. With loop 3's rule, 62 of them left the name more than 1% above what the same book without labels leaves it after the same cut, and the mean log(labelled/blind) was +0.229.\n\nThe fix: while a name is capped, the book keeps its \"uncapped budget\". That budget:\n- starts at the budget the name held when the cap was set;\n- is reallocated to its target without the cap, under the same band;\n- is cut by the crowding check, run on the book with every capped name at its uncapped budget, and keeps that cut's ceiling until the name's book changes;\n- is cut by its own ladder.\nThe ladder then cuts to cf x min(fullSize, uncapped).\n\nThis is exact against the blind book on scripted books. On arena seeds 1-1600: 7 cuts weaker than blind by >1% (max +9%), 19 harder by >1%, mean log -0.024, mean |log| 0.034.\n\nNo utility claim. Expected (and measured) neutral: about 3% of worlds are touched, and the change only ever cuts harder.",
+   "reviewOk": false,
+   "reviewProblems": [
+    "A guarantee the diff states is false: the cap and the ladder can still compound to cutFactor squared (25%). The diff's CENTER-BOOK.md says 'a name the cap took down from full size is not [cut again] (never 25%)'. The ladderCutUnderCap docstring says 'never to factor² × fullSize'. Both are false once an operator runs three or more names. Repro: /tmp/loop-review-4-operatorlift/wt/packages/swarm/src/_scratch_recap.test.ts (operator mallory runs loser1, loser2 and x; perAgent is 1.6M). At t=12 loser1 stops and x is capped from 1.6M to 800k. At t=15 x makes a new high, so its cap is lifted (OPERATOR_RESTORE), but its budget stays at 800k until the t=30 reallocation. At t=20 loser2 stops and x is capped again. book.ts step 6b then runs `uncapped.set(name, { budget: capital, ... })` and seeds the uncapped budget with the still-capped 800k. At t=22 x's own ladder cuts it to 400k, which is 0.25 × its full size. Both 2ed5107 and the book without labels leave x at 800k (checked in /tmp/loop-review-4-operatorlift/basetests). Cause: `for (const name of uncapped.keys()) if (!operatorCaps.has(name)) uncapped.delete(name)` throws the uncapped budget away when the cap lifts, before any reallocation has re-sized the name. On this path it undoes loop 3's README guarantee that the cap 'never compounds with a ladder cut or an earlier cap'. No new test has a second credit event for the same operator. The arena test cannot catch it either, because makeWorld never gives an operator more than two names. Fix: keep the uncapped budget after a lift until the name's next reallocation and reuse it on a re-cap, and add a scripted test with a three-name operator. Separate issue that loop 3 already has: the lift-then-ladder-cut path without a re-cap also gives 400k on both 2ed5107 and the diff.",
+    "The uncapped budget (the diff's estimate of what a capped name would hold without its cap) drifts low, so capped names are cut harder than the same book without labels. When the diff re-runs the crowding check on that uncapped book, it keeps only the cuts to capped names. Every other contributor stays at its real budget, which the real book cut less. So the same breach fires again on later ticks and the capped name absorbs it alone, and the lower value then persists as own.crowd.cap. Example, seed 559, picker-2 (traced with a temporary log line, since removed): the book without labels cuts V559-E once at t=203 (×0.61). The uncapped book cuts it at t=203 (×0.613) and again at t=204 (×0.858), where the book without labels takes no cut. It also cuts picker-2's uncapped budget at t=217 and t=219, where the real book has no breach at all. own.crowd.cap then blocks the t=220 reallocation, while the book without labels re-sizes picker-2 to 1.745M. After the ladder cut picker-2 holds 407,759 against 634,884 without labels, 36% less. Cuts more than 1% off the book without labels, by block: seeds 201–1600, 18 harder and 6 weaker, worst log −0.44. Seeds 3001–4000 (a block the researcher did not report), 13 harder and 2 weaker, mean log −0.025. One of those weaker cuts is 20% above the book without labels (seed 3942, desk-0, t=61: 565,403 vs 470,129), well past the '+9% max' the researcher reported. allocator.ts says the cut 'is as hard as it would be without the cap', but in crowded worlds the operator label now over-penalises the name.",
+    "The arena test (packages/lab/src/arena-ladder-cap.test.ts) is mostly circular, and its one real threshold passes narrowly. Its per-cut assertion, after ≈ min(held, CF·min(full, own)), checks the implementation against the uncapped value the implementation itself records. Only two checks compare with the book without labels. The first checks just one tick after the first credit event. The second requires |mean log(capped / no labels)| < 0.03. On the test's own seeds 1–200 that mean is −0.007 over 12 cuts. On seeds 201–1600 it is −0.0267, and on 3001–4000 −0.0246, both close to the 0.03 bound, so the block the test uses is the most favourable of the three I measured. The CENTER-BOOK.md line '(tested exactly against the same book without labels on two scripted books, and on every shared-operator arena world on seeds 1–200)' overstates this: on the arena the comparison with the book without labels is an average, not exact."
+   ],
+   "diffFile": "docs/loops/loop-4/candidate-4.diff",
+   "status": "rejected-review",
+   "reviewSummary": "Rejected. One guarantee the diff states is falsified by a concrete counterexample (problem 1), and no new test covers that case. Everything else checks out: the mechanism is sound in the cases tested, point-in-time and neutral on the risk guard.\n\nWhat passes:\n- The diff applies cleanly to 2ed5107. I took it from the researcher's worktree, /home/user/hackathon/.claude/worktrees/wf_7e46500a-501-4, and all 10 file hashes match the proposed diff's `index` lines.\n- `npm run typecheck` passes, and `npm test` passes 266 of 266.\n- The new scripted tests fail on 2ed5107 for the right reason: 'as hard as' at bounce 400k vs 200k, deep 312.5k vs 156.25k, part 400k vs 312.5k, paired 1M vs 931k.\n- No future information is read; the extra crowding check reuses the same tick's gated weights and tree. No arena or judge files are edited, no tests are weakened, and there are no seed-specific constants in the mechanism.\n- It only ever cuts harder than loop 3. `ladderCutUnderCap` is always at or below `cutToCeiling`, and the uncapped budget changes the real book only at a ladder cut.\n- I reproduced the researcher's numbers on seeds 1–1600 exactly: 116 capped cuts in 1002 worlds, loop-3 mean log +0.229, and under the new rule 7 weaker / 19 harder with mean log −0.024.\n- Risk guard, allocator track, patched minus 2ed5107, all within bounds (tiger track identical on every world):\n\n| Block | maxDD change | Sharpe change | utility change | worlds touched |\n|---|---|---|---|---|\n| seeds 3001–4000 | +0.00006 pp | +0.00007 | +0.0006 pp | 32 of 1000 |\n| seeds 1–1600 | +0.00005 pp | −0.00004 | −0.0007 pp | 50 of 1600 |\n\nWhy rejected: in books where an operator runs three or more names, a cap that is lifted and then set again seeds the uncapped budget from capital the first cap is still holding down. The name's own ladder then cuts it to 0.25 × its full size. Loop 3 and the book without labels both leave it at 0.5 ×. The arena can never produce this case, since an operator there has at most two names.\n\nAlso flagged:\n- The crowding re-check on the uncapped book ratchets, biasing cuts harder than the book without labels: up to 36% harder, and one cut 20% weaker on seeds 3001–4000.\n- The arena test's per-cut check is circular, and its mean threshold passes narrowly on other seed blocks.\n\nSuggested fix: keep the uncapped budget after a lift until the name's next reallocation and reuse it on a re-cap, and add a three-name scripted test.\n\nScratch files, all under /tmp/loop-review-4-operatorlift:\n- Worktrees: wt (patched), base (2ed5107), basetests (2ed5107 plus the new tests and the probes).\n- Probes: wt/packages/swarm/src/_scratch_recap.test.ts and _scratch_lift.test.ts, and wt/packages/lab/src/_scratch_ladder.ts (arena replica). wt's book.ts was restored after tracing; its hash matches the proposal.\n- Eval JSONs: base-1.json, wt-1.json, base-3001.json, wt-3001.json.",
+   "research": {
+    "checkBefore": "Check block 6200-6349 (150 worlds), base 2ed5107:\n- Allocator: center CE 11.69% vs guardrails 6.12%. Uplift +5.57% [90% 4.18%, 6.97%], wins 74%.\n- Center risk: Sharpe 1.18 vs 0.73; maxDD 7.30% vs 7.40% (6.45% at the guardrails' vol).\n- Per-world means: CE 0.11692, maxDD 0.07305, Sharpe 1.17530.\n- Tiger: -12.89% vs -29.49%. Uplift +16.60%, maxDD 29.06%.",
+    "checkAfter": "Check block 6200-6349 (150 worlds), with the change:\n- Allocator: CE 11.69% vs 6.12%. Uplift +5.57% [4.18%, 6.97%]. Sharpe 1.18. maxDD 7.30% (6.45% at the baseline's vol).\n- Per-world means: CE 0.11692, maxDD 0.07305, Sharpe 1.17527.\n- Paired vs base: CE -0.0002 pp [90% -0.0005, +0.0001]; maxDD -0.0000 pp [-0.0001, +0.0000]; Sharpe -0.00002. 2/150 worlds changed.\n- Tiger: bit-identical (0/150 changed).\n- Risk guard is met with large margin: maxDD +0.0000 pp (limit +0.5 pp), Sharpe -0.00002 (limit -0.03).\n\nWider research check, seeds 1-1600:\n- CE -0.0006 pp [-0.0014, +0.0001]; maxDD +0.0001 pp [-0.0005, +0.0006]; Sharpe -0.00004. 50/1600 worlds changed.",
+    "devBefore": "Dev block 1601-1800 (200 worlds), base 2ed5107:\n- Allocator: center CE 12.37% vs guardrails 6.88%. Uplift +5.50% [90% 4.24%, 6.76%], wins 72%.\n- Center risk: Sharpe 1.24 vs 0.84; maxDD 7.46% vs 6.73% (6.44% at the guardrails' vol).\n- Per-world means: CE 0.12374, maxDD 0.07463, Sharpe 1.23740.\n- Tiger: -11.16% vs -29.43%. Uplift +18.27%, maxDD 27.58%.",
+    "devAfter": "Dev block 1601-1800 (200 worlds), with the change:\n- Allocator: CE 12.37% vs 6.88%. Uplift +5.50% [4.24%, 6.76%]. Sharpe 1.24. maxDD 7.46% (6.44% at the baseline's vol).\n- Per-world means: CE 0.12373, maxDD 0.07463, Sharpe 1.23737.\n- Paired vs base: CE -0.0005 pp [90% -0.0035, +0.0025]; maxDD +0.0002 pp [-0.0014, +0.0019]; Sharpe -0.00003. 10/200 worlds changed.\n- Tiger: bit-identical (0/200 changed).\n- Risk guard is met with large margin: maxDD +0.0002 pp (limit +0.5 pp), Sharpe -0.00003 (limit -0.03).",
+    "variantsTried": 3
+   },
+   "rebased": {
+    "from": "2ed5107",
+    "onto": "f61804c"
+   }
+  }
+ ],
+ "confirmations": [
+  {
+   "label": "combined (pre-composed)",
+   "kept": [
+    1,
+    2
+   ],
+   "dropped": [],
+   "ok": true,
+   "allocator": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "allocatorSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerMaxDD": {
+     "mean": -0.025146977811366416,
+     "lo": -0.0305003634028101,
+     "hi": -0.01979359221992273,
+     "wins": 0.26
+    },
+    "tigerSharpe": {
+     "mean": 0.016329636255693603,
+     "lo": -0.02167199467886462,
+     "hi": 0.05433126719025183,
+     "wins": 0.52
+    }
+   }
+  }
+ ],
+ "merged": {
+  "kept": [
+   1,
+   2
+  ],
+  "diffFile": "docs/loops/loop-4/merge.diff"
+ },
+ "baselineA": {
+  "sha": "d96c1a4b7dd40eaa2b84dd339c2fbe7d843bd963",
+  "dirty": false,
+  "allocator": {
+   "worlds": 200,
+   "utility": 0.1274931536262714,
+   "baseline": 0.05764426913991368,
+   "uplift": 0.06984888448635779,
+   "upliftLo": 0.05717298214666645,
+   "upliftHi": 0.08252478682604913,
+   "winRate": 0.72,
+   "sharpe": 1.2672271074614023,
+   "baselineSharpe": 0.7089042450000188,
+   "maxDD": 0.07297624624756377,
+   "baselineMaxDD": 0.07190584857403734,
+   "maxDDAtBaselineVol": 0.06478552355695195
+  },
+  "tiger": {
+   "worlds": 200,
+   "utility": -0.16454005637164573,
+   "baseline": -0.3316442170425388,
+   "uplift": 0.16710416067089312,
+   "upliftLo": 0.13932696914867557,
+   "upliftHi": 0.19488135219311067,
+   "winRate": 0.795,
+   "sharpe": -0.3098775359329409,
+   "baselineSharpe": -0.3001153035121035,
+   "maxDD": 0.30218221850591515,
+   "baselineMaxDD": 0.47005185894404655
+  },
+  "books": {
+   "allocator": {
+    "utility": 0.1274931536262714,
+    "sharpe": 1.2672271074614023,
+    "maxDD": 0.07297624624756377,
+    "baselineUtility": 0.05764426913991368,
+    "baselineMaxDD": 0.07190584857403734
+   },
+   "tiger": {
+    "utility": -0.16454005637164573,
+    "sharpe": -0.3098775359329409,
+    "maxDD": 0.30218221850591515,
+    "baselineUtility": -0.3316442170425388,
+    "baselineMaxDD": 0.47005185894404655
+   }
+  }
+ },
+ "confirmation": {
+  "ok": true,
+  "kept": [
+   1,
+   2
+  ],
+  "dropped": [],
+  "blockB": {
+   "allocator": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "tiger": {
+    "mean": 0.03363672336983047,
+    "lo": 0.017924589198600162,
+    "hi": 0.04934885754106078,
+    "wins": 0.63
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "allocatorSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerMaxDD": {
+     "mean": -0.025146977811366416,
+     "lo": -0.0305003634028101,
+     "hi": -0.01979359221992273,
+     "wins": 0.26
+    },
+    "tigerSharpe": {
+     "mean": 0.016329636255693603,
+     "lo": -0.02167199467886462,
+     "hi": 0.05433126719025183,
+     "wins": 0.52
+    }
+   }
+  },
+  "booksB": {
+   "allocator": {
+    "utility": 0.11377830459908227,
+    "sharpe": 1.2098606300871833,
+    "maxDD": 0.07577163781617498,
+    "baselineUtility": 0.06268868028734252,
+    "baselineMaxDD": 0.06849239548845748
+   },
+   "tiger": {
+    "utility": -0.10958539539959725,
+    "sharpe": -0.2601361757596595,
+    "maxDD": 0.25775053674056075,
+    "baselineUtility": -0.28051358220878475,
+    "baselineMaxDD": 0.43302415887798146
+   }
+  },
+  "baselineB": {
+   "sha": "d96c1a4b7dd40eaa2b84dd339c2fbe7d843bd963",
+   "dirty": false,
+   "allocator": {
+    "worlds": 200,
+    "utility": 0.11377830459908227,
+    "baseline": 0.06268868028734252,
+    "uplift": 0.05108962431173976,
+    "upliftLo": 0.0399010445499109,
+    "upliftHi": 0.06227820407356862,
+    "winRate": 0.695,
+    "sharpe": 1.2098606300871833,
+    "baselineSharpe": 0.8010035431214356,
+    "maxDD": 0.07577163781617498,
+    "baselineMaxDD": 0.06849239548845748,
+    "maxDDAtBaselineVol": 0.06699009058062033
+   },
+   "tiger": {
+    "worlds": 200,
+    "utility": -0.14322211876942767,
+    "baseline": -0.28051358220878475,
+    "uplift": 0.13729146343935703,
+    "upliftLo": 0.10977974210957392,
+    "upliftHi": 0.16480318476914013,
+    "winRate": 0.79,
+    "sharpe": -0.27646581201535314,
+    "baselineSharpe": -0.18420551806371685,
+    "maxDD": 0.282897514551927,
+    "baselineMaxDD": 0.43302415887798146
+   },
+   "books": {
+    "allocator": {
+     "utility": 0.11377830459908227,
+     "sharpe": 1.2098606300871833,
+     "maxDD": 0.07577163781617498,
+     "baselineUtility": 0.06268868028734252,
+     "baselineMaxDD": 0.06849239548845748
+    },
+    "tiger": {
+     "utility": -0.14322211876942767,
+     "sharpe": -0.27646581201535314,
+     "maxDD": 0.282897514551927,
+     "baselineUtility": -0.28051358220878475,
+     "baselineMaxDD": 0.43302415887798146
+    }
+   }
+  }
+ },
+ "compositions": [
+  {
+   "members": [
+    1,
+    2
+   ],
+   "note": "tigerhedge + tigersize composed by the orchestrator: the hedge is sized from the shrunk beta; the crowding gate keeps the raw trailing beta it was reviewed with"
+  },
+  {
+   "members": [
+    0,
+    1,
+    2
+   ],
+   "note": "ramp applied plainly on the tiger composition"
+  }
+ ]
+}

@@ -10,7 +10,18 @@
  *          cut at `ddCut`, flat at `ddStop` (the mandate is revoked), and only
  *          re-underwritten after `reentryDays` AND the trend is back
  *   time   lean in (or out) ahead of scheduled earnings, and after them
+ *   hedge  short China-ADR beta (KWEB/FXI/MCHI) with a trailing-beta hedge;
+ *          with `hedgeBeta` set, the beta is shrunk toward a prior by its own
+ *          precision and clipped, so the short leg cancels the market
+ *          exposure the thesis does not claim (and no more)
  *   hedge  short China-ADR beta (KWEB/FXI/MCHI) with a trailing-beta hedge
+ *   crowd  trim a name whose rally the thesis cannot explain: when its
+ *          idiosyncratic return (net of its trailing beta to the hedge index)
+ *          over the last `crowdLookback` days has a t-statistic above
+ *          `crowdZ`, the move is flows, not fundamentals — a hedge-fund hotel.
+ *          Crowded longs unwind in one gap that no drawdown ladder can catch
+ *          (the ladder acts after the loss), so the long runs at `crowdFactor`
+ *          until the run is no longer abnormal.
  *
  * TIMING CONVENTION (the no-look-ahead contract):
  *   weights for day t+1 are decided at the close of day t, using prices and
@@ -51,6 +62,23 @@ export interface TigerParams {
   /** Fraction of the long's trailing beta to hedge (0–1). */
   hedgeRatio: number;
   betaLookback: number;
+  /**
+   * How the trailing beta is estimated. null = the raw OLS beta, clipped to
+   * [0, 3] (legacy). Otherwise the OLS beta is shrunk toward `prior` by its
+   * own precision (Vasicek: weight on the data k = priorSd² / (priorSd² +
+   * SE(β̂)²)) and clipped to [0, max]. See `shrunkBetaSeries`.
+   */
+  hedgeBeta: HedgeBeta | null;
+  /**
+   * Crowding gate window (trading days): the name's idiosyncratic daily return
+   * — its return minus its trailing `betaLookback` beta times the hedge
+   * instrument's (the raw return when unhedged) — over the last `crowdLookback` days.
+   */
+  crowdLookback: number;
+  /** t-statistic of that window's mean return above which the name counts as crowded; null = no crowding gate. */
+  crowdZ: number | null;
+  /** Long multiplier while crowded. */
+  crowdFactor: number;
   /** Costs: one-way cost per unit turnover on the long (OTC spread + impact), in bps. */
   costBps: number;
   hedgeCostBps: number;
@@ -80,6 +108,10 @@ export const DEFAULT_PARAMS: TigerParams = {
   hedgeSymbol: null,
   hedgeRatio: 0,
   betaLookback: 120,
+  hedgeBeta: null,
+  crowdLookback: 60,
+  crowdZ: null,
+  crowdFactor: 0.5,
   costBps: 20,
   hedgeCostBps: 5,
   borrowRate: 0.02,
@@ -90,10 +122,29 @@ export const DEFAULT_PARAMS: TigerParams = {
 /** Buy-and-hold with the same cost model: the benchmark every variant must beat. */
 export const BUY_AND_HOLD: TigerParams = { ...DEFAULT_PARAMS };
 
+export interface HedgeBeta {
+  /** Where the beta is pulled when its trailing estimate is imprecise. */
+  prior: number;
+  /** Prior dispersion of betas: the larger, the more the data is trusted. */
+  priorSd: number;
+  /** Ceiling on the hedge beta (floor is 0: the hedge never goes long). */
+  max: number;
+}
+
 /**
  * The overlay's recommended settings — what the arena's tiger track scores and
  * the improvement loops tune. `hedgeSymbol` is a placeholder: callers point it
  * at their own hedge instrument (the arena uses its virtual index "VIDX").
+ *
+ * Hedge: the thesis is the single name, not the market, so the short leg is
+ * sized to cancel the long's whole trailing beta (hedgeRatio 1), with that
+ * beta shrunk toward 0.5 by its standard error and clipped to [0, 1.5].
+ * (Loops 1–3 hedged half of the raw beta, leaving half the market exposure on.)
+ * Crowding gate (loop 4): a name whose market-adjusted return over the last
+ * ~quarter (60 days) is more than 2 standard errors above zero runs at half
+ * size. Realized volatility cannot see that risk: a steady, flow-driven rally
+ * looks calm, so vol targeting alone holds full (sometimes levered) size into the
+ * unwind, and the one-day gap is what a γ = 3 investor pays most for.
  */
 export const RECOMMENDED_TIGER: TigerParams = {
   ...BUY_AND_HOLD,
@@ -103,10 +154,14 @@ export const RECOMMENDED_TIGER: TigerParams = {
   ddStop: 0.3,
   reentryDays: 20,
   hedgeSymbol: "VIDX",
-  hedgeRatio: 0.5,
+  hedgeRatio: 1,
+  hedgeBeta: { prior: 0.5, priorSd: 0.5, max: 1.5 },
+  crowdLookback: 60,
+  crowdZ: 2,
+  crowdFactor: 0.5,
 };
 
-export type BookEventKind = "STOP_OUT" | "REUNDERWRITE" | "CUT" | "UNCUT";
+export type BookEventKind = "STOP_OUT" | "REUNDERWRITE" | "CUT" | "UNCUT" | "CROWDED" | "UNCROWDED";
 
 export interface BookEvent {
   t: number;
@@ -231,6 +286,87 @@ export function betaSeries(y: readonly number[], x: readonly number[], L: number
 }
 
 /**
+ * Trailing OLS beta of y on x over r[t-L+1..t], shrunk toward `prior` by its
+ * own precision (Vasicek): with SE² = s²_resid / Σ(x − x̄)² the sampling
+ * variance of β̂, the weight on the data is k = priorSd² / (priorSd² + SE²)
+ * and the value is k·β̂ + (1 − k)·prior. A short or noisy record leans on the
+ * prior; a long, tight one converges to OLS. Point-in-time (indices ≤ t);
+ * NaN below 20 observations, like `betaSeries`. Not clipped.
+ */
+export function shrunkBetaSeries(y: readonly number[], x: readonly number[], L: number, prior: number, priorSd: number): number[] {
+  const tau2 = priorSd * priorSd;
+  return y.map((_, t) => {
+    const a = Math.max(1, t - L + 1);
+    const n = t - a + 1;
+    if (n < 20) return NaN;
+    let sx = 0;
+    let sy = 0;
+    for (let i = a; i <= t; i++) {
+      sx += x[i]!;
+      sy += y[i]!;
+    }
+    const mx = sx / n;
+    const my = sy / n;
+    let cov = 0;
+    let vx = 0;
+    for (let i = a; i <= t; i++) {
+      cov += (x[i]! - mx) * (y[i]! - my);
+      vx += (x[i]! - mx) ** 2;
+    }
+    if (vx === 0) return NaN;
+    const b = cov / vx;
+    let ss = 0;
+    for (let i = a; i <= t; i++) ss += (y[i]! - my - b * (x[i]! - mx)) ** 2;
+    const se2 = ss / (n - 2) / vx;
+    const k = tau2 + se2 > 0 ? tau2 / (tau2 + se2) : 1;
+    return k * b + (1 - k) * prior;
+  });
+}
+
+/** The trailing beta the hedge is sized from: raw OLS (legacy) or shrunk (`hedgeBeta`). */
+function hedgeBetaSeries(panel: Panel, L: string, H: string, p: TigerParams): number[] {
+  const rL = panel.ret[L]!;
+  const rH = panel.ret[H]!;
+  const hb = p.hedgeBeta;
+  if (!hb) return cached(panel, `beta:${L}:${H}:${p.betaLookback}`, () => betaSeries(rL, rH, p.betaLookback));
+  return cached(panel, `sbeta:${L}:${H}:${p.betaLookback}:${hb.prior}:${hb.priorSd}`, () =>
+    shrunkBetaSeries(rL, rH, p.betaLookback, hb.prior, hb.priorSd),
+  );
+}
+
+/**
+ * Crowding statistic at each close t: the t-statistic of the mean of the
+ * name's idiosyncratic daily return over r[t-L+1..t] (r[0] excluded), where
+ * the idiosyncratic return on day i is y[i] − beta[i]·x[i] with beta[i] the
+ * trailing beta through day i (0 while it is undefined). With no index
+ * (`x`/`beta` null) the raw return is used. NaN until L days exist or when the
+ * window has no dispersion. Point-in-time: the value at t uses indices ≤ t only.
+ */
+export function crowdingSeries(
+  y: readonly number[],
+  x: readonly number[] | null,
+  beta: readonly number[] | null,
+  L: number,
+): number[] {
+  const e = y.map((v, i) => {
+    if (!x || !beta) return v;
+    const b = beta[i]!;
+    return Number.isFinite(b) ? v - b * x[i]! : v;
+  });
+  return e.map((_, t) => {
+    const a = t - L + 1;
+    if (a < 1 || L < 2) return NaN;
+    let s = 0;
+    for (let i = a; i <= t; i++) s += e[i]!;
+    const m = s / L;
+    let q = 0;
+    for (let i = a; i <= t; i++) q += (e[i]! - m) ** 2;
+    const sd = Math.sqrt(q / (L - 1));
+    return sd > 0 ? (m / sd) * Math.sqrt(L) : NaN;
+  });
+}
+
+/**
  * For each close t: trading days until the next print that is public by t
  * (announced ≥ `lead` days ahead), and days since the most recent print ≤ t.
  * Infinity when there is none.
@@ -277,8 +413,18 @@ export function runTiger(
   const n = panel.dates.length;
   const vol = p.volTarget !== null ? cached(panel, `vol:${L}:${p.volLookback}`, () => trailingVolSeries(rL, p.volLookback)) : null;
   const sma = p.trendLookback !== null ? cached(panel, `sma:${L}:${p.trendLookback}`, () => smaSeries(px, p.trendLookback!)) : null;
-  const beta =
-    H && p.hedgeRatio > 0 ? cached(panel, `beta:${L}:${H}:${p.betaLookback}`, () => betaSeries(rL, rH!, p.betaLookback)) : null;
+  // The hedge is sized from the trailing beta (raw OLS, or shrunk with `hedgeBeta`).
+  const beta = H && p.hedgeRatio > 0 ? hedgeBetaSeries(panel, L, H, p) : null;
+  const betaMax = p.hedgeBeta ? p.hedgeBeta.max : 3;
+  // The crowding gate nets the market out of the name's run with the raw
+  // trailing beta to the hedge index (whether or not the hedge is on).
+  const betaH =
+    H && p.crowdZ !== null ? cached(panel, `beta:${L}:${H}:${p.betaLookback}`, () => betaSeries(rL, rH!, p.betaLookback)) : null;
+  const crowdT =
+    p.crowdZ !== null
+      ? cached(panel, `crowd:${L}:${H ?? "-"}:${p.betaLookback}:${p.crowdLookback}`, () => crowdingSeries(rL, rH, betaH, p.crowdLookback))
+      : null;
+  const crowdedAt = (k: number): boolean => crowdT !== null && k >= 0 && crowdT[k]! > p.crowdZ!; // NaN → false
   const evKey = `ev:${p.announceLead}:${events.map((e) => e.t).join(",")}`;
   const until = cached(panel, `${evKey}:next`, () => eventDistances(n, events, p.announceLead).untilNext);
   const since = cached(panel, `${evKey}:last`, () => eventDistances(n, events, p.announceLead).sinceLast);
@@ -321,6 +467,23 @@ export function runTiger(
     // In the days after a print (a print at e is "post" for closes t ∈ [e, e+post)).
     if (p.postEventDays > 0 && since[t]! < p.postEventDays) w *= p.postEventMult;
 
+    // Crowding: an abnormal market-adjusted run through t. Stateless (read off
+    // the series at t and t−1), so a book threaded across windows agrees with one run.
+    if (crowdT) {
+      const nowCrowded = crowdedAt(t);
+      if (nowCrowded) w *= p.crowdFactor;
+      if (nowCrowded !== crowdedAt(t - 1)) {
+        out.events.push({
+          t,
+          date: panel.dates[t]!,
+          kind: nowCrowded ? "CROWDED" : "UNCROWDED",
+          detail: nowCrowded
+            ? `${p.crowdLookback}-day idiosyncratic run t=${crowdT[t]!.toFixed(2)} > ${p.crowdZ} → ×${p.crowdFactor}`
+            : "run no longer abnormal",
+        });
+      }
+    }
+
     /* ---- drawdown ladder on the book's own NAV (through t) ---- */
     const dd = 1 - nav / hwm;
     if (stopped) {
@@ -355,7 +518,7 @@ export function runTiger(
     let wH = 0;
     if (beta && wL > 0) {
       const b = beta[t]!;
-      if (Number.isFinite(b)) wH = -p.hedgeRatio * Math.min(3, Math.max(0, b)) * wL;
+      if (Number.isFinite(b)) wH = -p.hedgeRatio * Math.min(betaMax, Math.max(0, b)) * wL;
     }
     const gross = wL + Math.abs(wH);
     if (gross > p.maxGross) {

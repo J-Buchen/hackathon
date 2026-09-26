@@ -1,0 +1,778 @@
+diff --git a/README.md b/README.md
+index 30db156..4a84d62 100644
+--- a/README.md
++++ b/README.md
+@@ -139,7 +139,11 @@ the mandate tree:
+   it handed to sub-mandates) × leverage, not from a number the book keeps, and
+   each order is audited against the tree before it is marked.
+ - **Crowding control.** Agents in different pods running the same trade are cut
+-  back to a book-level limit, even when each is inside its own mandate.
++  back to a book-level limit, even when each is inside its own mandate. When a
++  crowd unwinds (the public signal it followed is withdrawn), the book is not
++  net long the crowded name for a trading week: every agent still long it (a
++  dip-buyer, a slow trend-follower, a PM whose thesis is that name) is cut as a
++  group while forced sellers finish.
+ 
+ The example portfolio **runs like a Tiger Cub**:
+ 1. Start from a trend: rising global coffee consumption, with dated and sourced
+@@ -152,9 +156,9 @@ The example portfolio **runs like a Tiger Cub**:
+ 
+ Three Tiger-Cub agents in three pods, each weighting the questions differently,
+ all land on SBUX: a hedge-fund hotel. Over 20 synthetic markets, the center book
+-cuts mean max drawdown from **7.9% to 5.6%**, the loss in the crowd's unwind
+-from **−4.9% to −2.5%**, and peak crowded exposure from **52% to 15% of NAV**,
+-at the same mean Sharpe (0.50). It gives up return to do it (+2.8% vs +5.5%). An
++cuts mean max drawdown from **7.9% to 5.2%**, the loss in the crowd's unwind
++from **−4.9% to −1.8%**, and peak crowded exposure from **52% to 15% of NAV**,
++at a higher mean Sharpe (0.61 vs 0.50). It gives up return to do it (+3.4% vs +5.5%). An
+ ablation shows crowding control is where the value comes from. This small
+ example does not show the improvement loops' gains: across 200-world blocks of
+ the virtual-world arena the center book's certainty-equivalent return beats the
+@@ -321,6 +325,7 @@ You can also run any layer in isolation:
+ | `@allowance/swarm` — close | `packages/swarm/src/close.test.ts` | With PMs holding sub-mandates that pay every tick, the tree is checked from outside at every tick under three policies: children ≤ parent, available ≥ 0, sub-mandates hold exactly their ppm slice of the PM (never more), a closed subtree's budgets are frozen and it can never pay, delegate or grow; every stop-out is exactly one `close` freeing budget − spent into the pod; shares are validated in the ppm they are cut in; the book's audit stops a broken tree before the tick trades (and a mid-tick break at that tick's end); spent authority is a floor no resize crosses, and a grow the fund cannot fund is clipped, never refused. |
+ | `@allowance/lab` — close in the arena | `packages/lab/src/arena-close.test.ts` | On randomized arena rosters with desks that spend every tick, center book and guardrails both run to the end on a sound tree, every stop-out is one `close` of the agent with its desks, and no move is refused. |
+ | `@allowance/swarm` — reservation binds | `packages/swarm/src/reserve.test.ts`, `packages/lab/src/arena-reserve.test.ts` | Every order is checked from outside at the trade, on books where a PM's budget overstates what it may trade (desks, its own spend, an outside grant) and on randomized arena rosters: it is sized on no more than the mandate's available authority, its gross notional is within available × leverage, a closed PM trades nothing, and the marked PnL is exactly the audited order's; an order inflated for one PM (tree untouched) stops the book at the trade naming that PM; orders are sized after the crowding cuts; the book's reallocations and cuts are made on the tree's budgets. |
++| `@allowance/swarm` — crowd unwind | `packages/swarm/src/unwind.test.ts`, `packages/lab/src/arena-unwind.test.ts` | A cool-off starts on the tick the crowd's signal is withdrawn and lasts exactly `unwindCoolOff` ticks (point-in-time: the watch at t depends on signals up to t only); longs in the crowded name are scaled by one factor to what the shorts offset, shorts and flat books untouched; read from outside at the trade, no order set the center book marks during the cool-off is net long the crowded name (generic market and arena seeds 1–24), while the same books without it are; nothing changes before the unwind or in worlds without a crowd (bit-identical); the cut is one group decision and not a standing cap. |
+ | `@allowance/swarm` — operator counterparty | `packages/swarm/src/counterparty.test.ts`, `packages/lab/src/arena-counterparty.test.ts` | When one of an operator's agents is stopped out, its other live agents are capped as a group in one plan at `cutFactor` of their full size; the cap is a ceiling on capital, so it never compounds with a ladder cut or an earlier cap; it never revokes; every stop-out happens on exactly the tick the agent's own record, replayed alone, breaches its own stop; on the arena's shared-operator worlds a name is revoked if and only if its own ladder stopped it. |
+ | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
+ | `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index 8d025bb..c017fa7 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -163,6 +163,17 @@ Around them sit agents that give the allocator something to allocate between:
+     20% of NAV, however many different-looking strategies it is spread across.
+   - A crowding cut stays in force until the agent's book stops resembling the
+     crowded book. The cap is not lifted just because its twin got stopped out.
++  - **Unwind** (loop 4): when a crowd unwinds, i.e. the public signal it was
++    following is withdrawn, the book may not be net long the crowded name for
++    `unwindCoolOff` = 5 ticks (a trading week), starting that tick. The crowd
++    leaves all at once and forced sellers keep hitting the price for days after
++    the gap; whoever is still long the name then (a dip-buyer, a slow
++    trend-follower, a PM whose thesis is that name) is holding it into the
++    forced selling. Every agent long it is scaled by one factor, as a group in
++    one tree plan, until the book is flat; shorts are never touched. It is not
++    a standing cap: capital comes back at the first reallocation after the
++    cool-off. The signal is the same public observation every agent gets before
++    the tick's return.
+ - **Counterparties** (`AgentSpec.operator`, a World ID-verified human in
+   production). One operator is one counterparty however many names it runs, so
+   a stop-out of one of its names is a credit event for all of them. Its other
+@@ -189,7 +200,7 @@ drawdown against the risk that agent runs, which a per-agent stop-loss cannot.
+ 
+ The numbers below come from `npm run demo:swarm` at the current code (after
+ loop 2: one-year Sharpe scores, risk-scaled ladder with its 40% ceiling,
+-stop-outs by `close`), using the coffee thesis as of
++stop-outs by `close`; loop 4: the unwind cool-off), using the coffee thesis as of
+ 2026-09-25, 260 simulated trading days and 20 market seeds. The two books share
+ agents, gate, leverage and initial capital; they differ in the center book's
+ cross-agent allocation and crowding limits and its risk-scaled ladder.
+@@ -208,11 +219,11 @@ short **BROS**.
+ 
+ | | per-agent guardrails | center book |
+ |---|---:|---:|
+-| loss in the unwind | −4.9% | **−2.5%** |
+-| max drawdown | 7.9% | **5.6%** (smaller on **17/20** seeds) |
+-| peak crowded (SBUX) exposure | 51.5% of NAV | **15.3%** |
+-| Sharpe | 0.50 | 0.50 (higher on only 10/20 seeds) |
+-| total return | **+5.5%** | +2.8% |
++| loss in the unwind | −4.9% | **−1.8%** |
++| max drawdown | 7.9% | **5.2%** (smaller on **17/20** seeds) |
++| peak crowded (SBUX) exposure | 51.5% of NAV | **14.9%** |
++| Sharpe | 0.50 | **0.61** (higher on 12/20 seeds) |
++| total return | **+5.5%** | +3.4% |
+ 
+ On day 1 the center book flags "4 agents across 3 pods running one trade in
+ SBUX: 48.0% of NAV > 10% limit". The three Tiger Cubs are joined by the rogue
+@@ -220,8 +231,8 @@ agent, whose clipped book is also long SBUX. Per-agent guardrails never raise
+ it, because no single agent breached anything.
+ 
+ **If the research is wrong** (catalysts carry no edge), the center book still has
+-the smaller max drawdown on **16/20** seeds: 5.6% vs 8.3% mean. Sharpe goes from
+-0.17 to 0.35, and total return from +2.8% to +1.9%. Crowding control doesn't
++the smaller max drawdown on **17/20** seeds: 5.2% vs 8.3% mean. Sharpe goes from
++0.17 to 0.48, and total return from +2.8% to +2.6%. Crowding control doesn't
+ depend on the thesis being right.
+ 
+ **Ablation (mean over the same 20 seeds):**
+@@ -229,11 +240,11 @@ depend on the thesis being right.
+ | variant | max DD | unwind | Sharpe | return |
+ |---|---:|---:|---:|---:|
+ | per-agent guardrails | 7.9% | −4.9% | 0.50 | +5.5% |
+-| center book (all on) | 5.6% | −2.5% | 0.50 | +2.8% |
+-| − crowding limits | 15.4% | −12.1% | 0.32 | +5.0% |
+-| − drawdown cut rung | 5.6% | −2.6% | 0.54 | +3.1% |
+-| − risk-scaled ladder (fixed 10%/20% rungs) | 5.1% | −1.9% | 0.40 | +2.2% |
+-| crowding limits only | 4.2% | −2.8% | 0.46 | +2.3% |
++| center book (all on) | 5.2% | −1.8% | 0.61 | +3.4% |
++| − crowding limits (incl. the unwind cool-off) | 15.4% | −12.1% | 0.32 | +5.0% |
++| − drawdown cut rung | 5.1% | −1.8% | 0.67 | +3.8% |
++| − risk-scaled ladder (fixed 10%/20% rungs) | 4.7% | −1.1% | 0.56 | +3.0% |
++| crowding limits only | 3.7% | −2.2% | 0.54 | +2.6% |
+ 
+ What this says, plainly:
+ 
+@@ -243,11 +254,11 @@ What this says, plainly:
+   nothing.** Sharpe-weighting pays the crowd for its run-up: max drawdown rises
+   to 15.4% vs 7.9% for equal weights. This is the case for a book-level risk
+   engine rather than a leaderboard.
+-- **The cost is return.** The center book gives up about 2.7 points of return in
++- **The cost is return.** The center book gives up about 2.1 points of return in
+   the edge-on case, because it refuses to let the fund's single best idea become
+   half its NAV.
+ - **The drawdown-cut rung does not earn its keep on this market.** Removing it
+-  raises Sharpe from 0.50 to 0.54. It stays in the default because it's standard
++  raises Sharpe from 0.61 to 0.67. It stays in the default because it's standard
+   pod-shop practice and costs little drawdown, but the data doesn't support it
+   here. The stop-out rung (now a `close`) stays either way. Since loop 1 the
+   rungs are risk-scaled. The cut still fires (about 9 times per arena world on
+@@ -257,8 +268,8 @@ What this says, plainly:
+   (−0.03..+0.27). That is not enough to change the default. It is optional:
+   leave `ddCut` unset for a stop-only ladder.
+ - **The risk-scaled ladder (loop 1) trades drawdown for Sharpe here.** With
+-  fixed 10%/20% rungs the center book's mean max drawdown is 5.1% (Sharpe 0.40);
+-  risk-scaled, 5.6% (Sharpe 0.50). It was adopted because it raised fund utility
++  fixed 10%/20% rungs the center book's mean max drawdown is 4.7% (Sharpe 0.56);
++  risk-scaled, 5.2% (Sharpe 0.61). It was adopted because it raised fund utility
+   on sealed arena worlds, where the center book's mean max drawdown is still
+   above the per-agent baseline's; see [`LOOPS.md`](LOOPS.md).
+ - **Loop 2's one-year scores do not help this example.** On sealed arena worlds
+@@ -266,9 +277,15 @@ What this says, plainly:
+   center book's mean Sharpe fell from 0.61 to 0.50 and its max drawdown rose
+   from 5.0% to 5.6%. The markets are one scenario, a crowded trade that unwinds;
+   the arena's 200-world blocks are the yardstick.
++- **The unwind cool-off (loop 4) takes a third off the unwind loss.** Before it,
++  the center book lost 2.5% in the unwind on these markets, with max drawdown
++  5.6%, Sharpe 0.50 and return +2.8%. Part of that loss came after the gap:
++  the three Tiger Cubs still held their SBUX long and the mean-reversion agent
++  bought the crash, into the forced selling. Not being net long the name for a
++  week after the signal is withdrawn gives −1.8%, 5.2%, 0.61 and +3.4%.
+ - **The headline seed (7)** is shown as-is rather than a cherry-picked one. On it
+   the center book has the lower drawdown (5.5% vs 6.6%) and unwind loss, and the
+-  higher Sharpe (1.22 vs 1.08), but the lower return (+7.4% vs +9.3%).
++  higher Sharpe (1.21 vs 1.08), but the lower return (+7.4% vs +9.3%).
+ 
+ ## Limits
+ 
+diff --git a/package.json b/package.json
+index f0f712b..e0d7782 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts packages/swarm/src/unwind.test.ts packages/lab/src/arena-unwind.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/lab/package.json b/packages/lab/package.json
+index cb0f115..e0a9d75 100644
+--- a/packages/lab/package.json
++++ b/packages/lab/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-counterparty.test.ts src/arena-reserve.test.ts",
++    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-counterparty.test.ts src/arena-reserve.test.ts src/arena-unwind.test.ts",
+     "lab": "tsx src/cli.ts"
+   },
+   "dependencies": {
+diff --git a/packages/lab/src/arena-unwind.test.ts b/packages/lab/src/arena-unwind.test.ts
+new file mode 100644
+index 0000000..977b94d
+--- /dev/null
++++ b/packages/lab/src/arena-unwind.test.ts
+@@ -0,0 +1,60 @@
++/**
++ * Crowd unwinds on randomized arena worlds (research seeds 1–24): for
++ * `unwindCoolOff` ticks from the tick a crowd's viral signal is withdrawn,
++ * no order set the center book marks is net long the crowded name (read from
++ * outside the book, at the trade). The cool-off acts on nothing else: worlds
++ * without a crowd run bit-identical to the book without it, and in crowd
++ * worlds the NAV path is identical up to the unwind. Without the cool-off the
++ * same books are net long the crowded name in some unwinds, so the check can
++ * fail.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { defaultCenterBookPolicy, orderNotional, runBook, type SizedOrder } from "@allowance/swarm";
++import { makeWorld } from "./arena";
++
++const SEEDS = Array.from({ length: 24 }, (_, i) => i + 1);
++const policy = defaultCenterBookPolicy();
++let crowdWorlds = 0;
++let longWithout = 0;
++
++async function run(seed: number, coolOff: number) {
++  const world = makeWorld(seed);
++  const net = new Map<number, number>();
++  const name = world.market.config.crowd.instrument;
++  const book = await runBook(world.market, world.swarm(), { ...policy, unwindCoolOff: coolOff }, {
++    onTrade: (t, _tree, orders: readonly SizedOrder[]) => void net.set(t, orders.reduce((s, o) => s + (orderNotional(o)[name] ?? 0), 0)),
++  });
++  return { world, book, net };
++}
++
++for (const seed of SEEDS) {
++  test(`arena world ${seed}: flat or short the crowded name for the whole cool-off after its crowd unwinds; nothing else moves`, async () => {
++    const on = await run(seed, policy.unwindCoolOff);
++    const off = await run(seed, 0);
++    const { crowd } = on.world.market.config;
++    const withdrawn = on.world.market.ticks.findIndex((k, t) => t > 0 && k.viralSignal === null && on.world.market.ticks[t - 1]!.viralSignal !== null);
++    if (!on.world.meta.crowd) {
++      assert.equal(withdrawn, -1);
++      assert.deepEqual(on.book.returns, off.book.returns, "no crowd: bit-identical");
++      assert.equal(on.book.decisions.filter((d) => d.detail.includes("crowd unwound")).length, 0);
++      return;
++    }
++    crowdWorlds++;
++    assert.equal(withdrawn, crowd.crashTick + 1, "the signal is withdrawn the tick after the crash");
++    assert.deepEqual(on.book.nav.slice(0, withdrawn), off.book.nav.slice(0, withdrawn), "identical up to the unwind");
++    const until = Math.min(withdrawn + policy.unwindCoolOff - 1, on.book.nav.length - 1);
++    for (let t = withdrawn; t <= until; t++) {
++      assert.ok(on.net.get(t)! <= 0.01, `t=${t}: marks ${on.net.get(t)!.toFixed(2)} USDC net long ${crowd.instrument} in the cool-off`);
++      if (off.net.get(t)! > 0.01) longWithout++;
++    }
++    for (const d of on.book.decisions.filter((x) => x.detail.includes("crowd unwound"))) {
++      assert.ok(d.t >= withdrawn && d.t <= until, `unwind cut at t=${d.t} outside the cool-off [${withdrawn}, ${until}]`);
++    }
++  });
++}
++
++test("the arena checks above could fail: without the cool-off some crowd worlds are net long the name in its unwind", () => {
++  assert.ok(crowdWorlds >= 10, `${crowdWorlds} crowd worlds checked`);
++  assert.ok(longWithout > 0, "at least one unwind tick where the book without a cool-off is net long the crowded name");
++});
+diff --git a/packages/swarm/package.json b/packages/swarm/package.json
+index d7a15dc..09fac00 100644
+--- a/packages/swarm/package.json
++++ b/packages/swarm/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/example.test.ts src/reserve.test.ts"
++    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/example.test.ts src/reserve.test.ts src/unwind.test.ts"
+   },
+   "dependencies": {
+     "@allowance/core": "*"
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index 0ecea48..79f5d73 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -26,7 +26,12 @@
+  *     exposure to any one instrument exceeds `crowdMaxShare` of NAV, every
+  *     member contributing to it is scaled down until it doesn't. The whole
+  *     book's net exposure to any one instrument is capped too (`bookMaxShare`).
+- *     No single agent ever breached a limit — that is the point.
++ *     No single agent ever breached a limit — that is the point. When a crowd
++ *     UNWINDS (the public signal it was following is withdrawn), the book may
++ *     not be net long the crowded name for `unwindCoolOff` ticks: the crowd
++ *     sells all at once and forced sellers keep pressing the price for days
++ *     after the gap, so every agent long the name is cut, as a group, until
++ *     the book is flat or short it (see `nextUnwindWatch`, `unwindBreach`).
+  *  4. COUNTERPARTIES. An operator (`AgentSpec.operator`, a verified human in
+  *     production) is one counterparty however many names it runs, so a
+  *     stop-out of one of its names is a credit event for all of them: its
+@@ -123,6 +128,18 @@ export interface CenterBookPolicy {
+   crowdMaxShare: number;
+   /** Max net exposure of the WHOLE book to one instrument, as a share of NAV. */
+   bookMaxShare: number;
++  /**
++   * Ticks, from the tick a crowd's viral signal is withdrawn, during which the
++   * book may not be net long the name the crowd was piling into (0 = off).
++   * An unwind is a fire sale: the crowd leaves at once and forced sellers
++   * keep hitting the price for days after the gap, so a book still long the
++   * name (a dip-buyer, a slow trend-follower) is catching a falling knife.
++   * Every agent long the name is scaled down, as a group, in one tree plan,
++   * until the book's net exposure is flat; shorts are never touched, and the
++   * cut is not a standing cap: capital comes back at the first reallocation
++   * after the cool-off. Five ticks is one trading week.
++   */
++  unwindCoolOff: number;
+ }
+ 
+ /**
+@@ -162,6 +179,7 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
+     crowdSimilarity: 0.8,
+     crowdMaxShare: 0.1,
+     bookMaxShare: 0.2,
++    unwindCoolOff: 5,
+   };
+ }
+ 
+@@ -406,8 +424,10 @@ export interface CrowdBreach {
+   /**
+    * CLONES: a cluster of agents running near-identical books.
+    * BOOK:   the whole book's net exposure to one instrument, whoever holds it.
++   * UNWIND: the book is net long a crowded name whose crowd is unwinding
++   *         (limit 0, see `unwindBreach`).
+    */
+-  kind: "CLONES" | "BOOK";
++  kind: "CLONES" | "BOOK" | "UNWIND";
+   /** Agents in the group, in input order. */
+   members: string[];
+   instrument: string;
+@@ -540,6 +560,71 @@ export function scanCrowding(
+   return { clusters, breaches };
+ }
+ 
++/* ------------------------------------------------------------------ */
++/* 3b. Crowd unwinds                                                  */
++/* ------------------------------------------------------------------ */
++
++/** What the book remembers about the crowd's public signal. */
++export interface UnwindWatch {
++  /** The viral signal published for the last tick seen (null when there was none). */
++  signal: string | null;
++  /**
++   * The crowded name in its cool-off: `from` is the tick its signal was
++   * withdrawn, `until` the last tick of the cool-off (inclusive).
++   */
++  coolOff: { instrument: string; from: number; until: number } | null;
++}
++
++export const NO_UNWIND: UnwindWatch = { signal: null, coolOff: null };
++
++/**
++ * Advance the watch to tick `t`, given the viral signal published for `t`
++ * (`MarketTick.viralSignal`: public before the tick's return, the same
++ * observation every agent gets). A crowd has unwound when the name its signal
++ * pointed to last tick is no longer the signal: that name enters a cool-off
++ * of `coolOffTicks` ticks, t included. A cool-off runs to its end (a new
++ * unwind replaces it), and `coolOffTicks` = 0 never starts one.
++ */
++export function nextUnwindWatch(prev: UnwindWatch, signal: string | null, t: number, coolOffTicks: number): UnwindWatch {
++  let coolOff = prev.coolOff !== null && t <= prev.coolOff.until ? prev.coolOff : null;
++  if (coolOffTicks > 0 && prev.signal !== null && signal !== prev.signal) {
++    coolOff = { instrument: prev.signal, from: t, until: t + coolOffTicks - 1 };
++  }
++  return { signal, coolOff };
++}
++
++/**
++ * If the book is net long `instrument`, the uniform capital scale on the
++ * agents long it that makes the book's net exposure exactly flat: they are
++ * scaled to what the shorts offset (to zero when nobody is short). Agents
++ * short or flat the name are never cut. Null when the book is flat or short.
++ */
++export function unwindBreach(
++  agents: readonly CrowdInput[],
++  instrument: string,
++  nav: number,
++  leverage: number,
++): CrowdBreach | null {
++  if (nav <= 0) return null;
++  const exposure = (m: CrowdInput) => m.capital * leverage * (m.weights[instrument] ?? 0);
++  const members = agents.filter((m) => m.capital > 0 && exposure(m) !== 0);
++  const contributors = members.filter((m) => exposure(m) > 0);
++  const long = contributors.reduce((s, m) => s + exposure(m), 0);
++  const net = members.reduce((s, m) => s + exposure(m), 0);
++  if (!(net > 0) || !(long > 0)) return null;
++  const scale = Math.max(0, Math.min(1, (long - net) / long));
++  return {
++    kind: "UNWIND",
++    members: members.map((m) => m.name),
++    instrument,
++    exposure: net,
++    share: net / nav,
++    limit: 0,
++    scale,
++    contributors: contributors.map((m) => m.name),
++  };
++}
++
+ /* ------------------------------------------------------------------ */
+ /* 4. Counterparties                                                  */
+ /* ------------------------------------------------------------------ */
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index c72bcea..5ddfcee 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -17,6 +17,9 @@
+  *                           handed out shrink to what they spent and are revoked, in one
+  *                           operation; the unspent authority is back in the pod); the
+  *                           drawdown rungs are risk-scaled in the center book
++ *   - crowd unwind        = one applyTargets plan  (for `unwindCoolOff` ticks after a crowd's
++ *                           signal is withdrawn, every agent long the crowded name is
++ *                           scaled down together until the book is flat in it)
+  *   - counterparty        = AgentSpec.operator     (a stop-out of one name caps the
+  *                           operator's other live names at cutFactor of their full size,
+  *                           as a group in one applyTargets plan, until each recovers on
+@@ -51,11 +54,15 @@ import {
+   cutToCeiling,
+   ladderStep,
+   nextCounterpartyCaps,
++  nextUnwindWatch,
++  NO_UNWIND,
+   scanCrowding,
++  unwindBreach,
+   type AllocationPolicy,
+   type CenterBookPolicy,
+   type CounterpartyCap,
+   type LadderState,
++  type UnwindWatch,
+ } from "./allocator";
+ import { orderNotional, orderPnl, preTradeCheck, sizeOrder, type GateViolation, type SizedOrder } from "./gate";
+ import { cosineSimilarity } from "./stats";
+@@ -556,6 +563,8 @@ export async function runBook(
+   // on capital (`cutToCeiling`), so it needs the full size it is a fraction of.
+   const fullSize = new Map<string, number>(agents.map((a) => [a.name, perAgent]));
+   let operatorCaps: ReadonlyMap<string, CounterpartyCap> = new Map();
++  // The crowd's public signal, and the crowded name in its unwind cool-off.
++  let unwind: UnwindWatch = NO_UNWIND;
+   // The operator cap is a cut to `cutFactor`: without a cut factor below 1 there is none.
+   const capFactor = center?.cutFactor !== undefined && center.cutFactor < 1 ? center.cutFactor : null;
+   const history: Observation["history"][number][] = [];
+@@ -660,6 +669,8 @@ export async function runBook(
+     });
+ 
+     /* 4) Book-level crowding check on the proposed books (center only). */
++    const podCount = (names: string[]) => new Set(names.map((m) => podOf.get(m))).size;
++    const plural = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
+     if (center) {
+       // Exposure is measured on what each agent would trade now: its gated
+       // weights sized from the tree as it stands before any cut.
+@@ -688,8 +699,6 @@ export async function runBook(
+           targets.set(name, toUnits(cut));
+         }
+         applyTargets(tree, podOf, subsOf, targets);
+-        const podCount = (names: string[]) => new Set(names.map((m) => podOf.get(m))).size;
+-        const plural = (k: number, w: string) => `${k} ${w}${k === 1 ? "" : "s"}`;
+         decisions.push({
+           t,
+           kind: "CROWDING_CUT",
+@@ -702,6 +711,38 @@ export async function runBook(
+             `contributors scaled ×${b.scale.toFixed(2)}`,
+         });
+       }
++
++      // 4b) Crowd unwind: the signal published for this tick (public before
++      // its return, what every agent saw in step 2) tells whether the crowd
++      // left. During the cool-off the book is not net long the crowded name:
++      // measured on orders sized from the tree after the cuts above, and cut
++      // as a group in one plan. Not a standing cap (no `crowdCaps` entry), so
++      // the next reallocation after the cool-off gives the capital back.
++      unwind = nextUnwindWatch(unwind, tick.viralSignal, t, center.unwindCoolOff);
++      if (unwind.coolOff !== null) {
++        const { instrument, from } = unwind.coolOff;
++        const b = unwindBreach(
++          size(gated, now).map((o) => ({ name: o.node, capital: o.authority, weights: o.weights })),
++          instrument,
++          currentNav,
++          center.leverage,
++        );
++        if (b) {
++          const targets = new Map<string, bigint>();
++          for (const name of b.contributors) targets.set(name, toUnits(budgetOf(agents.find((a) => a.name === name)!) * b.scale));
++          applyTargets(tree, podOf, subsOf, targets);
++          decisions.push({
++            t,
++            kind: "CROWDING_CUT",
++            node: b.contributors.join(", "),
++            detail:
++              `book net ${instrument} exposure (${plural(b.contributors.length, "agent")} across ${plural(podCount(b.contributors), "pod")}), ` +
++              `crowd unwound at t=${from}, day ${t - from + 1} of ${center.unwindCoolOff}` +
++              `: ${(b.share * 100).toFixed(1)}% of NAV > ${(b.limit * 100).toFixed(0)}% limit → ` +
++              `contributors scaled ×${b.scale.toFixed(2)}`,
++          });
++        }
++      }
+     }
+ 
+     /* 5) Size every order from the tree, audit it, mark it. --------- */
+diff --git a/packages/swarm/src/evaluate.ts b/packages/swarm/src/evaluate.ts
+index 2b70d26..8e7dd8e 100644
+--- a/packages/swarm/src/evaluate.ts
++++ b/packages/swarm/src/evaluate.ts
+@@ -135,7 +135,7 @@ export async function ablation(seeds: number[]): Promise<AblationRow[]> {
+   const variants: { variant: string; description: string; naive?: true; patch?: Partial<CenterBookPolicy> }[] = [
+     { variant: "per-agent guardrails", description: "equal capital, gate + stop-loss only", naive: true },
+     { variant: "center book", description: "everything on" },
+-    { variant: "− crowding", description: "score-based allocation + ladder, no crowding limits", patch: { crowdMaxShare: off, bookMaxShare: off } },
++    { variant: "− crowding", description: "score-based allocation + ladder, no crowding limits", patch: { crowdMaxShare: off, bookMaxShare: off, unwindCoolOff: 0 } },
+     { variant: "− drawdown cut", description: "no cut rung (stop-out kept)", patch: { ddCut: off } },
+     { variant: "− risk-scaled ladder", description: "drawdown rungs at fixed percentages, whatever vol the agent runs", patch: { ddStopVol: 0 } },
+     { variant: "crowding only", description: "equal weight + crowding limits, no scoring, no cut", patch: { warmup: off, ddCut: off } },
+diff --git a/packages/swarm/src/unwind.test.ts b/packages/swarm/src/unwind.test.ts
+new file mode 100644
+index 0000000..bc331a1
+--- /dev/null
++++ b/packages/swarm/src/unwind.test.ts
+@@ -0,0 +1,273 @@
++/**
++ * Crowd unwinds (`CenterBookPolicy.unwindCoolOff`). When the public signal a
++ * crowd was following is withdrawn, the crowd has left all at once and forced
++ * sellers keep hitting the name for days after the gap. For `unwindCoolOff`
++ * ticks from the tick the signal is withdrawn, the book is not net long the
++ * crowded name: every agent long it is scaled down by one factor, as a group,
++ * in one tree plan, until the book is flat; shorts are never touched.
++ *
++ * Checked on the pure functions and, from outside the book (the orders it
++ * marks, via `onTrade`), on the generic market's crowd: the guarantee holds on
++ * every tick of the cool-off, the same books without it are net long the name
++ * in its unwind (so these checks can fail), and nothing changes before the
++ * signal is withdrawn.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { pay, type DelegationTree, type PaymentAdapters } from "@allowance/core";
++import { defaultCenterBookPolicy, NO_UNWIND, nextUnwindWatch, unwindBreach, type CrowdInput, type UnwindWatch } from "./allocator";
++import { runBook, tickToUnix, type BookResult, type SwarmSpec } from "./book";
++import { orderNotional, type SizedOrder } from "./gate";
++import { generateMarket, genericMarketConfig } from "./market";
++import { HerdStrategy, MeanReversionStrategy, NoiseStrategy, RogueStrategy, TrendStrategy } from "./strategies";
++
++const watch = (signals: readonly (string | null)[], coolOff: number): UnwindWatch[] => {
++  const out: UnwindWatch[] = [];
++  let w = NO_UNWIND;
++  signals.forEach((s, t) => out.push((w = nextUnwindWatch(w, s, t, coolOff))));
++  return out;
++};
++
++test("unwind watch: a cool-off starts on the tick the signal is withdrawn and lasts exactly coolOff ticks", () => {
++  const signals = [null, null, "MEME", "MEME", "MEME", null, null, null, null, null, null, null];
++  const w = watch(signals, 5);
++  for (let t = 0; t < 5; t++) assert.equal(w[t]!.coolOff, null, `no cool-off while the crowd builds (t=${t})`);
++  for (let t = 5; t <= 9; t++) assert.deepEqual(w[t]!.coolOff, { instrument: "MEME", from: 5, until: 9 }, `t=${t}`);
++  for (let t = 10; t < signals.length; t++) assert.equal(w[t]!.coolOff, null, `over after five ticks (t=${t})`);
++  assert.ok(watch(signals, 0).every((x) => x.coolOff === null), "unwindCoolOff 0 never starts one");
++  assert.ok(watch([null, null, null], 5).every((x) => x.coolOff === null), "no crowd, no cool-off");
++});
++
++test("unwind watch: a signal that moves to another name puts the old one in cool-off; a new unwind replaces a running one", () => {
++  const w = watch(["A", "A", "B", "B", null, null], 3);
++  assert.deepEqual(w[2]!.coolOff, { instrument: "A", from: 2, until: 4 });
++  assert.equal(w[2]!.signal, "B");
++  assert.deepEqual(w[4]!.coolOff, { instrument: "B", from: 4, until: 6 });
++  assert.deepEqual(w[5]!.coolOff, { instrument: "B", from: 4, until: 6 });
++});
++
++test("unwind watch is point-in-time: the watch at t depends on signals up to t only", () => {
++  const past = [null, "X", "X", null, null];
++  const a = watch([...past, "Y", "Y", null], 4);
++  const b = watch([...past, null, "Z", "Z"], 4);
++  assert.deepEqual(a.slice(0, past.length), b.slice(0, past.length));
++});
++
++test("unwind breach: longs scaled by one factor to what the shorts offset; shorts and flat books untouched", () => {
++  const agents: CrowdInput[] = [
++    { name: "dip-buyer", capital: 1_000_000, weights: { MEME: 0.8, GOLD: 0.2 } },
++    { name: "slow-trend", capital: 2_000_000, weights: { MEME: 0.25, GOLD: -0.75 } },
++    { name: "fast-trend", capital: 1_000_000, weights: { MEME: -0.5, GOLD: 0.5 } },
++    { name: "gold-only", capital: 3_000_000, weights: { GOLD: 1 } },
++    { name: "closed", capital: 0, weights: { MEME: 1 } },
++  ];
++  const lev = 2;
++  const b = unwindBreach(agents, "MEME", 10_000_000, lev)!;
++  assert.equal(b.kind, "UNWIND");
++  assert.equal(b.instrument, "MEME");
++  assert.equal(b.limit, 0);
++  // Longs: 1M×2×0.8 + 2M×2×0.25 = 2.6M; short: 1M×2×0.5 = 1M; net 1.6M.
++  assert.ok(Math.abs(b.exposure - 1_600_000) < 1e-6);
++  assert.ok(Math.abs(b.share - 0.16) < 1e-12);
++  assert.deepEqual(b.contributors, ["dip-buyer", "slow-trend"], "only agents long the name, never a short, a flat book or a closed one");
++  assert.deepEqual(b.members, ["dip-buyer", "slow-trend", "fast-trend"]);
++  assert.ok(Math.abs(b.scale - 1 / 2.6) < 1e-12);
++  const after = agents.map((a) => ({ ...a, capital: b.contributors.includes(a.name) ? a.capital * b.scale : a.capital }));
++  const net = after.reduce((s, a) => s + a.capital * lev * (a.weights.MEME ?? 0), 0);
++  assert.ok(Math.abs(net) < 1e-6, `flat after the cut (net ${net})`);
++});
++
++test("unwind breach: no shorts means the longs are cut to zero; flat or net short means no cut", () => {
++  const onlyLong = unwindBreach([{ name: "a", capital: 1_000_000, weights: { MEME: 1 } }], "MEME", 10_000_000, 2)!;
++  assert.equal(onlyLong.scale, 0);
++  assert.equal(
++    unwindBreach(
++      [
++        { name: "a", capital: 1_000_000, weights: { MEME: 0.5 } },
++        { name: "b", capital: 1_000_000, weights: { MEME: -0.5 } },
++      ],
++      "MEME",
++      10_000_000,
++      2,
++    ),
++    null,
++  );
++  assert.equal(unwindBreach([{ name: "b", capital: 1_000_000, weights: { MEME: -1 } }], "MEME", 10_000_000, 2), null);
++  assert.equal(unwindBreach([{ name: "c", capital: 1_000_000, weights: { GOLD: 1 } }], "MEME", 10_000_000, 2), null);
++});
++
++/* ------------------------------------------------------------------ */
++/* The book, on the generic market's crowd in MEME                    */
++/* ------------------------------------------------------------------ */
++
++// Herders ride the viral signal into MEME; a mean-reversion agent buys the
++// dip after the crash; trend and noise agents sit around them.
++function swarm(): SwarmSpec {
++  const all = ["ETH", "BTC", "SOL", "GOLD", "UST10Y", "EURUSD", "MEME"];
++  const crypto = ["ETH", "BTC", "SOL", "MEME"];
++  return {
++    principal: "alice",
++    fund: "fund.eth",
++    aum: 10_000_000,
++    pods: [
++      { label: "systematic", instruments: all },
++      { label: "macro", instruments: ["GOLD", "UST10Y", "EURUSD", "MEME"] },
++      { label: "digital", instruments: crypto },
++    ],
++    agents: [
++      { label: "trend", pod: "systematic", instruments: all, strategy: new TrendStrategy(30) },
++      { label: "herd-a", pod: "systematic", instruments: all, strategy: new HerdStrategy(25) },
++      { label: "meanrev", pod: "macro", instruments: ["GOLD", "UST10Y", "EURUSD", "MEME"], strategy: new MeanReversionStrategy(3) },
++      { label: "herd-b", pod: "macro", instruments: ["GOLD", "UST10Y", "EURUSD", "MEME"], strategy: new HerdStrategy(20) },
++      { label: "noise", pod: "digital", instruments: crypto, strategy: new NoiseStrategy(5) },
++      { label: "herd-c", pod: "digital", instruments: crypto, strategy: new HerdStrategy(15) },
++      { label: "rogue", pod: "digital", instruments: crypto, strategy: new RogueStrategy("GOLD") },
++    ],
++  };
++}
++
++const netIn = (orders: readonly SizedOrder[], name: string) => orders.reduce((s, o) => s + (orderNotional(o)[name] ?? 0), 0);
++
++async function run(seed: number, coolOff: number): Promise<{ book: BookResult; orders: Map<number, SizedOrder[]> }> {
++  const market = generateMarket(genericMarketConfig(seed));
++  const orders = new Map<number, SizedOrder[]>();
++  const book = await runBook(market, swarm(), { ...defaultCenterBookPolicy(), unwindCoolOff: coolOff }, {
++    onTrade: (t, _tree, os) => void orders.set(t, os.map((o) => ({ ...o, weights: { ...o.weights } }))),
++  });
++  return { book, orders };
++}
++
++const unwindCuts = (book: BookResult) => book.decisions.filter((d) => d.kind === "CROWDING_CUT" && d.detail.includes("crowd unwound"));
++
++for (const seed of [7, 9, 11]) {
++  test(`generic market seed ${seed}: never net long the crowded name during its unwind's cool-off, and only then`, async () => {
++    const market = generateMarket(genericMarketConfig(seed));
++    const { crashTick } = market.config.crowd;
++    const coolOff = defaultCenterBookPolicy().unwindCoolOff;
++    assert.equal(coolOff, 5, "on by default: one trading week");
++    // The signal is published through the crash tick and withdrawn the tick after.
++    assert.equal(market.ticks[crashTick]!.viralSignal, "MEME");
++    assert.equal(market.ticks[crashTick + 1]!.viralSignal, null);
++    const from = crashTick + 1;
++    const until = from + coolOff - 1;
++
++    const on = await run(seed, coolOff);
++    const off = await run(seed, 0);
++
++    // Nothing changes before the unwind: same NAV path through the crash.
++    assert.deepEqual(on.book.nav.slice(0, from), off.book.nav.slice(0, from));
++    assert.equal(unwindCuts(off.book).length, 0);
++
++    // Every order set the book marks in the cool-off is flat or short MEME (to a cent).
++    for (let t = from; t <= until; t++) {
++      const net = netIn(on.orders.get(t)!, "MEME");
++      assert.ok(net <= 0.01, `t=${t}: book marks ${net.toFixed(2)} USDC net long MEME during the cool-off`);
++    }
++    // Without the cool-off the same book is net long MEME in the unwind: the check can fail.
++    const longWithout = Math.max(...Array.from({ length: coolOff }, (_, k) => netIn(off.orders.get(from + k)!, "MEME")));
++    assert.ok(longWithout > 0.01 * 10_000_000, `without the cool-off the book is net long MEME in the unwind (${longWithout.toFixed(0)} USDC)`);
++
++    // Unwind cuts happen inside the cool-off only, and name the tick the crowd left.
++    const cuts = unwindCuts(on.book);
++    assert.ok(cuts.length > 0);
++    for (const d of cuts) {
++      assert.ok(d.t >= from && d.t <= until, `unwind cut at t=${d.t} outside [${from}, ${until}]`);
++      assert.match(d.detail, new RegExp(`book net MEME exposure .* crowd unwound at t=${from}, day ${d.t - from + 1} of ${coolOff}: [\\d.]+% of NAV > 0% limit → contributors scaled ×[\\d.]+`));
++    }
++
++    // On the first tick of the unwind both books stand on the same tree until
++    // the cut: agents flat or short MEME keep their authority to the unit, and
++    // every agent long it is scaled by one common factor, in one decision.
++    const a = on.orders.get(from)!;
++    const b = off.orders.get(from)!;
++    const longs = b.filter((o) => (o.weights.MEME ?? 0) > 0 && o.authority > 0).map((o) => o.node);
++    const first = cuts.filter((d) => d.t === from);
++    if (netIn(b, "MEME") > 0.01) {
++      assert.equal(first.length, 1, "one group cut, one plan");
++      assert.deepEqual(first[0]!.node.split(", ").sort(), [...longs].sort());
++      const factors = longs.map((n) => a.find((o) => o.node === n)!.authority / b.find((o) => o.node === n)!.authority);
++      for (const f of factors) assert.ok(Math.abs(f - factors[0]!) < 1e-5, `one factor for the group: ${factors.join(", ")}`);
++    }
++    for (const o of b) {
++      if (longs.includes(o.node)) continue;
++      assert.equal(a.find((x) => x.node === o.node)!.authority, o.authority, `${o.node} is not long MEME: untouched`);
++    }
++  });
++}
++
++test("the cool-off is not a standing cap: a cut agent is sized back up by the first reallocation after it", async () => {
++  const market = generateMarket(genericMarketConfig(7));
++  const { crashTick } = market.config.crowd;
++  const policy = defaultCenterBookPolicy();
++  const { book } = await run(7, policy.unwindCoolOff);
++  const until = crashTick + policy.unwindCoolOff;
++  const cut = new Set(unwindCuts(book).flatMap((d) => d.node.split(", ")));
++  assert.ok(cut.size > 0);
++  const nextRebalance = Array.from({ length: policy.rebalanceEvery }, (_, k) => until + 1 + k).find(
++    (t) => (t - policy.warmup) % policy.rebalanceEvery === 0,
++  )!;
++  const grown = book.decisions.filter((d) => d.t === nextRebalance && d.kind === "REALLOCATE" && cut.has(d.node));
++  assert.ok(grown.length > 0, "a cut agent is resized at the first reallocation after the cool-off");
++  for (const d of grown) {
++    const [from, to] = d.detail.split(" USDC")[0]!.split(" → ").map(Number);
++    assert.ok(to! > from!, `${d.node} is sized back up (${d.detail})`);
++    const i = book.agents.findIndex((a) => a.name === d.node);
++    assert.ok(book.agents[i]!.capital[nextRebalance]! > book.agents[i]!.capital[until]!, "and trades on more authority than in the cool-off");
++  }
++});
++
++/** Always-yes payment ports: this test is about authority, not the adapters. */
++const allowAll: PaymentAdapters = {
++  identity: { verify: async () => ({ ok: true }) },
++  screening: { screen: async () => ({ approved: true }) },
++  settlement: {
++    settle: async (req) => ({
++      settled: true,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: req.amount,
++      amountOut: req.amount,
++    }),
++  },
++};
++
++test("with desks that spend and agents paying out of their own mandates, the cool-off still leaves the book flat or short", async () => {
++  // Cutting a budget by s cuts the authority an order is sized on by at least
++  // s: spent authority and a desk's committed slice are floors, not trading
++  // capital. So the guarantee does not rest on budget = available.
++  const market = generateMarket(genericMarketConfig(7));
++  const { crashTick } = market.config.crowd;
++  const coolOff = defaultCenterBookPolicy().unwindCoolOff;
++  const spec = swarm();
++  for (const a of spec.agents) {
++    a.subMandates = [
++      { label: "exec", share: 0.2 },
++      { label: "data", share: 0.02, instruments: [a.instruments[0]!] },
++    ];
++  }
++  const spend = async (tree: DelegationTree, node: string, merchant: string, amount: bigint, now: number) => {
++    if (tree.isRevokedInChain(node) || tree.available(node) < amount) return;
++    assert.equal((await pay(tree, { node, merchant, amount }, allowAll, { now })).outcome, "SETTLED");
++  };
++  const net = new Map<number, number>();
++  let spentDirect = 0n;
++  const book = await runBook(market, spec, defaultCenterBookPolicy(), {
++    onTick: async (t, tree) => {
++      const now = tickToUnix(t);
++      for (const n of tree.listNodes()) {
++        const label = n.name.split(".")[0];
++        if (label === "exec") await spend(tree, n.name, n.mandate.allowedMerchants![0]!, 2_000_000000n, now);
++        if (label === "data") await spend(tree, n.name, n.mandate.allowedMerchants![0]!, 200_000000n, now);
++      }
++      for (const a of spec.agents) await spend(tree, `${a.label}.${a.pod}.fund.eth`, a.instruments[0]!, 500_000000n, now);
++      spentDirect = spec.agents.reduce((s, a) => s + tree.requireNode(`${a.label}.${a.pod}.fund.eth`).mandate.spentDirect, 0n);
++    },
++    onTrade: (t, _tree, orders) => void net.set(t, netIn(orders, "MEME")),
++  });
++  assert.ok(spentDirect > 0n, "agents did spend out of their own mandates");
++  assert.ok(unwindCuts(book).length > 0, "the unwind cut fired");
++  for (let t = crashTick + 1; t <= crashTick + coolOff; t++) {
++    assert.ok(net.get(t)! <= 0.01, `t=${t}: marks ${net.get(t)!.toFixed(2)} USDC net long MEME during the cool-off`);
++  }
++});

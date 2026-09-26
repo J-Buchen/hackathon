@@ -22,6 +22,21 @@ test("the grid collapses settings that cannot matter, so every trial is distinct
   assert.equal(grid.length, 36);
   assert.equal(new Set(grid.map(paramKey)).size, grid.length);
   assert.equal(canonical({ ...DEFAULT_PARAMS, trendLookback: null, trendFloor: 0 }).trendFloor, 1);
+  // A beta estimator on an unhedged book cannot matter either.
+  const shrunk = { ...DEFAULT_PARAMS, hedgeBeta: { prior: 0.5, priorSd: 0.5, max: 1.5 } };
+  assert.equal(paramKey(shrunk), paramKey(DEFAULT_PARAMS));
+  assert.notEqual(paramKey({ ...shrunk, hedgeSymbol: "HG", hedgeRatio: 1 }), paramKey({ ...DEFAULT_PARAMS, hedgeSymbol: "HG", hedgeRatio: 1 }));
+});
+
+test("the grid collapses crowding-gate settings that cannot matter", () => {
+  // Without a threshold (or at factor 1) the gate's window and factor are inert: one trial, not six.
+  const grid = expandGrid(DEFAULT_PARAMS, { crowdZ: [null], crowdLookback: [40, 60, 90], crowdFactor: [0.5, 1] });
+  assert.equal(grid.length, 1);
+  assert.equal(paramKey({ ...DEFAULT_PARAMS, crowdZ: 2, crowdFactor: 1 }), paramKey(DEFAULT_PARAMS));
+  // With a threshold every setting is a distinct trial.
+  const on = expandGrid(DEFAULT_PARAMS, { crowdZ: [2], crowdLookback: [40, 60], crowdFactor: [0, 0.5] });
+  assert.equal(on.length, 4);
+  assert.equal(new Set(on.map(paramKey)).size, 4);
 });
 
 test("walk-forward never trains on its test window, and tests tile the development period", () => {

@@ -1,6 +1,6 @@
 # Improvement loops: capital allocated across agents
 
-Improvement loops (three run so far; more to come) aimed at the most novel part of the project: **a delegation tree as the control layer of a
+Improvement loops (four run so far; more to come) aimed at the most novel part of the project: **a delegation tree as the control layer of a
 multi-manager fund whose PMs are AI agents**, where
 
 - **(R)** capital is *reserved* per agent when it is granted, not merely capped when spent;
@@ -224,4 +224,55 @@ the deploy fraction, which led to the deleveraging bar, and that the allocator's
 shrinkage cancels when every agent starts together; the docs now say so.
 
 Full numbers: [`docs/loops/loop-3.json`](loops/loop-3.json); diffs: [`docs/loops/loop-3/`](loops/loop-3/).
+
+## Loop 4
+
+**Merged: the Tiger overlay hedges its full shrunk beta (tigerhedge) and halves a crowded long
+(tigersize).** Both are tiger-track changes; the allocator is untouched (every allocator number is
+bit-identical). This is the first loop to improve the Tiger-Cub single-name overlay, the model
+behind the Luckin study.
+
+- **Beta hedge.** The short hedge leg now cancels the long's whole trailing beta to the hedge index
+  instead of half of it. The beta is shrunk toward 0.5 by its own standard error (a Vasicek prior)
+  and clipped to [0, 1.5]. Block A: +3.22 pp [+2.12, +4.31], overlay max drawdown −2.00 pp. Its
+  review found that a plain hedge ratio of 1.0 does about as well as the shrinkage, and that part
+  of the gain comes from the gross cap (1.5×) binding more often.
+- **Crowding gate.** When the name's market-adjusted return over the last 60 days is more than 2
+  standard errors above zero (a flow-driven rally the thesis cannot explain), the long runs at half
+  size until it is not. Block A: +2.67 pp [+1.17, +4.17], max drawdown −1.58 pp. At a matched
+  drawdown it beats plain deleveraging by about 1.4–1.5 pp.
+
+Composed (the two diffs conflict in `strategy.ts`; composed before the sealed run, the hedge sized
+from the shrunk beta, the gate on the raw beta it was reviewed with) and confirmed on block B
+(seeds 14500–14699): Tiger utility **+3.36 pp [90% +1.79, +4.93]**, better in 63% of worlds; overlay
+max drawdown **−2.51 pp [−3.05, −1.98]**; Sharpe +0.016. The overlay's certainty equivalent on that
+block is −10.96% vs −28.05% for buy-and-hold (it was −14.32%), with max drawdown 25.8% vs 43.3%.
+Still negative: a single volatile name is expensive for a γ = 3 investor.
+
+**Caveat: a hindsight bias in the yardstick.** The crowding gate's gain is concentrated in worlds
+where the Tiger panel's primary is the crowded name (+5.5 to +8.3 pp there, about 0 elsewhere),
+and the arena picks that primary as the world's most volatile stock over the whole year, crash
+included. The gate itself is point-in-time, and the bias affects the baseline too, but it inflates
+how often the gate matters. The arena is fixed before loop 5 and the overlay re-measured there.
+
+| candidate | review | sealed block A (vs current code) | outcome |
+|---|---|---|---|
+| tigerhedge: full shrunk-beta hedge | passed | tiger +3.22 pp [+2.12, +4.31], max DD −2.00 pp | winner on A; **merged** |
+| tigersize: crowding gate | passed | tiger +2.67 pp [+1.17, +4.17], max DD −1.58 pp | winner on A; **merged** |
+| ramp: credibility-weighted shares (risk track) | passed | utility −0.34 pp [−0.58, −0.11], max DD −0.13 pp | failed: utility cost over 0.1 pp |
+| wildcard: crowd-unwind cool-off | passed review | — | **rejected before judging: simulator harvest** |
+| operatorlift: ladder cut under a cap | rejected | — | rejected by review |
+
+- **The simulator harvest.** The cool-off's reviewer switched off the arena generator's hard-coded
+  3-tick aftershock after a crowd unwinds, and its gain disappeared (−0.07 pp and −0.05 pp on two
+  research blocks). The mechanism reacts to a public signal and is point-in-time, but all of its
+  edge came from a deterministic feature the researcher had read in `market.ts`. The sealed blocks
+  use the same generator, so the judge could not catch it; the new rule rejects it before judging.
+- **Ramp** made capital follow evidence (a share is a credibility-weighted mix, `√(n/252)`, of the
+  record's verdict and an equal grant), which diversified early and lowered drawdown, but on block A
+  it cost 0.34 pp of utility; its researcher had flagged that risk.
+- **Operatorlift**'s review found a counterexample: with three or more names per operator, the cap
+  and the ladder can still compound to 25%.
+
+Full numbers: [`docs/loops/loop-4.json`](loops/loop-4.json); diffs: [`docs/loops/loop-4/`](loops/loop-4/).
 

@@ -1,0 +1,333 @@
+diff --git a/packages/lab/src/research.test.ts b/packages/lab/src/research.test.ts
+index 1b8cbae..5706115 100644
+--- a/packages/lab/src/research.test.ts
++++ b/packages/lab/src/research.test.ts
+@@ -24,6 +24,17 @@ test("the grid collapses settings that cannot matter, so every trial is distinct
+   assert.equal(canonical({ ...DEFAULT_PARAMS, trendLookback: null, trendFloor: 0 }).trendFloor, 1);
+ });
+ 
++test("the grid collapses crowding-gate settings that cannot matter", () => {
++  // Without a threshold (or at factor 1) the gate's window and factor are inert: one trial, not six.
++  const grid = expandGrid(DEFAULT_PARAMS, { crowdZ: [null], crowdLookback: [40, 60, 90], crowdFactor: [0.5, 1] });
++  assert.equal(grid.length, 1);
++  assert.equal(paramKey({ ...DEFAULT_PARAMS, crowdZ: 2, crowdFactor: 1 }), paramKey(DEFAULT_PARAMS));
++  // With a threshold every setting is a distinct trial.
++  const on = expandGrid(DEFAULT_PARAMS, { crowdZ: [2], crowdLookback: [40, 60], crowdFactor: [0, 0.5] });
++  assert.equal(on.length, 4);
++  assert.equal(new Set(on.map(paramKey)).size, 4);
++});
++
+ test("walk-forward never trains on its test window, and tests tile the development period", () => {
+   const p = syntheticPanel({ days: 1200, seed: 21 });
+   const dev = { from: 150, to: 1100 };
+diff --git a/packages/lab/src/research.ts b/packages/lab/src/research.ts
+index 2df5c3f..c88166e 100644
+--- a/packages/lab/src/research.ts
++++ b/packages/lab/src/research.ts
+@@ -59,6 +59,11 @@ export function canonical(p: TigerParams): TigerParams {
+   if (q.ddCut === null) q.cutFactor = BUY_AND_HOLD.cutFactor;
+   if (q.ddStop === null) q.reentryDays = BUY_AND_HOLD.reentryDays;
+   if (q.volTarget === null) q.volLookback = BUY_AND_HOLD.volLookback;
++  if (q.crowdZ === null || q.crowdFactor === 1) {
++    q.crowdZ = null;
++    q.crowdLookback = BUY_AND_HOLD.crowdLookback;
++    q.crowdFactor = BUY_AND_HOLD.crowdFactor;
++  }
+   return q;
+ }
+ 
+diff --git a/packages/lab/src/strategy.test.ts b/packages/lab/src/strategy.test.ts
+index ae22451..b53c542 100644
+--- a/packages/lab/src/strategy.test.ts
++++ b/packages/lab/src/strategy.test.ts
+@@ -1,6 +1,6 @@
+ import { test } from "node:test";
+ import assert from "node:assert/strict";
+-import { BUY_AND_HOLD, DEFAULT_PARAMS, betaSeries, runTiger, type TigerParams } from "./strategy";
++import { BUY_AND_HOLD, DEFAULT_PARAMS, RECOMMENDED_TIGER, betaSeries, crowdingSeries, runTiger, type TigerParams } from "./strategy";
+ import { quarterlyEvents, syntheticPanel } from "./testkit";
+ import type { Panel } from "./series";
+ 
+@@ -20,6 +20,9 @@ const EVERYTHING: TigerParams = {
+   hedgeSymbol: "HG",
+   hedgeRatio: 1,
+   betaLookback: 60,
++  crowdLookback: 30,
++  crowdZ: 1,
++  crowdFactor: 0.5,
+ };
+ 
+ /** Same history up to day k, a different world after it. */
+@@ -49,6 +52,7 @@ test("NO LOOK-AHEAD: changing the future never changes a past decision", () => {
+       assert.equal(a.wHedge[i], b.wHedge[i], `hedge weight moved at return day ${i + 100}`);
+     }
+     assert.notDeepEqual(a.ret.slice(lastSame + 1), b.ret.slice(lastSame + 1), "the fork does change the future");
++    assert.ok(a.events.some((e) => e.kind === "CROWDED" && e.t <= k), "the crowding gate is exercised before the fork");
+   }
+ });
+ 
+@@ -142,3 +146,108 @@ test("gross is capped and costs scale with turnover", () => {
+   const dear = runTiger(p, quarterlyEvents(400), EVERYTHING, { from: 100, to: 399 });
+   assert.ok(dear.costs > cheap.costs && cheap.costs === 0);
+ });
++
++/* ------------------------------------------------------------------ */
++/* Crowding gate                                                      */
++/* ------------------------------------------------------------------ */
++
++/** Add a constant daily drift to the hedge index, carried into the primary at `beta`: a MARKET rally. */
++function withMarketDrift(p: Panel, drift: number, beta: number): Panel {
++  const ret = {
++    LK: p.ret.LK!.map((r, i) => (i === 0 ? r : r + beta * drift)),
++    HG: p.ret.HG!.map((r, i) => (i === 0 ? r : r + drift)),
++  };
++  const px = (r: number[]) => {
++    const out = [100];
++    for (let i = 1; i < r.length; i++) out.push(out[i - 1]! * (1 + r[i]!));
++    return out;
++  };
++  return { ...p, ret, px: { LK: px(ret.LK), HG: px(ret.HG) } };
++}
++
++test("crowdingSeries is the t-statistic of the window's mean idiosyncratic return", () => {
++  const y = [0, 0.01, 0.03, -0.01, 0.02, 0.05];
++  const x = [0, 0.01, 0.01, 0.0, -0.01, 0.02];
++  const beta = [NaN, NaN, 1, 2, 0.5, 1];
++  const z = crowdingSeries(y, x, beta, 3);
++  // e = y − beta·x, the raw return where beta is undefined
++  const e = [0, 0.01, 0.02, -0.01, 0.025, 0.03];
++  const tstat = (xs: number[]) => {
++    const m = xs.reduce((a, b) => a + b, 0) / xs.length;
++    const sd = Math.sqrt(xs.reduce((a, b) => a + (b - m) ** 2, 0) / (xs.length - 1));
++    return (m / sd) * Math.sqrt(xs.length);
++  };
++  assert.ok(Number.isNaN(z[0]!) && Number.isNaN(z[1]!) && Number.isNaN(z[2]!), "NaN until L returns (r[0] excluded) exist");
++  for (const t of [3, 4, 5]) assert.ok(Math.abs(z[t]! - tstat(e.slice(t - 2, t + 1))) < 1e-12, `t=${t}`);
++  // Without an index the raw return is used.
++  const raw = crowdingSeries(y, null, null, 3);
++  assert.ok(Math.abs(raw[5]! - tstat(y.slice(3, 6))) < 1e-12);
++});
++
++test("crowdingSeries is point-in-time: changing the future never moves a past value", () => {
++  const base = syntheticPanel({ days: 400, seed: 21, drift: 0.002 });
++  const k = 250;
++  const fork = forkAt(base, k, 99);
++  const zb = crowdingSeries(base.ret.LK!, base.ret.HG!, betaSeries(base.ret.LK!, base.ret.HG!, 120), 60);
++  const zf = crowdingSeries(fork.ret.LK!, fork.ret.HG!, betaSeries(fork.ret.LK!, fork.ret.HG!, 120), 60);
++  for (let t = 0; t <= k; t++) assert.ok(Object.is(zb[t], zf[t]), `moved at ${t}`);
++  assert.notDeepEqual(zb.slice(k + 1), zf.slice(k + 1));
++});
++
++test("crowding gate: an idiosyncratic rally trims the long to crowdFactor exactly on crowded days, with CROWDED/UNCROWDED events", () => {
++  const p = syntheticPanel({ days: 500, seed: 22, drift: 0.004, vol: 0.015 }); // the name outruns its index
++  const params: TigerParams = { ...BUY_AND_HOLD, hedgeSymbol: "HG", hedgeRatio: 0, crowdZ: 2, crowdLookback: 60, crowdFactor: 0.5 };
++  const r = runTiger(p, [], params, { from: 100, to: 499 });
++  const z = crowdingSeries(p.ret.LK!, p.ret.HG!, betaSeries(p.ret.LK!, p.ret.HG!, params.betaLookback), 60);
++  let crowdedDays = 0;
++  for (let i = 0; i < r.wLong.length; i++) {
++    const t = 100 - 1 + i; // the weight held into day t+1 was decided at close t
++    const crowded = z[t]! > 2;
++    if (crowded) crowdedDays++;
++    assert.equal(r.wLong[i], crowded ? 0.5 : 1, `close ${t}: z=${z[t]}`);
++  }
++  assert.ok(crowdedDays > 20 && crowdedDays < r.wLong.length, `the gate fires on some days, not all (${crowdedDays})`);
++  const ev = r.events.filter((e) => e.kind === "CROWDED" || e.kind === "UNCROWDED");
++  assert.ok(ev.length >= 2, `the name moves in and out of the crowded state (${ev.length} events)`);
++  ev.forEach((e, i) => {
++    if (i > 0) assert.notEqual(e.kind, ev[i - 1]!.kind, "events alternate");
++    assert.equal(e.kind === "CROWDED", z[e.t]! > 2);
++    assert.equal(z[e.t - 1]! > 2, e.kind !== "CROWDED", "an event marks a change of state");
++  });
++  // Off by default: buy-and-hold is untouched.
++  assert.equal(DEFAULT_PARAMS.crowdZ, null);
++  assert.ok(runTiger(p, [], BUY_AND_HOLD, { from: 100, to: 499 }).wLong.every((w) => w === 1));
++});
++
++test("crowding gate looks through the market: a rally the index explains is not crowding", () => {
++  const p = withMarketDrift(syntheticPanel({ days: 500, seed: 23, beta: 1.2, vol: 0.01 }), 0.006, 1.2);
++  const hedged: TigerParams = { ...BUY_AND_HOLD, hedgeSymbol: "HG", hedgeRatio: 0, crowdZ: 2, crowdLookback: 60 };
++  const unhedged: TigerParams = { ...hedged, hedgeSymbol: null };
++  const net = runTiger(p, [], hedged, { from: 150, to: 499 });
++  const raw = runTiger(p, [], unhedged, { from: 150, to: 499 });
++  const trimmed = (r: { wLong: number[] }) => r.wLong.filter((w) => w < 1).length;
++  // Measured on raw returns, the same rally looks crowded much of the time …
++  assert.ok(trimmed(raw) > 100, `raw gate trimmed ${trimmed(raw)} days`);
++  // … net of beta to the index it is (almost) never abnormal.
++  assert.ok(trimmed(net) < 0.1 * trimmed(raw), `market-adjusted gate trimmed ${trimmed(net)} days`);
++});
++
++test("crowding gate: a crowded long that gaps down takes crowdFactor of the gap", () => {
++  // A steady idiosyncratic run (flows), then the crowd leaves in one day.
++  const p = syntheticPanel({ days: 320, seed: 24, drift: 0.006, vol: 0.012, shocks: { 300: -0.3 } });
++  const base: TigerParams = { ...BUY_AND_HOLD, hedgeSymbol: "HG", hedgeRatio: 0, costBps: 0 };
++  const gated: TigerParams = { ...base, crowdZ: 2, crowdLookback: 60, crowdFactor: 0.5 };
++  const a = runTiger(p, [], base, { from: 100, to: 319 });
++  const b = runTiger(p, [], gated, { from: 100, to: 319 });
++  const i = 300 - 100; // result i is return day from + i
++  assert.equal(a.wLong[i], 1);
++  assert.equal(b.wLong[i], 0.5, "half size into the gap");
++  assert.ok(Math.abs(a.ret[i]! - -0.3) < 1e-12, "the ungated book takes the full gap");
++  assert.ok(Math.abs(b.ret[i]! - (0.5 * -0.3 + 0.5 * p.rf[300]!)) < 1e-12);
++});
++
++test("RECOMMENDED_TIGER runs the crowding gate: 2 standard errors over ~a quarter → half size", () => {
++  assert.equal(RECOMMENDED_TIGER.crowdZ, 2);
++  assert.equal(RECOMMENDED_TIGER.crowdLookback, 60);
++  assert.equal(RECOMMENDED_TIGER.crowdFactor, 0.5);
++});
+diff --git a/packages/lab/src/strategy.ts b/packages/lab/src/strategy.ts
+index 5a63905..01922c3 100644
+--- a/packages/lab/src/strategy.ts
++++ b/packages/lab/src/strategy.ts
+@@ -11,6 +11,13 @@
+  *          re-underwritten after `reentryDays` AND the trend is back
+  *   time   lean in (or out) ahead of scheduled earnings, and after them
+  *   hedge  short China-ADR beta (KWEB/FXI/MCHI) with a trailing-beta hedge
++ *   crowd  trim a name whose rally the thesis cannot explain: when its
++ *          idiosyncratic return (net of its trailing beta to the hedge index)
++ *          over the last `crowdLookback` days has a t-statistic above
++ *          `crowdZ`, the move is flows, not fundamentals — a hedge-fund hotel.
++ *          Crowded longs unwind in one gap that no drawdown ladder can catch
++ *          (the ladder acts after the loss), so the long runs at `crowdFactor`
++ *          until the run is no longer abnormal.
+  *
+  * TIMING CONVENTION (the no-look-ahead contract):
+  *   weights for day t+1 are decided at the close of day t, using prices and
+@@ -51,6 +58,16 @@ export interface TigerParams {
+   /** Fraction of the long's trailing beta to hedge (0–1). */
+   hedgeRatio: number;
+   betaLookback: number;
++  /**
++   * Crowding gate window (trading days): the name's idiosyncratic daily return
++   * — its return minus its trailing `betaLookback` beta times the hedge
++   * instrument's (the raw return when unhedged) — over the last `crowdLookback` days.
++   */
++  crowdLookback: number;
++  /** t-statistic of that window's mean return above which the name counts as crowded; null = no crowding gate. */
++  crowdZ: number | null;
++  /** Long multiplier while crowded. */
++  crowdFactor: number;
+   /** Costs: one-way cost per unit turnover on the long (OTC spread + impact), in bps. */
+   costBps: number;
+   hedgeCostBps: number;
+@@ -80,6 +97,9 @@ export const DEFAULT_PARAMS: TigerParams = {
+   hedgeSymbol: null,
+   hedgeRatio: 0,
+   betaLookback: 120,
++  crowdLookback: 60,
++  crowdZ: null,
++  crowdFactor: 0.5,
+   costBps: 20,
+   hedgeCostBps: 5,
+   borrowRate: 0.02,
+@@ -94,6 +114,12 @@ export const BUY_AND_HOLD: TigerParams = { ...DEFAULT_PARAMS };
+  * The overlay's recommended settings — what the arena's tiger track scores and
+  * the improvement loops tune. `hedgeSymbol` is a placeholder: callers point it
+  * at their own hedge instrument (the arena uses its virtual index "VIDX").
++ *
++ * Crowding gate (loop 4): a name whose market-adjusted return over the last
++ * ~quarter (60 days) is more than 2 standard errors above zero runs at half
++ * size. Realized volatility cannot see that risk: a steady, flow-driven rally
++ * looks calm, so vol targeting alone holds full (sometimes levered) size into the
++ * unwind, and the one-day gap is what a γ = 3 investor pays most for.
+  */
+ export const RECOMMENDED_TIGER: TigerParams = {
+   ...BUY_AND_HOLD,
+@@ -104,9 +130,12 @@ export const RECOMMENDED_TIGER: TigerParams = {
+   reentryDays: 20,
+   hedgeSymbol: "VIDX",
+   hedgeRatio: 0.5,
++  crowdLookback: 60,
++  crowdZ: 2,
++  crowdFactor: 0.5,
+ };
+ 
+-export type BookEventKind = "STOP_OUT" | "REUNDERWRITE" | "CUT" | "UNCUT";
++export type BookEventKind = "STOP_OUT" | "REUNDERWRITE" | "CUT" | "UNCUT" | "CROWDED" | "UNCROWDED";
+ 
+ export interface BookEvent {
+   t: number;
+@@ -230,6 +259,38 @@ export function betaSeries(y: readonly number[], x: readonly number[], L: number
+   });
+ }
+ 
++/**
++ * Crowding statistic at each close t: the t-statistic of the mean of the
++ * name's idiosyncratic daily return over r[t-L+1..t] (r[0] excluded), where
++ * the idiosyncratic return on day i is y[i] − beta[i]·x[i] with beta[i] the
++ * trailing beta through day i (0 while it is undefined). With no index
++ * (`x`/`beta` null) the raw return is used. NaN until L days exist or when the
++ * window has no dispersion. Point-in-time: the value at t uses indices ≤ t only.
++ */
++export function crowdingSeries(
++  y: readonly number[],
++  x: readonly number[] | null,
++  beta: readonly number[] | null,
++  L: number,
++): number[] {
++  const e = y.map((v, i) => {
++    if (!x || !beta) return v;
++    const b = beta[i]!;
++    return Number.isFinite(b) ? v - b * x[i]! : v;
++  });
++  return e.map((_, t) => {
++    const a = t - L + 1;
++    if (a < 1 || L < 2) return NaN;
++    let s = 0;
++    for (let i = a; i <= t; i++) s += e[i]!;
++    const m = s / L;
++    let q = 0;
++    for (let i = a; i <= t; i++) q += (e[i]! - m) ** 2;
++    const sd = Math.sqrt(q / (L - 1));
++    return sd > 0 ? (m / sd) * Math.sqrt(L) : NaN;
++  });
++}
++
+ /**
+  * For each close t: trading days until the next print that is public by t
+  * (announced ≥ `lead` days ahead), and days since the most recent print ≤ t.
+@@ -277,8 +338,18 @@ export function runTiger(
+   const n = panel.dates.length;
+   const vol = p.volTarget !== null ? cached(panel, `vol:${L}:${p.volLookback}`, () => trailingVolSeries(rL, p.volLookback)) : null;
+   const sma = p.trendLookback !== null ? cached(panel, `sma:${L}:${p.trendLookback}`, () => smaSeries(px, p.trendLookback!)) : null;
+-  const beta =
+-    H && p.hedgeRatio > 0 ? cached(panel, `beta:${L}:${H}:${p.betaLookback}`, () => betaSeries(rL, rH!, p.betaLookback)) : null;
++  // Trailing beta to the hedge index: sizes the hedge, and nets the market out
++  // of the crowding gate's run (whether or not the hedge is on).
++  const betaH =
++    H && (p.hedgeRatio > 0 || p.crowdZ !== null)
++      ? cached(panel, `beta:${L}:${H}:${p.betaLookback}`, () => betaSeries(rL, rH!, p.betaLookback))
++      : null;
++  const beta = p.hedgeRatio > 0 ? betaH : null;
++  const crowdT =
++    p.crowdZ !== null
++      ? cached(panel, `crowd:${L}:${H ?? "-"}:${p.betaLookback}:${p.crowdLookback}`, () => crowdingSeries(rL, rH, betaH, p.crowdLookback))
++      : null;
++  const crowdedAt = (k: number): boolean => crowdT !== null && k >= 0 && crowdT[k]! > p.crowdZ!; // NaN → false
+   const evKey = `ev:${p.announceLead}:${events.map((e) => e.t).join(",")}`;
+   const until = cached(panel, `${evKey}:next`, () => eventDistances(n, events, p.announceLead).untilNext);
+   const since = cached(panel, `${evKey}:last`, () => eventDistances(n, events, p.announceLead).sinceLast);
+@@ -321,6 +392,23 @@ export function runTiger(
+     // In the days after a print (a print at e is "post" for closes t ∈ [e, e+post)).
+     if (p.postEventDays > 0 && since[t]! < p.postEventDays) w *= p.postEventMult;
+ 
++    // Crowding: an abnormal market-adjusted run through t. Stateless (read off
++    // the series at t and t−1), so a book threaded across windows agrees with one run.
++    if (crowdT) {
++      const nowCrowded = crowdedAt(t);
++      if (nowCrowded) w *= p.crowdFactor;
++      if (nowCrowded !== crowdedAt(t - 1)) {
++        out.events.push({
++          t,
++          date: panel.dates[t]!,
++          kind: nowCrowded ? "CROWDED" : "UNCROWDED",
++          detail: nowCrowded
++            ? `${p.crowdLookback}-day idiosyncratic run t=${crowdT[t]!.toFixed(2)} > ${p.crowdZ} → ×${p.crowdFactor}`
++            : "run no longer abnormal",
++        });
++      }
++    }
++
+     /* ---- drawdown ladder on the book's own NAV (through t) ---- */
+     const dd = 1 - nav / hwm;
+     if (stopped) {

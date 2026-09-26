@@ -47,6 +47,7 @@ export function canonical(p: TigerParams): TigerParams {
     q.hedgeSymbol = null;
     q.hedgeRatio = 0;
     q.betaLookback = BUY_AND_HOLD.betaLookback;
+    q.hedgeBeta = BUY_AND_HOLD.hedgeBeta;
   }
   if (q.preEventDays === 0 || q.preEventMult === 1) {
     q.preEventDays = 0;
@@ -59,6 +60,11 @@ export function canonical(p: TigerParams): TigerParams {
   if (q.ddCut === null) q.cutFactor = BUY_AND_HOLD.cutFactor;
   if (q.ddStop === null) q.reentryDays = BUY_AND_HOLD.reentryDays;
   if (q.volTarget === null) q.volLookback = BUY_AND_HOLD.volLookback;
+  if (q.crowdZ === null || q.crowdFactor === 1) {
+    q.crowdZ = null;
+    q.crowdLookback = BUY_AND_HOLD.crowdLookback;
+    q.crowdFactor = BUY_AND_HOLD.crowdFactor;
+  }
   return q;
 }
 

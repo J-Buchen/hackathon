@@ -1,0 +1,861 @@
+diff --git a/README.md b/README.md
+index 30db156..3400217 100644
+--- a/README.md
++++ b/README.md
+@@ -321,7 +321,7 @@ You can also run any layer in isolation:
+ | `@allowance/swarm` — close | `packages/swarm/src/close.test.ts` | With PMs holding sub-mandates that pay every tick, the tree is checked from outside at every tick under three policies: children ≤ parent, available ≥ 0, sub-mandates hold exactly their ppm slice of the PM (never more), a closed subtree's budgets are frozen and it can never pay, delegate or grow; every stop-out is exactly one `close` freeing budget − spent into the pod; shares are validated in the ppm they are cut in; the book's audit stops a broken tree before the tick trades (and a mid-tick break at that tick's end); spent authority is a floor no resize crosses, and a grow the fund cannot fund is clipped, never refused. |
+ | `@allowance/lab` — close in the arena | `packages/lab/src/arena-close.test.ts` | On randomized arena rosters with desks that spend every tick, center book and guardrails both run to the end on a sound tree, every stop-out is one `close` of the agent with its desks, and no move is refused. |
+ | `@allowance/swarm` — reservation binds | `packages/swarm/src/reserve.test.ts`, `packages/lab/src/arena-reserve.test.ts` | Every order is checked from outside at the trade, on books where a PM's budget overstates what it may trade (desks, its own spend, an outside grant) and on randomized arena rosters: it is sized on no more than the mandate's available authority, its gross notional is within available × leverage, a closed PM trades nothing, and the marked PnL is exactly the audited order's; an order inflated for one PM (tree untouched) stops the book at the trade naming that PM; orders are sized after the crowding cuts; the book's reallocations and cuts are made on the tree's budgets. |
+-| `@allowance/swarm` — operator counterparty | `packages/swarm/src/counterparty.test.ts`, `packages/lab/src/arena-counterparty.test.ts` | When one of an operator's agents is stopped out, its other live agents are capped as a group in one plan at `cutFactor` of their full size; the cap is a ceiling on capital, so it never compounds with a ladder cut or an earlier cap; it never revokes; every stop-out happens on exactly the tick the agent's own record, replayed alone, breaches its own stop; on the arena's shared-operator worlds a name is revoked if and only if its own ladder stopped it. |
++| `@allowance/swarm` — operator counterparty | `packages/swarm/src/counterparty.test.ts`, `packages/lab/src/arena-counterparty.test.ts`, `packages/swarm/src/ladder-under-cap.test.ts`, `packages/lab/src/arena-ladder-cap.test.ts` | When one of an operator's agents is stopped out, its other live agents are capped as a group in one plan at `cutFactor` of their full size; the cap is a ceiling on capital, so it never compounds with a ladder cut or an earlier cap; it never revokes; every stop-out happens on exactly the tick the agent's own record, replayed alone, breaches its own stop; on the arena's shared-operator worlds a name is revoked if and only if its own ladder stopped it. The cap never weakens a name's own ladder either: a capped name's ladder cut takes it to `cutFactor` × what it would hold without the cap (its uncapped budget), under the cap's ceiling, exactly what the same book without operator labels leaves it on two scripted books, and on average on the arena's shared-operator worlds. |
+ | `@allowance/core` — resize | `packages/core/src/tree.test.ts` | `resize` grows only from the parent's available budget, never cuts below what a node has committed, lets the root only shrink, and refuses revoked subtrees — each attempt audited as `RESIZE`. |
+ | `@allowance/swarm` — allocator | `packages/swarm/src/allocator.test.ts` | Clones split one allocation; losers and stopped agents get nothing; the drawdown ladder cuts, restores and stops (stop is final); risk-scaled rungs are never tighter than the fixed ones nor looser than the 40% ceiling, and σ is measured only up to the last high-water mark (`volAtHighWater`), so a crash cannot loosen its own stop; clone-cluster and book-level crowding limits scale contributors back exactly to the limit; the pre-trade gate drops off-mandate instruments, clips gross, and flattens revoked agents. |
+ | `@allowance/swarm` — Tiger Cub | `packages/swarm/src/tigercub.test.ts` | A long needs "yes" to all three questions (a great company with no catalyst is not enough); the short rides the same trend but fails "why now"; PM weightings re-rank but never waive the gate; catalyst dates map onto trading-day ticks; positions size up into catalysts with gross ≤ 1. |
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index 8d025bb..6a6fe68 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -176,7 +176,16 @@ Around them sit agents that give the allocator something to allocate between:
+   high, or its own ladder lifting a cut. It never revokes anyone, and it never
+   moves a ladder. Every stop-out lands on exactly the tick of the agent's own
+   record replayed alone (tested on a scripted book and on every shared-operator
+-  arena world on seeds 1–40).
++  arena world on seeds 1–40). Nor does it weaken one: a capped name's own ladder
++  cut takes it to 50% of what it would hold **without the cap** (its *uncapped
++  budget*: its budget when capped, then reallocated, crowding-cut and ladder-cut
++  by the book's own rules, the crowding check run on the book with the cap
++  lifted), under the cap's own ceiling. A name that sat at or below the ceiling
++  on its own account (cut and restored by its ladder, or crowding-cut) is cut
++  again; a name the cap took down from full size is not (never 25%). Loop 3 cut
++  only down to the ceiling, which left such a name up to twice what its own
++  ladder allowed (tested exactly against the same book without labels on two
++  scripted books, and on every shared-operator arena world on seeds 1–200).
+ 
+ The baseline ("per-agent guardrails") is what agent-trading products ship today.
+ It uses the same agents, the same pre-trade gate and the same leverage, with
+diff --git a/package.json b/package.json
+index f0f712b..9102e0f 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts packages/swarm/src/ladder-under-cap.test.ts packages/lab/src/arena-ladder-cap.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/lab/package.json b/packages/lab/package.json
+index cb0f115..fc16649 100644
+--- a/packages/lab/package.json
++++ b/packages/lab/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-counterparty.test.ts src/arena-reserve.test.ts",
++    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-counterparty.test.ts src/arena-reserve.test.ts src/arena-ladder-cap.test.ts",
+     "lab": "tsx src/cli.ts"
+   },
+   "dependencies": {
+diff --git a/packages/lab/src/arena-ladder-cap.test.ts b/packages/lab/src/arena-ladder-cap.test.ts
+new file mode 100644
+index 0000000..4eb6137
+--- /dev/null
++++ b/packages/lab/src/arena-ladder-cap.test.ts
+@@ -0,0 +1,113 @@
++/**
++ * (G) An operator cap never weakens a name's own ladder, on randomized arena
++ * rosters: every world on research seeds 1–200 where one operator runs two
++ * names, run with operator labels and blind (labels stripped), checked tick
++ * by tick:
++ *
++ *  - every ladder cut of a capped name leaves it at exactly
++ *    min(its budget, cutFactor × min(full size, its uncapped budget)): never
++ *    above cutFactor × what it would hold without the cap (its ladder is not
++ *    weakened), never below cutFactor × min(full size, that) (the cap and the
++ *    cut never compound);
++ *  - a name that is not capped has no separate uncapped budget: it is its own;
++ *  - the tick after each world's first credit event, every capped name's
++ *    uncapped budget is exactly what the blind book gives it (the two books
++ *    are one book until the event, so this pins how the uncapped budget is
++ *    set at the cap, reallocated, and cut by the crowding check);
++ *  - across all those cuts, the capped names hold on average what the blind
++ *    book leaves them after the same cut, where loop 3's rule (cut only down
++ *    to the cap's ceiling) left them more.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { cutToCeiling, defaultCenterBookPolicy, runBook, type BookResult } from "@allowance/swarm";
++import { makeWorld } from "./arena";
++
++// Research seeds only (< ARENA_EVAL_FLOOR).
++const SEEDS = Array.from({ length: 200 }, (_, i) => i + 1);
++const policy = defaultCenterBookPolicy();
++const CF = policy.cutFactor!;
++
++interface Watched {
++  book: BookResult;
++  /** Agent budgets (USDC) at the start of each tick, and after the last one. */
++  budgets: Map<string, number>[];
++}
++
++async function watched(world: ReturnType<typeof makeWorld>, labelled: boolean): Promise<Watched> {
++  const spec = world.swarm();
++  if (!labelled) for (const a of spec.agents) delete a.operator;
++  const names = spec.agents.map((a) => `${a.label}.${a.pod}.${spec.fund}`);
++  const budgets: Map<string, number>[] = [];
++  const read = (tree: BookResult["tree"]) => new Map(names.map((n) => [n, Number(tree.requireNode(n).mandate.budget) / 1e6]));
++  const book = await runBook(world.market, spec, policy, { onTick: (t, tree) => void (budgets[t] = read(tree)) });
++  budgets.push(read(book.tree));
++  return { book, budgets };
++}
++
++const close = (a: number, b: number) => Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b));
++
++test("arena: a capped name's own ladder cuts what it would hold without the cap, never less, never compounded", async () => {
++  const seen = { worlds: 0, cappedTicks: 0, cappedCuts: 0, fixed: 0, firstEventChecks: 0, againstBlind: [] as number[], loop3: [] as number[] };
++  for (const seed of SEEDS) {
++    const world = makeWorld(seed);
++    if (world.meta.sharedOperators === 0) continue;
++    seen.worlds++;
++    const lab = await watched(world, true);
++    const blind = await watched(world, false);
++    const T = lab.book.nav.length;
++    const at = (kind: string, name: string) => lab.book.decisions.filter((d) => d.kind === kind && d.node === name).map((d) => d.t);
++
++    for (const a of lab.book.agents) {
++      // Capped at tick t (when it trades and its ladder moves): after an
++      // operator cut at c < t, up to and including the tick its cap lifts or
++      // its own ladder stops it.
++      const caps = at("OPERATOR_CUT", a.name);
++      const ends = [...at("OPERATOR_RESTORE", a.name), ...at("STOP_OUT", a.name)];
++      const capped = (t: number) => caps.some((c) => c < t && !ends.some((e) => e > c && e < t));
++      const cuts = new Set(at("CUT", a.name));
++      for (let t = 0; t < T; t++) {
++        if (!capped(t)) {
++          assert.equal(a.uncapped[t], a.capital[t], `seed ${seed} ${a.label} t=${t}: not capped, yet an uncapped budget of its own`);
++          continue;
++        }
++        seen.cappedTicks++;
++        if (!cuts.has(t)) continue;
++        // Its own ladder cut, while capped.
++        seen.cappedCuts++;
++        const held = a.capital[t]!;
++        const own = a.uncapped[t]!;
++        const full = a.fullSize[t]!;
++        const after = lab.budgets[t + 1]!.get(a.name)!;
++        assert.ok(close(after, Math.min(held, CF * Math.min(full, own))), `seed ${seed} ${a.label} t=${t}: ${after} vs min(${held}, ${CF} × min(${full}, ${own}))`);
++        assert.ok(after <= CF * own * (1 + 1e-9) + 1e-6, `seed ${seed} ${a.label} t=${t}: its ladder weakened by the cap`);
++        const loop3 = cutToCeiling(held, full, CF) ?? held;
++        if (loop3 > CF * own * (1 + 1e-6)) seen.fixed++;
++        const without = blind.budgets[t + 1]!.get(a.name)!;
++        if (after > 0 && without > 0) {
++          seen.againstBlind.push(Math.log(after / without));
++          seen.loop3.push(Math.log(loop3 / without));
++        }
++      }
++    }
++
++    // The tick after the first credit event: the uncapped budget is the blind book's.
++    const first = lab.book.decisions.find((d) => d.kind === "OPERATOR_CUT");
++    if (first && first.t + 1 < T) {
++      const t = first.t + 1;
++      for (const d of lab.book.decisions.filter((x) => x.kind === "OPERATOR_CUT" && x.t === first.t)) {
++        const a = lab.book.agents.find((x) => x.name === d.node)!;
++        seen.firstEventChecks++;
++        const without = blind.book.agents.find((x) => x.name === a.name)!.capital[t]!;
++        assert.ok(close(a.uncapped[t]!, without), `seed ${seed} ${a.label} t=${t}: uncapped ${a.uncapped[t]} vs blind ${without}`);
++      }
++    }
++  }
++  const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
++  assert.ok(seen.worlds >= 100 && seen.cappedCuts >= 10 && seen.firstEventChecks >= 50, JSON.stringify({ ...seen, againstBlind: undefined, loop3: undefined }));
++  assert.ok(seen.fixed >= 3, `capped cuts loop 3 left above cutFactor × the uncapped budget: ${seen.fixed}`);
++  // Against the blind book (a different book after the event, so not exact):
++  // on average the capped names now hold what the blind book leaves them.
++  assert.ok(Math.abs(mean(seen.againstBlind)) < 0.03, `mean log(capped / blind) after the cut: ${mean(seen.againstBlind)}`);
++  assert.ok(mean(seen.loop3) > 0.1, `loop 3's rule left them more: ${mean(seen.loop3)}`);
++});
+diff --git a/packages/swarm/package.json b/packages/swarm/package.json
+index d7a15dc..b2b137e 100644
+--- a/packages/swarm/package.json
++++ b/packages/swarm/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/example.test.ts src/reserve.test.ts"
++    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/example.test.ts src/reserve.test.ts src/ladder-under-cap.test.ts"
+   },
+   "dependencies": {
+     "@allowance/core": "*"
+diff --git a/packages/swarm/src/allocator.test.ts b/packages/swarm/src/allocator.test.ts
+index 5e8b978..6c246fb 100644
+--- a/packages/swarm/src/allocator.test.ts
++++ b/packages/swarm/src/allocator.test.ts
+@@ -7,6 +7,7 @@ import {
+   CEILING_SLACK,
+   cutToCeiling,
+   defaultCenterBookPolicy,
++  ladderCutUnderCap,
+   nextCounterpartyCaps,
+   nextLadderState,
+   scaleLadder,
+@@ -348,6 +349,45 @@ test("cutToCeiling: a cut decided on capital — cutting twice never goes below
+   assert.equal(cutToCeiling(ladderFirst, full, 0.5), null);
+ });
+ 
++test("ladderCutUnderCap: a capped name's own ladder cuts what it would hold uncapped — never lighter than its ladder alone, never cutFactor²", () => {
++  const full = 1_000_000;
++  // At full size, capped to the ceiling: its ladder's cut lands on the same ceiling, so no write.
++  assert.equal(ladderCutUnderCap(500_000, full, 0.5, full), null);
++  assert.equal(ladderCutUnderCap(500_000 * (1 + CEILING_SLACK / 2), full, 0.5, full), null, "a rounding unit above is at it");
++  // At the ceiling on its OWN account (its ladder cut it and restored it): its ladder cuts it again.
++  assert.equal(ladderCutUnderCap(500_000, full, 0.5, 500_000), 250_000);
++  // Below the ceiling after a crowding cut: cut from there. Loop 3's rule cut to the ceiling: no cut at all.
++  assert.equal(ladderCutUnderCap(312_500, full, 0.5, 312_500), 156_250);
++  assert.equal(cutToCeiling(312_500, full, 0.5), null);
++  // Crowding-cut to 625k, then capped to the 500k ceiling: cutFactor × the 625k it would hold uncapped.
++  assert.equal(ladderCutUnderCap(500_000, full, 0.5, 625_000), 312_500);
++  assert.equal(cutToCeiling(500_000, full, 0.5), null);
++  // Above its full size (the rebalance band): the cap's ceiling still holds on top.
++  assert.equal(ladderCutUnderCap(550_000, full, 0.5, 1_100_000), 500_000);
++  // A cut never grows a name.
++  assert.equal(ladderCutUnderCap(100_000, full, 0.5, 625_000), null);
++  assert.equal(ladderCutUnderCap(0, 0, 0.5, 0), null);
++
++  for (const factor of [0.25, 0.5, 0.75]) {
++    for (const capital of [0, 50_000, 250_000, 400_000, 500_000, 700_000, 1_000_000, 1_200_000]) {
++      for (const uncapped of [capital, 1.25 * capital, 2 * capital, 300_000, 800_000, full, 1.3 * full]) {
++        const to = ladderCutUnderCap(capital, full, factor, uncapped);
++        const after = to ?? capital;
++        const cut = factor * Math.min(full, uncapped);
++        const at = `factor ${factor}, capital ${capital}, uncapped ${uncapped}`;
++        // Never lighter than its own ladder on what it would hold uncapped, never grown.
++        assert.ok(after <= factor * uncapped * (1 + CEILING_SLACK), `${at}: weaker than its ladder`);
++        assert.ok(after <= capital, `${at}: grown`);
++        // Never compounded: a write lands exactly on cutFactor × min(full size, uncapped).
++        if (to !== null) assert.equal(to, cut, at);
++        assert.ok(after >= Math.min(capital, cut), `${at}: cut below the one ceiling`);
++        // With nothing held back by the cap (uncapped = capital ≤ full size), exactly the plain ladder's cut.
++        if (uncapped === capital && capital <= full) assert.equal(after, factor * capital, at);
++      }
++    }
++  }
++});
++
+ test("allocate: a ladder cut and an operator cap are one ceiling — the target takes the smaller multiplier, never the product", () => {
+   const policy = { ...defaultCenterBookPolicy(), warmup: 50, maxAgentShare: 1 };
+   const r = noise(6, 20);
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index 0ecea48..81fa0d6 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -37,8 +37,10 @@
+  *     the ladder already cut (or an earlier operator event already capped) is
+  *     not cut again, and at a reallocation the ladder and the cap take the
+  *     smaller multiplier, never the product. Every name keeps its own ladder:
+- *     the cap never stops anyone, and no name's own stop-out is ever delayed
+- *     or brought forward.
++ *     the cap never stops anyone, no name's own stop-out is ever delayed or
++ *     brought forward, and a capped name's own ladder cut is as hard as it
++ *     would be without the cap (it cuts what the name would hold uncapped,
++ *     see `ladderCutUnderCap`).
+  */
+ 
+ import {
+@@ -635,3 +637,27 @@ export function cutToCeiling(capital: number, fullSize: number, factor: number):
+   const ceiling = Math.max(0, factor * fullSize);
+   return capital > ceiling * (1 + CEILING_SLACK) ? ceiling : null;
+ }
++
++/**
++ * Where a name's OWN ladder cut leaves it while its operator's cap holds it.
++ * The ladder cuts every name to `factor` of the capital it holds; a capped
++ * name holds less than it would without the cap, so its ladder cuts what it
++ * WOULD hold (`uncapped`, which the book keeps for every capped name: see
++ * `AgentResult.uncapped`), and the cap's own ceiling, `factor × fullSize`,
++ * still holds on top. Two ceilings, so the smaller one:
++ *
++ *     min(capital, factor × min(fullSize, uncapped))     (`cutToCeiling`)
++ *
++ *  - never above `factor × uncapped`: an operator label never leaves a name
++ *    more capital than its own ladder alone would. (Cutting to the cap's
++ *    ceiling instead left a name that already sat at or below it untouched,
++ *    e.g. after a crowding cut, holding up to twice what its ladder allowed.)
++ *  - never below `factor × min(fullSize, uncapped)`: the cap and the cut do
++ *    not compound. A name at full size that the cap already holds at
++ *    `factor × fullSize` is not cut again, never to factor² × fullSize.
++ *
++ * `null` = no write: it already holds that or less (a cut never grows a name).
++ */
++export function ladderCutUnderCap(capital: number, fullSize: number, factor: number, uncapped: number): number | null {
++  return cutToCeiling(capital, Math.min(fullSize, uncapped), factor);
++}
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index c72bcea..8c3b51a 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -21,7 +21,9 @@
+  *                           operator's other live names at cutFactor of their full size,
+  *                           as a group in one applyTargets plan, until each recovers on
+  *                           its own record; a ceiling on capital, so it never compounds
+- *                           with a ladder cut or an earlier cap, and it never revokes)
++ *                           with a ladder cut or an earlier cap, and it never revokes;
++ *                           a capped name's own ladder still cuts what it would hold
++ *                           without the cap, so the cap never weakens that ladder)
+  *   - trading size        = available × leverage   (available = the budget − what the node
+  *                           spent itself − what it handed down; sized by `sizeOrder` in the
+  *                           gate, never from a number the book keeps)
+@@ -49,6 +51,7 @@ import { DelegationTree, formatAmount, parseAmount } from "@allowance/core";
+ import {
+   allocate,
+   cutToCeiling,
++  ladderCutUnderCap,
+   ladderStep,
+   nextCounterpartyCaps,
+   scanCrowding,
+@@ -162,6 +165,19 @@ export interface AgentResult {
+    * one; 0 once its mandate is closed). An operator cap is a fraction of this.
+    */
+   fullSize: number[];
++  /**
++   * The budget (USDC) the agent would hold each tick without an operator cap,
++   * as it trades (like `fullSize`, a budget). While it is not capped: its own
++   * budget. While capped: the budget it held when the cap was set, then moved
++   * by the rules that move every budget: reallocated to its target without
++   * the cap (under the same rebalance band); cut by the crowding check, run on
++   * the book with every capped name at its uncapped budget (keeping that
++   * cut's ceiling until its book changes, as a crowding cut does); cut by its
++   * own ladder. Its own ladder cuts THIS (`ladderCutUnderCap`), so an
++   * operator cap never leaves a name more than its own ladder would. 0 once
++   * its mandate is closed.
++   */
++  uncapped: number[];
+   /** Realized PnL (USDC) each tick. */
+   pnl: number[];
+   ladder: LadderState;
+@@ -204,6 +220,11 @@ function toUsdc(units: bigint): number {
+   return Number(formatAmount(units));
+ }
+ 
++/** `usdc` rounded to whole micro-USDC, as a budget in the tree is. */
++function asBudget(usdc: number): number {
++  return toUsdc(toUnits(usdc));
++}
++
+ function describeViolation(v: GateViolation): string {
+   switch (v.kind) {
+     case "OFF_MANDATE":
+@@ -532,6 +553,7 @@ export async function runBook(
+       unitReturns: [],
+       capital: [],
+       fullSize: [],
++      uncapped: [],
+       pnl: [],
+       ladder: "active",
+       gateViolations: 0,
+@@ -556,6 +578,10 @@ export async function runBook(
+   // on capital (`cutToCeiling`), so it needs the full size it is a fraction of.
+   const fullSize = new Map<string, number>(agents.map((a) => [a.name, perAgent]));
+   let operatorCaps: ReadonlyMap<string, CounterpartyCap> = new Map();
++  // Every capped name's budget without the cap (`AgentResult.uncapped`), and
++  // the crowding ceiling that budget carries. Kept for exactly the names in
++  // `operatorCaps`: set with the cap, dropped when it lifts or the name stops.
++  const uncapped = new Map<string, { budget: number; crowd: { cap: number; book: Weights } | null }>();
+   // The operator cap is a cut to `cutFactor`: without a cut factor below 1 there is none.
+   const capFactor = center?.cutFactor !== undefined && center.cutFactor < 1 ? center.cutFactor : null;
+   const history: Observation["history"][number][] = [];
+@@ -570,6 +596,9 @@ export async function runBook(
+   // from the mandate's AVAILABLE authority and audited against the tree.
+   const budgetOf = (a: AgentResult) =>
+     tree.isRevokedInChain(a.name) ? 0 : toUsdc(tree.requireNode(a.name).mandate.budget);
++  // The relative move a reallocation makes from `current` to `target`.
++  const moved = (current: number, target: number) =>
++    current === 0 ? (target > 0 ? Infinity : 0) : Math.abs(target - current) / current;
+   const size = (gated: readonly { weights: Weights }[], now: number): SizedOrder[] =>
+     agents.map((a, i) => sizeOrder(tree, a.name, gated[i]!.weights, { leverage: policy.leverage, now }));
+   const audit = (t: number, at: "start" | "end") => {
+@@ -614,9 +643,15 @@ export async function runBook(
+         fullSize.set(s.name, s.fullTarget);
+         const agent = agents.find((a) => a.name === s.name)!;
+         if (agent.ladder === "stopped") continue;
++        const own = uncapped.get(s.name);
++        if (own) {
++          // A capped name's budget without the cap is reallocated as every
++          // budget is: to its target without the cap, under the same band.
++          const target = Math.min(s.fullTarget * (agent.ladder === "cut" ? (center.cutFactor ?? 1) : 1), own.crowd?.cap ?? Infinity);
++          if (moved(own.budget, target) >= center.rebalanceBand) own.budget = asBudget(target);
++        }
+         const current = budgetOf(agent);
+-        const moved = current === 0 ? (s.target > 0 ? Infinity : 0) : Math.abs(s.target - current) / current;
+-        if (moved < center.rebalanceBand) continue;
++        if (moved(current, s.target) < center.rebalanceBand) continue;
+         targets.set(s.name, toUnits(s.target));
+         decisions.push({
+           t,
+@@ -663,18 +698,50 @@ export async function runBook(
+     if (center) {
+       // Exposure is measured on what each agent would trade now: its gated
+       // weights sized from the tree as it stands before any cut.
++      const sized = size(gated, now);
+       const scan = scanCrowding(
+-        size(gated, now).map((o) => ({ name: o.node, capital: o.authority, weights: o.weights })),
++        sized.map((o) => ({ name: o.node, capital: o.authority, weights: o.weights })),
+         currentNav,
+         center.leverage,
+         center,
+       );
++      // The same check on the book as it would stand without operator caps:
++      // every capped name at its uncapped budget (its authority scaled with
++      // it; the two are equal for a name with no sub-mandates). Its cuts go
++      // to those uncapped budgets only, exactly as `scan`'s go to the book's
++      // own budgets below.
++      const uncappedScan =
++        uncapped.size === 0
++          ? null
++          : scanCrowding(
++              sized.map((o, i) => {
++                const own = uncapped.get(o.node);
++                const budget = budgetOf(agents[i]!);
++                const capital = own === undefined ? o.authority : budget > 0 ? own.budget * (o.authority / budget) : own.budget;
++                return { name: o.node, capital, weights: o.weights };
++              }),
++              currentNav,
++              center.leverage,
++              center,
++            );
+       agents.forEach((a, i) => {
+         const held = crowdCaps.get(a.name);
+         if (held && cosineSimilarity(gated[i]!.weights, held.book) < center.crowdSimilarity) {
+           crowdCaps.delete(a.name);
+         }
++        const own = uncapped.get(a.name);
++        if (own?.crowd && cosineSimilarity(gated[i]!.weights, own.crowd.book) < center.crowdSimilarity) own.crowd = null;
+       });
++      for (const b of uncappedScan?.breaches ?? []) {
++        for (const name of b.contributors) {
++          const own = uncapped.get(name);
++          if (!own) continue;
++          const i = agents.findIndex((a) => a.name === name);
++          const cut = own.budget * b.scale;
++          own.crowd = { cap: own.crowd ? Math.min(own.crowd.cap, cut) : cut, book: gated[i]!.weights };
++          own.budget = asBudget(cut);
++        }
++      }
+ 
+       for (const b of scan.breaches) {
+         const targets = new Map<string, bigint>();
+@@ -724,6 +791,7 @@ export async function runBook(
+       a.unitReturns.push(unit);
+       a.capital.push(order.authority);
+       a.fullSize.push(tree.isRevokedInChain(a.name) ? 0 : fullSize.get(a.name)!);
++      a.uncapped.push(uncapped.get(a.name)?.budget ?? budgetOf(a));
+       a.pnl.push(pnl);
+       tickPnl += pnl;
+     });
+@@ -773,18 +841,27 @@ export async function runBook(
+         });
+       } else if (next === "cut" && center) {
+         const factor = center.cutFactor ?? 1;
+-        if (capFactor !== null && operatorCaps.has(a.name)) {
+-          // Its operator's cap already holds it at `cutFactor` of its full size,
+-          // and the ladder's cut is the same ceiling: cut on capital, not again.
+-          const to = cutToCeiling(capital, fullSize.get(a.name)!, factor);
++        const own = capFactor !== null && operatorCaps.has(a.name) ? uncapped.get(a.name) : undefined;
++        if (own) {
++          // Its operator's cap holds it below what it would hold without the
++          // cap. Its own ladder cuts THAT, as it cuts every name, and the cap's
++          // ceiling (`cutFactor` of full size) holds on top: never lighter than
++          // its ladder alone, and never cut again where the cap already put it.
++          const full = fullSize.get(a.name)!;
++          const without = own.budget;
++          const to = ladderCutUnderCap(capital, full, factor, without);
++          own.budget = asBudget(without * factor);
+           if (to !== null) applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(to)]]));
+           decisions.push({
+             t,
+             kind: "CUT",
+             node: a.name,
+             detail:
+-              `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${factor} of its full size ` +
+-              (to === null ? "(its operator's cap already holds it there: not cut again)" : `(${capital.toFixed(0)} → ${to.toFixed(0)} USDC)`),
++              `drawdown ≥ ${pct(rungs.ddCut)}${why} → ×${factor} of what it would hold without its operator's cap ` +
++              `(${without.toFixed(0)} USDC), within the cap's ×${factor} of its full size ${full.toFixed(0)} ` +
++              (to === null
++                ? `(it holds ${capital.toFixed(0)}: not cut again)`
++                : `(${capital.toFixed(0)} → ${to.toFixed(0)} USDC)`),
+           });
+         } else {
+           applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(capital * factor)]]));
+@@ -824,6 +901,9 @@ export async function runBook(
+       for (const { name, after } of update.capped) {
+         const capital = budgetOf(agents.find((a) => a.name === name)!);
+         const full = fullSize.get(name)!;
++        // Without the cap it would hold what it holds now, under the same crowding ceiling.
++        const crowd = crowdCaps.get(name);
++        uncapped.set(name, { budget: capital, crowd: crowd ? { ...crowd } : null });
+         const to = cutToCeiling(capital, full, capFactor);
+         if (to !== null) cuts.set(name, toUnits(to));
+         decisions.push({
+@@ -840,6 +920,7 @@ export async function runBook(
+       }
+       if (cuts.size > 0) applyTargets(tree, podOf, subsOf, cuts);
+       operatorCaps = update.caps;
++      for (const name of uncapped.keys()) if (!operatorCaps.has(name)) uncapped.delete(name);
+     }
+ 
+     /* 7) Invariants: a break made during the tick is caught before the next. */
+diff --git a/packages/swarm/src/ladder-under-cap.test.ts b/packages/swarm/src/ladder-under-cap.test.ts
+new file mode 100644
+index 0000000..e532d2a
+--- /dev/null
++++ b/packages/swarm/src/ladder-under-cap.test.ts
+@@ -0,0 +1,345 @@
++/**
++ * (G) An operator cap never weakens a name's OWN ladder. When one of an
++ * operator's names is stopped out, its other names are capped at cutFactor of
++ * their full size; when a capped name's own ladder then cuts it, the ladder
++ * cuts what the name would hold WITHOUT the cap (`AgentResult.uncapped`), and
++ * the cap's ceiling holds on top (`ladderCutUnderCap`).
++ *
++ * Checked on scripted markets (each agent's record is written tick by tick),
++ * each run twice: with operator labels and blind (labels stripped). Each book
++ * is built so the two runs trade the same budgets except where the cap bites,
++ * so "as hard as without labels" is checked exactly, name by name.
++ *
++ * Book A, five ways to sit under the cap when the credit event comes:
++ *  - bounce: its ladder cut and restored it, so it sits AT the cap's ceiling
++ *    when capped, on its own account; its ladder then cuts it again;
++ *  - deep:   the crowding check cut it BELOW the ceiling before the cap; its
++ *    ladder then cuts it;
++ *  - part:   the crowding check cut it to between the ceiling and full size;
++ *    the cap takes it down to the ceiling; its ladder then cuts it;
++ *  - atfull: at full size when capped (the cap takes it to the ceiling); its
++ *    ladder then cuts it: NOT again (the loop-3 guarantee: no cutFactor²);
++ *  - late:   capped at full size, reallocated while capped, then cut by its
++ *    ladder: not again either.
++ * Book B: a crowding cut that only the uncapped book takes. After the cap,
++ * a reallocation sizes `paired` and its crowd-mate so that, uncapped, their
++ * shared instrument breaches the book limit; capped, it does not. Its ladder
++ * then cuts it from the crowding-cut budget, as the book without labels does.
++ *
++ * Loop 3 cut a capped name's ladder to the cap's ceiling instead, so bounce,
++ * deep, part and paired were not cut at all: they held 2×, 2×, 1.28× and
++ * 1.07× what the same book gives them without operator labels. The two "as
++ * hard as" tests fail on that code (as do the two on the uncapped budget: it
++ * had none); the rest pin what must not change (no cutFactor², no stop-out
++ * moved, nothing revoked, the tree sound).
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { defaultCenterBookPolicy, ladderStep, type LadderState } from "./allocator";
++import { runBook, type BookResult } from "./book";
++import { generateMarket } from "./market";
++import type { Strategy, Weights } from "./strategies";
++
++const FUND = "fund.eth";
++const AUM = 10_000_000;
++const policy = defaultCenterBookPolicy();
++const CF = policy.cutFactor!;
++const T = 40;
++
++/** base ± amp, alternating: a low-vol record, so every rung is at its fixed floor. */
++const alt = (t: number, base: number, amp: number) => base + (t % 2 === 0 ? amp : -amp);
++/** A shock of `size` at tick `at`, nothing else. */
++const shock = (at: number, size: number) => (t: number) => (t === at ? size : 0);
++/** Rising to its high at t = 12 (the credit event), then flat: no new high, so the cap stays on. */
++const risingThenFlat = (t: number) => (t <= 12 ? alt(t, 0.003, 0.002) : 0);
++/** The loser: stopped out at t = 12, the credit event. */
++const loser = (t: number) => (t < 12 ? alt(t, 0.003, 0.002) : t === 12 ? -0.25 : 0);
++/** Steady earners: NAV stays above AUM, so both runs of a book deploy the same capital. */
++const steady = (t: number) => alt(t, 0.03, 0.002);
++
++class Hold implements Strategy {
++  readonly style = "hold";
++  constructor(private readonly weights: Weights) {}
++  decide(): Weights {
++    return { ...this.weights };
++  }
++}
++
++type Roster = [label: string, weights: Weights, pod: string, operator?: string][];
++
++interface Run {
++  book: BookResult;
++  /** Agent budgets (USDC) at the start of each tick, and after the last one: [t][label]. */
++  budgets: Map<string, number>[];
++}
++
++/** One scripted book, run with operator labels and blind. */
++function scriptedBook(seed: number, scripts: Record<string, (t: number) => number>, roster: Roster) {
++  const instruments = Object.keys(scripts);
++  const market = generateMarket({
++    seed,
++    ticks: T,
++    instruments,
++    factorVol: 0.008,
++    idioVol: 0.01,
++    // No crowd in these markets.
++    crowd: { instrument: instruments[0]!, startTick: 10_000, crashTick: 10_001, inflowDrift: 0, crashSize: 0, contagion: 0 },
++  });
++  for (const tick of market.ticks) for (const s of instruments) tick.returns[s] = scripts[s]!(tick.t);
++  const nameOf = (label: string) => `${label}.${roster.find(([l]) => l === label)![2]}.${FUND}`;
++  const run = async (labelled: boolean): Promise<Run> => {
++    const budgets: Map<string, number>[] = [];
++    const read = (tree: BookResult["tree"]) =>
++      new Map(roster.map(([l]) => [l, Number(tree.requireNode(nameOf(l)).mandate.budget) / 1e6]));
++    const spec = {
++      principal: "alice",
++      fund: FUND,
++      aum: AUM,
++      pods: ["alpha", "beta"].map((label) => ({ label, instruments })),
++      agents: roster.map(([label, weights, pod, operator]) => ({
++        label,
++        pod,
++        ...(labelled && operator ? { operator } : {}),
++        instruments,
++        strategy: new Hold(weights),
++      })),
++    };
++    const book = await runBook(market, spec, policy, { onTick: (t, tree) => void (budgets[t] = read(tree)) });
++    budgets.push(read(book.tree));
++    return { book, budgets };
++  };
++  return { lab: run(true), blind: run(false), nameOf, perAgent: (AUM * policy.deploy) / roster.length };
++}
++
++const agent = (r: Run, label: string) => r.book.agents.find((a) => a.label === label)!;
++/** Budget at the end of tick t (= the start of t + 1). */
++const endOf = (r: Run, t: number, label: string) => r.budgets[t + 1]!.get(label)!;
++const near = (a: number, b: number, what: string) => assert.ok(Math.abs(a - b) <= 1e-6 * Math.max(1, Math.abs(b)), `${what}: ${a} vs ${b}`);
++const decisionsAt = (r: Run, t: number, kind: string) => r.book.decisions.filter((d) => d.t === t && d.kind === kind).map((d) => d.node);
++
++/** An agent's final ladder state from ITS OWN record alone: no book, no capital, no siblings. */
++function ownLadder(unitReturns: readonly number[]): LadderState {
++  return unitReturns.reduce<LadderState>(
++    (state, _, t) =>
++      ladderStep(state, unitReturns.slice(0, t + 1), {
++        ddStop: policy.ddStop,
++        ddCut: policy.ddCut,
++        ddRecover: policy.ddRecover,
++        ddStopVol: policy.ddStopVol,
++        volWindow: policy.window,
++        ddStopMax: policy.ddStopMax,
++      }).next,
++    "active",
++  );
++}
++
++/**
++ * Each capped name after its own ladder cut, against the same book without
++ * labels: it must hold what its ladder leaves it there, under the cap's
++ * ceiling. Returns the names that hold anything else.
++ */
++function asHardAsBlind(lab: Run, blind: Run, cuts: readonly [string, number][], nameOf: (l: string) => string): string[] {
++  const off: string[] = [];
++  for (const [l, t] of cuts) {
++    // The same record, the same ladder move, in both runs.
++    assert.ok(decisionsAt(blind, t, "CUT").includes(nameOf(l)), `${l}: its blind ladder cuts at t=${t}`);
++    const want = Math.min(endOf(blind, t, l), CF * agent(lab, l).fullSize[t]!);
++    const got = endOf(lab, t, l);
++    if (Math.abs(got - want) > 1e-6 * want) off.push(`${l} at t=${t}: holds ${got.toFixed(0)}, without labels ${endOf(blind, t, l).toFixed(0)}`);
++  }
++  return off;
++}
++
++/* ------------------------------------------------------------------ */
++/* Book A: five ways to sit under the cap                             */
++/* ------------------------------------------------------------------ */
++
++const A = scriptedBook(
++  23,
++  {
++    L: loser,
++    // At full size when capped; its own ladder cuts it at t = 16.
++    A: (t) => (t === 16 ? -0.11 : risingThenFlat(t)),
++    // Cut at t = 4, restored at t = 5 (still at cutFactor × its size at t = 12), cut again at t = 16.
++    B: (t) => (t <= 3 ? alt(t, 0.01, 0.002) : t === 4 ? -0.12 : t === 5 ? 0.08 : t < 16 ? 0.001 : t === 16 ? -0.12 : 0),
++    // Two crowded pairs: `deep` and `part` share C1 / C2 with a twin run by another operator.
++    C1: risingThenFlat,
++    C2: risingThenFlat,
++    D1: shock(18, -0.6), // deep's own leg: its ladder cuts it at t = 18
++    D2: shock(20, -0.6), // part's own leg: its ladder cuts it at t = 20
++    E1: () => 0,
++    E2: () => 0,
++    // Capped at full size, reallocated at t = 30 while capped, cut by its ladder at t = 33.
++    G: (t) => (t === 33 ? -0.11 : risingThenFlat(t)),
++    Y1: steady,
++    Y2: steady,
++  },
++  [
++    ["loser", { L: 0.5 }, "alpha", "mallory"],
++    ["atfull", { A: 0.5 }, "alpha", "mallory"],
++    ["bounce", { B: 0.5 }, "beta", "mallory"],
++    // At 10 names × 800k: 2 × 1.28M on C1 is 25.6% of NAV → both scaled ×0.39 (below the cap's ×0.5).
++    ["deep", { C1: 0.8, D1: 0.1 }, "alpha", "mallory"],
++    ["deeptwin", { C1: 0.8, E1: 0.1 }, "beta", "op-x"],
++    // 2 × 640k on C2 is 12.8% of NAV → both scaled ×0.78 (between the cap and full size).
++    ["part", { C2: 0.4, D2: 0.1 }, "beta", "mallory"],
++    ["parttwin", { C2: 0.4, E2: 0.1 }, "alpha", "op-y"],
++    ["late", { G: 0.5 }, "beta", "mallory"],
++    ["steady1", { Y1: 0.25 }, "alpha", "op-b"],
++    ["steady2", { Y2: 0.25 }, "beta"],
++  ],
++);
++
++/** Every capped name's own ladder cut in book A: [label, tick]. */
++const A_CUTS: [string, number][] = [
++  ["atfull", 16],
++  ["bounce", 16],
++  ["deep", 18],
++  ["part", 20],
++  ["late", 33],
++];
++
++test("book A plays out: the crowding cuts, the credit event and each capped name's own ladder cut land where written", async () => {
++  const lab = await A.lab;
++  const blind = await A.blind;
++  const { nameOf, perAgent } = A;
++  assert.deepEqual(
++    lab.book.decisions.filter((d) => d.kind === "CROWDING_CUT").map((d) => [d.t, d.node]),
++    [
++      [0, [nameOf("deep"), nameOf("deeptwin")].join(", ")],
++      [0, [nameOf("part"), nameOf("parttwin")].join(", ")],
++    ],
++  );
++  assert.deepEqual(decisionsAt(lab, 12, "STOP_OUT"), [nameOf("loser")]);
++  assert.deepEqual(decisionsAt(lab, 12, "OPERATOR_CUT"), ["atfull", "bounce", "deep", "part", "late"].map(nameOf));
++  assert.deepEqual(
++    lab.book.decisions.filter((d) => d.kind === "CUT").map((d) => [d.node, d.t]),
++    [["bounce", 4] as [string, number], ...A_CUTS].map(([l, t]) => [nameOf(l), t]),
++  );
++  assert.deepEqual(lab.book.decisions.filter((d) => d.kind === "OPERATOR_RESTORE"), [], "every cap holds to the end");
++  // Where each capped name stands when capped (end of t = 11), against the cap's ceiling.
++  near(endOf(lab, 11, "atfull"), perAgent, "atfull at full size");
++  near(endOf(lab, 11, "bounce"), CF * perAgent, "bounce at the ceiling, on its own ladder's account");
++  assert.ok(endOf(lab, 11, "deep") < 0.8 * CF * perAgent, "deep well below the ceiling (crowding)");
++  assert.ok(endOf(lab, 11, "part") > 1.5 * CF * perAgent && endOf(lab, 11, "part") < perAgent, "part between the ceiling and full size");
++  // The cap cut only the names above its ceiling.
++  for (const l of ["atfull", "part", "late"]) near(endOf(lab, 12, l), CF * perAgent, `${l} capped to the ceiling`);
++  for (const l of ["bounce", "deep"]) assert.equal(endOf(lab, 12, l), endOf(lab, 11, l), `${l} already at or below the ceiling`);
++  // Both runs deploy the same capital at the reallocation that sizes `late` while capped.
++  for (const r of [lab, blind]) assert.ok(r.book.nav.every((n) => n > AUM), "NAV above AUM throughout");
++  assert.ok(decisionsAt(lab, 30, "REALLOCATE").includes(nameOf("late")), "late is resized while capped");
++});
++
++test("book A: a capped name's own ladder cut is exactly as hard as the same book cuts it without operator labels", async () => {
++  const lab = await A.lab;
++  const blind = await A.blind;
++  const { perAgent } = A;
++  assert.deepEqual(asHardAsBlind(lab, blind, A_CUTS, A.nameOf), [], "capped names left more than their own ladder leaves them");
++  // Where the cap already held a name at full size down at the ceiling, its
++  // ladder's cut lands on the same ceiling: that is no cut, not cutFactor².
++  // Everywhere else its ladder cuts it, the cap or no cap.
++  near(endOf(lab, 16, "bounce"), CF * CF * perAgent, "bounce: cut again by its own ladder, as blind");
++  near(endOf(lab, 18, "deep"), CF * endOf(lab, 17, "deep"), "deep: cut from below the ceiling, as blind");
++  near(endOf(lab, 20, "part"), CF * endOf(blind, 19, "part"), "part: cutFactor × what it would hold uncapped");
++  assert.ok(endOf(lab, 20, "part") < endOf(lab, 19, "part"), "part cut below the cap's ceiling");
++});
++
++test("book A: the cap and the ladder never compound — a name the cap already holds at the ceiling is not cut again", async () => {
++  const lab = await A.lab;
++  const blind = await A.blind;
++  for (const l of ["atfull", "late"]) {
++    const t = A_CUTS.find(([x]) => x === l)![1];
++    assert.equal(endOf(lab, t, l), endOf(lab, t - 1, l), `${l} halved again by its own ladder`);
++    assert.match(lab.book.decisions.find((d) => d.t === t && d.kind === "CUT" && d.node === A.nameOf(l))!.detail, /not cut again/);
++    near(endOf(lab, t, l), CF * agent(lab, l).fullSize[t]!, `${l} at cutFactor × full size`);
++    near(endOf(lab, t, l), endOf(blind, t, l), `${l}: as blind (full size, then cut)`);
++  }
++  // No capped name's cut ever lands below cutFactor × min(full size, what it holds blind).
++  for (const [l, t] of A_CUTS) {
++    const floor = CF * Math.min(agent(lab, l).fullSize[t]!, agent(blind, l).capital[t]!);
++    assert.ok(endOf(lab, t, l) >= floor * (1 - 1e-9), `${l} at t=${t}: ${endOf(lab, t, l)} below ${floor}`);
++  }
++});
++
++test("book A: the uncapped budget is exactly the budget the same book gives each name without operator labels", async () => {
++  const lab = await A.lab;
++  const blind = await A.blind;
++  for (const a of lab.book.agents) {
++    const b = agent(blind, a.label);
++    assert.equal(a.uncapped.length, T);
++    for (let t = 0; t < T; t++) near(a.uncapped[t]!, b.capital[t]!, `${a.label} at t=${t}`);
++  }
++  // …and differs from the capped budget exactly while the cap bites.
++  const late = agent(lab, "late");
++  assert.ok(late.uncapped[20]! > late.capital[20]! * 1.9, "late: the cap holds it at half its uncapped budget");
++  near(late.capital[31]!, CF * late.uncapped[31]!, "late after the reallocation: capped at cutFactor of its uncapped (= full) size");
++});
++
++test("book A: no ladder move is delayed or advanced, and nothing but a stop-out revokes a mandate", async () => {
++  const lab = await A.lab;
++  const blind = await A.blind;
++  const moves = (b: BookResult) =>
++    b.decisions.filter((d) => d.kind === "STOP_OUT" || d.kind === "CUT" || d.kind === "RESTORE").map((d) => `${d.t} ${d.kind} ${d.node}`);
++  assert.deepEqual(moves(lab.book), moves(blind.book));
++  for (const a of lab.book.agents) {
++    assert.equal(a.ladder, ownLadder(a.unitReturns), `${a.label}: its own ladder`);
++    assert.equal(lab.book.tree.isRevokedInChain(a.name), a.ladder === "stopped", `${a.label}: revoked iff stopped`);
++  }
++  assert.deepEqual(lab.book.tree.audit(), []);
++  assert.ok(!lab.book.tree.events.some((e) => e.result === "ATTENUATION_REJECTED"));
++});
++
++/* ------------------------------------------------------------------ */
++/* Book B: a crowding cut only the uncapped book takes                */
++/* ------------------------------------------------------------------ */
++
++const B = scriptedBook(
++  29,
++  {
++    L: loser,
++    C3: risingThenFlat,
++    D3: shock(34, -0.2), // paired's own leg: its ladder cuts it at t = 34
++    E3: () => 0,
++    Y1: steady,
++    Y2: steady,
++  },
++  [
++    ["loser", { L: 0.5 }, "alpha", "mallory"],
++    // Not clones (cosine 0.5), but the book's net C3 exposure is capped at 20% of
++    // NAV: at 1.6M each it is 19.2% of NAV; at the 2M each the reallocation at
++    // t = 30 gives them, 21.5% (breach) uncapped, 16% with paired capped.
++    ["paired", { C3: 0.3, D3: 0.3 }, "alpha", "mallory"],
++    ["pairtwin", { C3: 0.3, E3: 0.3 }, "beta", "op-z"],
++    ["steady1", { Y1: 0.25 }, "alpha", "op-b"],
++    ["steady2", { Y2: 0.25 }, "beta"],
++  ],
++);
++
++test("book B plays out: the uncapped book breaches the crowding limit at the reallocation, the capped one does not", async () => {
++  const lab = await B.lab;
++  const blind = await B.blind;
++  const { nameOf } = B;
++  assert.deepEqual(decisionsAt(lab, 12, "OPERATOR_CUT"), [nameOf("paired")]);
++  assert.deepEqual(lab.book.decisions.filter((d) => d.kind === "CROWDING_CUT"), [], "capped, the book is within its limits");
++  const crowding = blind.book.decisions.filter((d) => d.kind === "CROWDING_CUT");
++  assert.deepEqual(crowding.map((d) => [d.t, d.node]), [[30, [nameOf("paired"), nameOf("pairtwin")].join(", ")]]);
++  assert.deepEqual(decisionsAt(lab, 34, "CUT"), [nameOf("paired")]);
++  assert.deepEqual(lab.book.decisions.filter((d) => d.kind === "OPERATOR_RESTORE"), [], "the cap holds to the end");
++  // The two books trade the same NAV until paired's own cut (a capped name that earns nothing earns nothing either way).
++  assert.deepEqual(lab.book.nav.slice(0, 34), blind.book.nav.slice(0, 34));
++  for (const r of [lab, blind]) assert.ok(r.book.nav.every((n) => n > AUM), "NAV above AUM throughout");
++});
++
++test("book B: the uncapped budget takes the crowding cut the book without labels takes, and the ladder cuts from there", async () => {
++  const lab = await B.lab;
++  const blind = await B.blind;
++  assert.deepEqual(asHardAsBlind(lab, blind, [["paired", 34]], B.nameOf), [], "paired left more than its own ladder leaves it");
++  assert.ok(endOf(lab, 34, "paired") < endOf(lab, 33, "paired"), "cut below the cap's ceiling");
++  const paired = agent(lab, "paired");
++  for (let t = 0; t <= 34; t++) near(paired.uncapped[t]!, agent(blind, "paired").capital[t]!, `paired's uncapped budget at t=${t}`);
++  assert.ok(paired.uncapped[31]! < paired.fullSize[31]! * 0.95, "cut below its full size by the crowding check");
++  near(paired.capital[31]!, CF * paired.fullSize[31]!, "while the book itself is held at the cap's ceiling");
++  // The crowding check on the uncapped book never cuts the book itself: its crowd-mate keeps its size.
++  near(agent(lab, "pairtwin").capital[31]!, agent(lab, "pairtwin").fullSize[31]!, "pairtwin at full size");
++  assert.deepEqual(lab.book.tree.audit(), []);
++});
