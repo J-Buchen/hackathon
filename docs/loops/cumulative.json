@@ -1,0 +1,88 @@
+{
+ "what": "cumulative out-of-sample check: the code before loop 1 (f5b2d80) vs the code after loop 5 (64b1690), on sealed seeds 19000-19399 that no loop ever used",
+ "note": "the pre-loop checkout has the arena's tiger fix (1d672c1's arena.ts change) applied so both sides pick the Tiger primary the same point-in-time way, hence its dirty flag; the market generator and strategies are unchanged since f5b2d80, so both sides see identical worlds",
+ "seeds": {
+  "from": 19000,
+  "count": 400
+ },
+ "before": {
+  "sha": "f5b2d80b51cfbc01ca24396fe54ff75c07f193e6",
+  "dirty": true,
+  "allocator": {
+   "worlds": 400,
+   "utility": 0.0732441771756047,
+   "baseline": 0.06393892423979526,
+   "uplift": 0.009305252935809572,
+   "upliftLo": 0.00393921181142851,
+   "upliftHi": 0.014671294060190635,
+   "winRate": 0.565,
+   "sharpe": 0.8095825585215163,
+   "baselineSharpe": 0.7611258891154188,
+   "maxDD": 0.0673375708223806,
+   "baselineMaxDD": 0.0726372194018258
+  },
+  "tiger": {
+   "worlds": 400,
+   "utility": -0.08236234874893121,
+   "baseline": -0.2057985868786404,
+   "uplift": 0.12343623812970904,
+   "upliftLo": 0.10537963926751225,
+   "upliftHi": 0.14149283699190585,
+   "winRate": 0.725,
+   "sharpe": -0.28178056595223916,
+   "baselineSharpe": -0.1426251949476076,
+   "maxDD": 0.2521382165354813,
+   "baselineMaxDD": 0.3919259800867575
+  }
+ },
+ "after": {
+  "sha": "64b1690973f2700a5cf65b1f50828ab2bb9790a4",
+  "allocator": {
+   "worlds": 400,
+   "utility": 0.11885433059548652,
+   "baseline": 0.06393892423979526,
+   "uplift": 0.05491540635569127,
+   "upliftLo": 0.04622462251437512,
+   "upliftHi": 0.06360619019700742,
+   "winRate": 0.68,
+   "sharpe": 1.1990064237416866,
+   "baselineSharpe": 0.7611258891154188,
+   "maxDD": 0.07520270841083355,
+   "baselineMaxDD": 0.0726372194018258,
+   "maxDDAtBaselineVol": 0.06473286042233871
+  },
+  "tiger": {
+   "worlds": 400,
+   "utility": -0.05870478670442745,
+   "baseline": -0.2057985868786404,
+   "uplift": 0.14709380017421259,
+   "upliftLo": 0.12761430133277862,
+   "upliftHi": 0.16657329901564655,
+   "winRate": 0.7675,
+   "sharpe": -0.23314923793554676,
+   "baselineSharpe": -0.1426251949476076,
+   "maxDD": 0.23595206944067776,
+   "baselineMaxDD": 0.3919259800867575
+  }
+ },
+ "paired": {
+  "allocator": {
+   "mean": 0.045610153419881755,
+   "lo": 0.03824487104728577,
+   "hi": 0.05297543579247774,
+   "wins": 0.7
+  },
+  "tiger": {
+   "mean": 0.02365756204450374,
+   "lo": 0.015983301252594676,
+   "hi": 0.03133182283641281,
+   "wins": 0.615
+  },
+  "risk": {
+   "allocatorMaxDD": null,
+   "allocatorSharpe": null,
+   "tigerMaxDD": null,
+   "tigerSharpe": null
+  }
+ }
+}

@@ -325,3 +325,26 @@ nothing measurable.
 
 Full numbers: [`docs/loops/loop-5.json`](loops/loop-5.json); diffs: [`docs/loops/loop-5/`](loops/loop-5/).
 
+## Cumulative out-of-sample check (after loop 5)
+
+The code before loop 1 (`f5b2d80`) against the code after loop 5 (`64b1690`), on **400 sealed
+worlds (seeds 19000–19399) that no loop ever used**. Both sides pick the Tiger primary the same
+point-in-time way (the pre-loop checkout has the arena's tiger fix applied); the market generator
+and the strategies have not changed since `f5b2d80`, so both see identical worlds.
+
+| | before loop 1 | after loop 5 | paired change (90% interval) |
+|---|---:|---:|---|
+| center book certainty equivalent | 7.32% | **11.89%** | **+4.56 pp [+3.82, +5.30]**, better in 70% of worlds |
+| per-agent guardrails, same worlds | 6.39% | 6.39% | — |
+| center book Sharpe | 0.81 | 1.20 | |
+| center book max drawdown | 6.73% (guardrails 7.26%) | **7.52%** (6.47% at the guardrails' volatility) | |
+| Tiger overlay certainty equivalent | −8.24% | **−5.87%** | **+2.37 pp [+1.60, +3.13]**, better in 62% of worlds |
+| Tiger overlay max drawdown (buy-and-hold 39.2%) | 25.2% | 23.6% | |
+
+What this says, plainly: the loops made the fund's risk-adjusted outcome clearly better on worlds
+nobody tuned on, and they did it by keeping skilled agents that run more volatility. The price is
+a raw max drawdown that went from below the per-agent guardrails' to above it; per unit of
+volatility it is still lower. The Tiger overlay improved but still loses money for a γ = 3
+investor, because in the arena its single name has no edge. Full numbers:
+[`docs/loops/cumulative.json`](loops/cumulative.json).
+
