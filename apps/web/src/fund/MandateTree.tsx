@@ -7,6 +7,7 @@ import {
   pct,
   sharedOperatorMap,
   stateAtIndex,
+  statusLabel,
   treeRows,
   usdCompact,
   type TreeRow,
@@ -81,13 +82,13 @@ export function MandateTree({ snapshot, index, onIndex, highlight, selectedKind,
   const isEnd = index >= states.length;
   const stoppedAt = useMemo(() => new Map(snapshot.stopOuts.map((s) => [s.name, s])), [snapshot]);
   const anySpent = state.spent.some((x) => x > 0);
-  const cutText = `cut ×${snapshot.policy.center.cutFactor}`;
-  const statusText = { active: "active", cut: cutText, stopped: "stopped out" } as const;
 
   const podStats = (pod: string) => {
     const agents = rows.filter((r) => r.depth === 2 && r.pod === pod);
-    const active = agents.filter((r) => !state.revoked[r.index]).length;
-    return { total: agents.length, active };
+    // Active means open AND holding capital: an agent sized to zero is counted apart.
+    const open = agents.filter((r) => !state.revoked[r.index]);
+    const active = open.filter((r) => (state.budget[r.index] ?? 0) > 0).length;
+    return { total: agents.length, active, unallocated: open.length - active };
   };
 
   const renderRow = (r: TreeRow) => {
@@ -125,7 +126,9 @@ export function MandateTree({ snapshot, index, onIndex, highlight, selectedKind,
             const p = podStats(r.pod!);
             return (
               <span className="fc-node-meta">
-                {p.total === 0 ? "no agents" : `${p.active} of ${p.total} agents active`}
+                {p.total === 0
+                  ? "no agents"
+                  : `${p.active} of ${p.total} agents active${p.unallocated > 0 ? ` · ${p.unallocated} unallocated` : ""}`}
               </span>
             );
           })()}
@@ -142,7 +145,7 @@ export function MandateTree({ snapshot, index, onIndex, highlight, selectedKind,
                 </span>
               )}
               <span className={`fc-status fc-status-${status}`}>
-                <span aria-hidden="true">{STATUS_ICON[status]}</span> {statusText[status]}
+                <span aria-hidden="true">{STATUS_ICON[status]}</span> {statusLabel(status, snapshot.policy.center.cutFactor, budget)}
               </span>
             </span>
           )}

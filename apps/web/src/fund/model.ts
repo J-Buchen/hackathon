@@ -5,7 +5,7 @@
  * tested in ../fund.test.ts.
  */
 
-import type { FundAgent, FundDecision, FundSnapshot, GroupCut, LoopEvidence, SealedBooks, StopOut, TreeState, Uplift } from "./types";
+import type { FundAgent, FundDecision, FundSnapshot, GroupCut, LoopEvidence, Rejection, SealedBooks, StopOut, TreeState, Uplift } from "./types";
 
 /* -------------------------------------------------------------------------- */
 /* Decision log                                                                */
@@ -575,6 +575,17 @@ export function showcaseContext(s: FundSnapshot): ShowcaseContext {
 /* Formatting                                                                  */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * An agent's ladder status in words. An agent the allocator has sized to zero
+ * reads "unallocated", whatever its ladder rung: "cut ×0.5" beside ×0.00 of
+ * its grant would name the wrong cause (the ladder step stays in the decision log).
+ */
+export function statusLabel(state: "active" | "cut" | "stopped", cutFactor: number, capital: number): string {
+  if (state === "stopped") return "stopped out";
+  if (capital <= 0) return "unallocated";
+  return state === "cut" ? `cut ×${cutFactor}` : "active";
+}
+
 /** 1234567 → "1.23M", 53400 → "53.4K", −800 → "−800". */
 export function usdCompact(x: number): string {
   const a = Math.abs(x);
@@ -586,9 +597,77 @@ export function usdCompact(x: number): string {
 }
 
 export const pct = (x: number, dp = 1) => `${(x * 100).toFixed(dp)}%`;
-export const signedPct = (x: number, dp = 1) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(dp)}%`;
+/** A signed number of `dp` decimals that never prints a signed zero ("−0.00" → "0.00"). */
+function signed(v: number, dp: number): string {
+  const s = Math.abs(v).toFixed(dp);
+  if (Number(s) === 0) return s;
+  return `${v > 0 ? "+" : "−"}${s}`;
+}
+export const signedPct = (x: number, dp = 1) => `${signed(x * 100, dp)}%`;
 export const signedUsd = (x: number) => `${x >= 0 ? "+" : "−"}${usdCompact(Math.abs(x))}`;
-export const pp = (x: number, dp = 2) => `${x >= 0 ? "+" : "−"}${Math.abs(x * 100).toFixed(dp)} pp`;
+/**
+ * Decimals for a set of pp values: `dp`, plus up to three more while a non-zero
+ * value would still round to 0 (the ledger's −0.0014 pp prints "−0.001", not a
+ * false exact "0.00" that also drops its sign).
+ */
+function fineDp(vs: readonly number[], dp: number): number {
+  let d = dp;
+  while (d < dp + 3 && vs.some((v) => v !== 0 && Number(Math.abs(v).toFixed(d)) === 0)) d++;
+  return d;
+}
+/** A signed pp number to `dp` decimals, finer when needed; below the finest step, a bound ("−<0.00001"). */
+function signedPp(v: number, dp: number): string {
+  const d = fineDp([v], dp);
+  if (v !== 0 && Number(Math.abs(v).toFixed(d)) === 0) return `${v > 0 ? "+" : "−"}<${(10 ** -d).toFixed(d)}`;
+  return signed(v, d);
+}
+export const pp = (x: number, dp = 2) => `${signedPp(x * 100, dp)} pp`;
+/**
+ * A compact percentage-point value for a narrow label: 2 decimals below 1 pp
+ * (so an interval of [−0.03, +0.06] pp is not rounded to "−0.0 to +0.1"), 1 at
+ * or above it, finer when a non-zero value would round to 0, never a signed zero.
+ */
+export function ppShort(x: number): string {
+  const v = x * 100;
+  return signedPp(v, Math.abs(v) < 0.995 ? 2 : 1);
+}
+/**
+ * "+0.19 to +2.92 pp": an interval with one precision for both ends, set by the
+ * end nearer zero (2 decimals if either is below 1 pp; finer if one would round to 0).
+ */
+export function ppRange(lo: number, hi: number): string {
+  const a = lo * 100;
+  const b = hi * 100;
+  const d = fineDp([a, b], Math.min(Math.abs(a), Math.abs(b)) < 0.995 ? 2 : 1);
+  return `${signedPp(a, d)} to ${signedPp(b, d)} pp`;
+}
+/** "+0.19 pp to +2.92 pp": an interval in full, both ends to one precision (2 decimals, finer if needed). */
+export function ppInterval(lo: number, hi: number): string {
+  const d = fineDp([lo * 100, hi * 100], 2);
+  return `${pp(lo, d)} to ${pp(hi, d)}`;
+}
+
+/**
+ * Ledger notes are free text from the loop ledger: show them in the page's
+ * number style, with no signed zero ("-0.00" → "0.00", "+0.00" → "0.00") and a
+ * typographic minus (U+2212) for a hyphen-minus that signs a number.
+ */
+export function ledgerText(s: string): string {
+  return s.replace(/(^|[\s([{,;:=])([-+−])(\d+(?:\.\d+)?)(?!\d)(?!\.\d)/g, (_m, pre: string, sign: string, num: string) => {
+    if (Number(num) === 0) return `${pre}${num}`;
+    return `${pre}${sign === "+" ? "+" : "−"}${num}`;
+  });
+}
+
+/**
+ * Split a loop's rejections into candidates that were measured and not merged
+ * and null results (the ledger's "null result, no diff": a mechanism tested
+ * and no change proposed). They are different outcomes and are listed apart.
+ */
+export function splitRejections(rs: readonly Rejection[]): { candidates: Rejection[]; nulls: Rejection[] } {
+  const isNull = (r: Rejection) => /^null result\b/i.test(r.reason.trim());
+  return { candidates: rs.filter((r) => !isNull(r)), nulls: rs.filter(isNull) };
+}
 /**
  * A share of worlds (e.g. "better in 72.5% of worlds"): a whole percent prints
  * without decimals, anything else with one, so a rate over 200 worlds is never

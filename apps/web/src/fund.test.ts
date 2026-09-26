@@ -27,6 +27,13 @@ import {
   loopVerdict,
   titleGloss,
   pp,
+  ppInterval,
+  ppRange,
+  ledgerText,
+  ppShort,
+  signedPct,
+  splitRejections,
+  statusLabel,
   showcaseContext,
   standing,
   winPct,
@@ -754,4 +761,94 @@ test("lint: the drawdown chart paints the before ring's outline and the guardrai
   assert.match(css, /\.fc-dd-before::after \{[^}]*z-index: 2;/);
   assert.match(css, /\.fc-dd-after \{ z-index: 1;/);
   assert.match(css, /\.fc-dd-guard \{ z-index: 3;/);
+});
+
+test("interval labels keep 2 decimals below 1 pp and never print a signed zero", () => {
+  assert.equal(ppRange(-0.0003, 0.0006), "−0.03 to +0.06 pp");
+  assert.equal(ppShort(0.0123), "+1.2");
+  assert.equal(ppShort(0), "0.00");
+  assert.equal(pp(0), "0.00 pp");
+  assert.equal(signedPct(-0.00001), "0.0%");
+  assert.equal(pp(0.0123), "+1.23 pp");
+  const s = load();
+  const html = flatten(renderToStaticMarkup(createElement(Evidence, { loops: s.evidence.loops })));
+  assert.doesNotMatch(html, /[−-]0\.0 to|[−-]0\.00? pp|[−-]0\.0%/, "no signed zero in the evidence");
+});
+
+test("a non-zero pp value never prints as an exact zero: it keeps its sign with a finer step", () => {
+  // Loop 5's block B in the ledger: −0.0014 pp [−0.0037, +0.0008].
+  assert.equal(pp(-0.000014), "−0.001 pp");
+  assert.equal(ppShort(-0.000014), "−0.001");
+  assert.equal(ppRange(-0.000037, 0.000008), "−0.004 to +0.001 pp");
+  assert.equal(ppInterval(-0.000037, 0.000008), "−0.004 pp to +0.001 pp");
+  // Below the finest step (5 decimals), a signed bound.
+  assert.equal(pp(-0.00000001), "−<0.00001 pp");
+  assert.equal(pp(0.00000001), "+<0.00001 pp");
+  assert.equal(pp(0), "0.00 pp", "an exact zero (e.g. a loop that left the allocator unchanged) stays 0.00");
+  // Every non-zero interval end renders with its sign: no false "0.00" for a value that is not 0.
+  const s = load();
+  const html = flatten(renderToStaticMarkup(createElement(Evidence, { loops: s.evidence.loops })));
+  for (const r of evidenceRows(s.evidence.loops)) {
+    for (const v of [r.u.mean, r.u.lo, r.u.hi]) if (v !== 0) assert.doesNotMatch(pp(v), /^0\.0+ pp$/, `${r.key}: ${v}`);
+    assert.ok(html.includes(ppRange(r.u.lo, r.u.hi)), `${r.key}: ${ppRange(r.u.lo, r.u.hi)} shown`);
+  }
+});
+
+test("an interval label uses one precision for both ends", () => {
+  // Loop 4 · block B: "+0.19 to +2.92 pp", as in the loop card (not "+0.19 to +2.9").
+  assert.equal(ppRange(0.0019, 0.0292), "+0.19 to +2.92 pp");
+  assert.equal(ppRange(0.031, 0.05), "+3.1 to +5.0 pp");
+  assert.equal(ppInterval(0.0019, 0.0292), "+0.19 pp to +2.92 pp");
+});
+
+test("ledger notes show no signed zero and a typographic minus", () => {
+  assert.equal(
+    ledgerText("alpha scoring missed on block A (+0.23 pp [-0.00, +0.46])"),
+    "alpha scoring missed on block A (+0.23 pp [0.00, +0.46])",
+  );
+  assert.equal(ledgerText("block B -0.0014 pp [-0.0037, +0.0008]"), "block B −0.0014 pp [−0.0037, +0.0008]");
+  assert.equal(ledgerText("+0.0 and −0.00%"), "0.0 and 0.00%");
+  // Hyphens inside words and ranges are left alone.
+  assert.equal(ledgerText("loop-2 seeds 1-200, re-run"), "loop-2 seeds 1-200, re-run");
+  const s = load();
+  const html = flatten(renderToStaticMarkup(createElement(Evidence, { loops: s.evidence.loops })));
+  assert.doesNotMatch(html, /(^|[\s([,])[-−+]0\.0+(?![\d.])/, "no signed zero anywhere in the evidence, notes included");
+  assert.doesNotMatch(html, /(^|[\s([,])-\d/, "no hyphen-minus before a number in the evidence");
+});
+
+test("the rejection sub-lists are h4 headings under the panel's h3", () => {
+  const s = load();
+  const html = renderToStaticMarkup(createElement(Evidence, { loops: s.evidence.loops }));
+  if (s.evidence.loops.some((l) => l.loop === 3)) {
+    assert.match(html, /<h4 class="fc-rejects-k">Candidates not merged<\/h4>/);
+    assert.match(html, /<h4 class="fc-rejects-k">Null results: tested, no change proposed<\/h4>/);
+  }
+});
+
+test("null results are listed apart from candidates that were not merged", () => {
+  const { candidates, nulls } = splitRejections([
+    { title: "a", reason: "won block A, failed block B" },
+    { title: "b", reason: "null result, no diff: none beats uniform deleveraging" },
+    { title: "c", reason: "Null result, no diff" },
+  ]);
+  assert.deepEqual(candidates.map((r) => r.title), ["a"]);
+  assert.deepEqual(nulls.map((r) => r.title), ["b", "c"]);
+  const s = load();
+  const html = flatten(renderToStaticMarkup(createElement(Evidence, { loops: s.evidence.loops })));
+  if (s.evidence.loops.some((l) => l.loop === 3)) {
+    assert.match(html, /1 candidate not merged · 2 null results \(no diff proposed\), and why/);
+    assert.match(html, /Null results: tested, no change proposed/);
+  }
+});
+
+test("an agent sized to zero reads unallocated, not a cut that cannot explain ×0.00", () => {
+  assert.equal(statusLabel("cut", 0.5, 0), "unallocated");
+  assert.equal(statusLabel("cut", 0.5, 1200), "cut ×0.5");
+  assert.equal(statusLabel("active", 0.5, 0), "unallocated");
+  assert.equal(statusLabel("stopped", 0.5, 0), "stopped out");
+  const s = load();
+  const zero = s.agents.filter((a) => a.status !== "stopped" && (a.capital.at(-1) ?? 0) <= 0);
+  const html = flatten(renderToStaticMarkup(createElement(FundConsole, { snapshot: s })));
+  assert.doesNotMatch(html, /allocated nothing/);
+  for (const a of zero) assert.match(html, new RegExp(`${a.label} .*unallocated 0 `));
 });

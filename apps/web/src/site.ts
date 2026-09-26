@@ -123,8 +123,8 @@ export const INTEGRATIONS: readonly Integration[] = [
       "A PM hires data agents from a budget carved out of its capital mandate: hires are priced at AgentHire's own quote, " +
       "overspends are blocked and recorded Allowance-side, and one close takes the unspent budget back.",
     usedIn:
-      "the AgentHire run below, against an unmodified, keyless AgentHire on this machine; its settlement and " +
-      "agent-to-agent routes are simulated.",
+      "the AgentHire run below, recorded from a local run against an unmodified, keyless AgentHire (regenerate with " +
+      "npm run demo:agenthire); its settlement and agent-to-agent routes are simulated.",
     file: "docs/AGENTHIRE.md",
     see: { href: "#agenthire", label: "See the run" },
   },

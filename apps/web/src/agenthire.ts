@@ -32,6 +32,21 @@ export interface AgentHireSummary {
   honesty: string[];
 }
 
+/**
+ * The demo prints USDC amounts at full 6-decimal precision ("90.900000 of
+ * 239.616200 USDC"). On the page they read as money: 2 decimals. Only numbers
+ * with exactly 6 decimals (the demo's micro-USDC format) are touched, so ratios
+ * such as "1.25 x" or "0.125" stay as they are, and a non-zero amount under a
+ * cent prints "<0.01", never a false "0.00".
+ */
+export function roundAmounts(text: string): string {
+  return text.replace(/\b(\d+)\.(\d{6})(?![\d.])/g, (_m, i: string, f: string) => {
+    const v = Number(`${i}.${f}`);
+    const s = v.toFixed(2);
+    return v > 0 && Number(s) === 0 ? "<0.01" : s;
+  });
+}
+
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
@@ -66,7 +81,7 @@ export function parseAgentHireSummary(raw: unknown): AgentHireSummary {
   return {
     simulated: raw.simulated,
     mode: str(agenthire.mode, "sidecar.agenthire.mode"),
-    auditHeadline: str(audit.headline, "sidecar.audit.headline"),
+    auditHeadline: roundAmounts(str(audit.headline, "sidecar.audit.headline")),
     incidents,
     freed: ladder && typeof ladder.freed === "string" ? ladder.freed : null,
     honesty: raw.honesty.map((h, n) => str(h, `sidecar.honesty[${n}]`)),

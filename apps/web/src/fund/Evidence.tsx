@@ -3,7 +3,11 @@ import {
   drawdownRows,
   evidenceRows,
   loopVerdict,
+  ledgerText,
   pp,
+  ppInterval,
+  ppRange,
+  splitRejections,
   pct,
   titleGloss,
   winPct,
@@ -56,9 +60,10 @@ function Forest({ rows }: { rows: EvidenceRow[] }) {
       className="fc-forest"
       role="img"
       aria-label={`Paired uplift in certainty-equivalent return with 90% intervals: ${rows
-        .map((r) => `${r.label}, ${r.sub}${r.superseded ? " (replaced by the next row)" : ""}: ${pp(r.u.mean)} (${pp(r.u.lo)} to ${pp(r.u.hi)})`)
+        .map((r) => `${r.label}, ${r.sub}${r.superseded ? " (replaced by the next row)" : ""}: ${pp(r.u.mean)} (${ppInterval(r.u.lo, r.u.hi)})`)
         .join("; ")}`}
     >
+      <Axis top ticks={ticks} x={x} label={tickLabel} />
       {rows.map((r) => (
         <div
           key={r.key}
@@ -83,23 +88,11 @@ function Forest({ rows }: { rows: EvidenceRow[] }) {
           </div>
           <div className="fc-forest-val">
             <strong>{pp(r.u.mean)}</strong>
-            <span>
-              {pp(r.u.lo, 1).replace(" pp", "")} to {pp(r.u.hi, 1)}
-            </span>
+            <span>{ppRange(r.u.lo, r.u.hi)}</span>
           </div>
         </div>
       ))}
-      <div className="fc-forest-row fc-forest-axis" aria-hidden="true">
-        <div />
-        <div className="fc-forest-track">
-          {ticks.map((t) => (
-            <span key={t} className="fc-forest-tick" style={{ left: x(t) }}>
-              {tickLabel(t)}
-            </span>
-          ))}
-        </div>
-        <div />
-      </div>
+      <Axis ticks={ticks} x={x} label={tickLabel} />
     </div>
   );
 }
@@ -121,6 +114,7 @@ function DrawdownChart({ rows }: { rows: DrawdownRow[] }) {
   const step = x1 - x0 > 0.03 ? 0.01 : 0.005;
   const x = (v: number) => `${(((v - x0) / (x1 - x0)) * 100).toFixed(2)}%`;
   const ticks = ticksOf(x0, x1, step);
+  const pctTick = (t: number) => `${(t * 100).toFixed(step < 0.01 ? 1 : 0)}%`;
   return (
     <div
       className="fc-forest fc-dd"
@@ -133,6 +127,7 @@ function DrawdownChart({ rows }: { rows: DrawdownRow[] }) {
         )
         .join("; ")}`}
     >
+      <Axis top ticks={ticks} x={x} label={pctTick} />
       {rows.map((r) => (
         <div
           key={r.key}
@@ -176,17 +171,28 @@ function DrawdownChart({ rows }: { rows: DrawdownRow[] }) {
           </div>
         </div>
       ))}
-      <div className="fc-forest-row fc-forest-axis" aria-hidden="true">
-        <div />
-        <div className="fc-forest-track">
-          {ticks.map((t) => (
-            <span key={t} className="fc-forest-tick" style={{ left: x(t) }}>
-              {(t * 100).toFixed(step < 0.01 ? 1 : 0)}%
-            </span>
-          ))}
-        </div>
-        <div />
+      <Axis ticks={ticks} x={x} label={pctTick} />
+    </div>
+  );
+}
+
+/**
+ * A dot plot's tick labels. `top` is the copy shown only when the rows are
+ * stacked on a phone (styles.css): it sticks under the nav, so every row keeps
+ * a scale in view instead of one axis a screen or more below the first rows.
+ */
+function Axis({ ticks, x, label, top }: { ticks: number[]; x: (v: number) => string; label: (t: number) => string; top?: boolean }) {
+  return (
+    <div className={`fc-forest-row fc-forest-axis${top ? " fc-forest-axis-top" : ""}`} aria-hidden="true">
+      <div />
+      <div className="fc-forest-track">
+        {ticks.map((t) => (
+          <span key={t} className="fc-forest-tick" style={{ left: x(t) }}>
+            {label(t)}
+          </span>
+        ))}
       </div>
+      <div />
     </div>
   );
 }
@@ -202,7 +208,7 @@ const STATUS_LABEL: Record<string, string> = {
   "no-risk-cut-A": "no drawdown cut on block A",
 };
 
-const range = (u: { lo: number; hi: number }) => `${pp(u.lo)} to ${pp(u.hi)}`;
+const range = (u: { lo: number; hi: number }) => ppInterval(u.lo, u.hi);
 const blockSeeds = (b: { from: number; count: number }) => `seeds ${b.from}–${b.from + b.count - 1}`;
 
 /**
@@ -325,7 +331,7 @@ function LoopFacts({ l, dd }: { l: LoopEvidence; dd: DrawdownRow | undefined }) 
             <StandingFlag standing={dd.standing} />
           </dd>
           {dd.atGuardrailsVol && <PerRisk v={dd.atGuardrailsVol} guardrails={dd.guardrails} />}
-          {dd.note && !dd.paired && <dd className="fc-fact-sub fc-fact-note">Ledger: {dd.note}</dd>}
+          {dd.note && !dd.paired && <dd className="fc-fact-sub fc-fact-note">Ledger: {ledgerText(dd.note)}</dd>}
         </div>
       )}
     </dl>
@@ -338,23 +344,47 @@ function LoopFacts({ l, dd }: { l: LoopEvidence; dd: DrawdownRow | undefined }) 
  * ledger's own note on the loop stays visible in the loop card.)
  */
 function Rejections({ l }: { l: LoopEvidence }) {
-  const n = l.rejections.length;
-  if (n === 0) return null;
+  const { candidates, nulls } = splitRejections(l.rejections);
+  if (candidates.length + nulls.length === 0) return null;
+  const summary = [
+    candidates.length > 0 && `${candidates.length} candidate${candidates.length === 1 ? "" : "s"} not merged`,
+    nulls.length > 0 && `${nulls.length} null result${nulls.length === 1 ? "" : "s"} (no diff proposed)`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <details className="fc-rejects">
       <summary>
         <span className="fc-rejects-chev" aria-hidden="true" />
         <span className="sr-only">Loop {l.loop}: </span>
-        {n} candidate{n === 1 ? "" : "s"} not merged, and why
+        {summary}, and why
       </summary>
-      <ul className="fc-rejects-list" aria-label={`Candidates not merged in loop ${l.loop}`}>
-        {l.rejections.map((r) => (
-          <li key={r.title}>
-            <strong>{r.title}</strong>
-            <span>{r.reason}</span>
-          </li>
-        ))}
-      </ul>
+      {candidates.length > 0 && (
+        <>
+          <h4 className="fc-rejects-k">Candidates not merged</h4>
+          <ul className="fc-rejects-list" aria-label={`Candidates not merged in loop ${l.loop}`}>
+            {candidates.map((r) => (
+              <li key={r.title}>
+                <strong>{r.title}</strong>
+                <span>{ledgerText(r.reason)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {nulls.length > 0 && (
+        <>
+          <h4 className="fc-rejects-k">Null results: tested, no change proposed</h4>
+          <ul className="fc-rejects-list" aria-label={`Null results in loop ${l.loop}`}>
+            {nulls.map((r) => (
+              <li key={r.title}>
+                <strong>{r.title}</strong>
+                <span>{ledgerText(r.reason)}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </details>
   );
 }
@@ -403,7 +433,7 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
               {l.note && (
                 <p className="fc-loop-note">
                   <span className="fc-loop-note-k">Ledger note</span>
-                  {l.note}
+                  {ledgerText(l.note)}
                 </p>
               )}
               <p className="fc-loop-meta">
@@ -419,7 +449,7 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
       </ol>
       {rows.length > 0 && (
         <figure className="chart fc-forest-fig">
-          <figcaption className="chart-title">Paired uplift of the merged change, certainty-equivalent return (γ = 3), 90% interval</figcaption>
+          <figcaption className="chart-title">Paired uplift of the merged change, certainty-equivalent return (γ = 3), 90% interval · sealed virtual worlds</figcaption>
           <Forest rows={rows} />
           {rows.some((r) => r.superseded) && (
             <p className="fc-note fc-dd-caption">
@@ -452,7 +482,7 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
                       </th>
                       <td className="num">{pp(r.u.mean)}</td>
                       <td className="num">
-                        {pp(r.u.lo)} to {pp(r.u.hi)}
+                        {ppInterval(r.u.lo, r.u.hi)}
                       </td>
                       <td className="num">{winPct(r.u.wins)}</td>
                     </tr>
@@ -472,15 +502,16 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
             <p key={`h${l.loop}`} className="fc-note">
               Before loop {l.loop}, on block A ({l.headVsBaseline.worlds} sealed worlds, {blockSeeds(l.blocks.A)}), the center
               book's certainty equivalent was {pct(l.headVsBaseline.utility, 2)} vs {pct(l.headVsBaseline.baseline, 2)} for
-              per-agent guardrails ({pp(l.headVsBaseline.uplift)}, 90% interval {pp(l.headVsBaseline.lo)} to{" "}
-              {pp(l.headVsBaseline.hi)}; better in {winPct(l.headVsBaseline.winRate)} of worlds).
+              per-agent guardrails ({pp(l.headVsBaseline.uplift)}, 90% interval{" "}
+              {ppInterval(l.headVsBaseline.lo, l.headVsBaseline.hi)}; better in {winPct(l.headVsBaseline.winRate)} of worlds).
             </p>
           ),
       )}
       {dds.length > 0 && (
         <figure className="chart fc-forest-fig">
           <figcaption className="chart-title">
-            Center book's mean max drawdown on each loop's block B, before → after its change, vs per-agent guardrails
+            Center book's mean max drawdown on each loop's block B, before → after its change, vs per-agent guardrails · sealed
+            virtual worlds
           </figcaption>
           <div className="chart-legend fc-dd-legend" aria-hidden="true">
             <span className="chart-legend-item">

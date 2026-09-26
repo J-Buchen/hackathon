@@ -14,6 +14,7 @@ import {
   showcaseContext,
   signedPct,
   signedUsd,
+  statusLabel,
   usdCompact,
   type LogEntry,
   type LogFilter,
@@ -138,11 +139,6 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
   const operatorCaps = snapshot.decisions.filter((d) => d.kind === "OPERATOR_CUT").length;
   // Was any agent of a shared operator stopped out (the operator cap's trigger)?
   const sharedStopped = snapshot.stopOuts.some((x) => sharedOps.some((o) => o.agents.includes(x.agent)));
-  const statusText: Record<LadderState, string> = {
-    active: "active",
-    cut: `cut ×${snapshot.policy.center.cutFactor}`,
-    stopped: "stopped out",
-  };
   const context = useMemo(() => showcaseContext(snapshot), [snapshot]);
 
   const agents = useMemo(
@@ -156,9 +152,11 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
   const stoppedAt = useMemo(() => new Map(snapshot.stopOuts.map((s) => [s.name, s.t])), [snapshot.stopOuts]);
   const opCount = useMemo(() => new Map(world.operators.map((o) => [o.id, o.agents.length])), [world.operators]);
 
-  const status = (state: LadderState, at: number | null | undefined) => (
+  // `capital` is the agent's capital now; the guardrails book passes none (its
+  // status is its ladder state only).
+  const status = (state: LadderState, at: number | null | undefined, capital?: number) => (
     <span className={`fc-status fc-status-${state}`}>
-      <span aria-hidden="true">{ICON[state]}</span> {statusText[state]}
+      <span aria-hidden="true">{ICON[state]}</span> {statusLabel(state, snapshot.policy.center.cutFactor, capital ?? 1)}
       {state === "stopped" && at !== undefined && at !== null && <span className="fc-status-at"> {day(at)}</span>}
     </span>
   );
@@ -271,9 +269,9 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
       <div className="fc-grid">
         <div className="panel fc-tree-panel" id="fc-tree">
           <div className="panel-head">
-            <h2>
+            <h3>
               Mandate tree <span className="fc-vw">virtual world</span>
-            </h2>
+            </h3>
             <p className="panel-sub">
               Fund → pods → agents: how much of the {usdCompact(world.aum)} USDC AUM each node is <em>allowed</em> to run.
               PnL accrues to the NAV above, not to the tree. Each allocator move is a <code>resize</code> on this tree (
@@ -292,9 +290,9 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
         </div>
         <div className="panel" id="fc-log">
           <div className="panel-head">
-            <h2>
+            <h3>
               Decision log <span className="fc-vw">virtual world</span>
-            </h2>
+            </h3>
             <p className="panel-sub">
               {snapshot.decisions.length.toLocaleString("en-US")} decisions; routine reallocations are folded per rebalance.
               Select one to replay the tree on that day.
@@ -306,9 +304,9 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
 
       <div className="panel" id="fc-agents">
         <div className="panel-head">
-          <h2>
+          <h3>
             Agents <span className="fc-vw">virtual world</span>
-          </h2>
+          </h3>
           <p className="panel-sub">
             Each record is per unit of capital and bound to its operator. PnL is simulated USDC at the capital the allocator
             actually gave the agent.
@@ -350,7 +348,7 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
                       )}
                     </td>
                     <td>{a.pod}</td>
-                    <td>{status(a.status, stoppedAt.get(a.name))}</td>
+                    <td>{status(a.status, stoppedAt.get(a.name), now)}</td>
                     <td className="num">{now > 0 ? usdCompact(now) : "0"}</td>
                     <td>
                       <Sparkline

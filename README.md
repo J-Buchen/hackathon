@@ -34,6 +34,30 @@ the decisions, and each one lands as one operation on one mandate tree:
 world** (simulated prices, agents and operators; no market data). The mechanism
 underneath is the attenuating-delegation primitive described next.
 
+### Screenshots (virtual-world demo)
+
+Captured from the built web app (`npm run build:web`, then `npx vite preview` in
+`apps/web`) at 1280 px. Every fund number in them is **simulated**: one showcase
+virtual world (seed 1, fixed rule) for the console, and sealed virtual worlds for
+the evidence. The showcase world is more favourable than the sealed average.
+
+![Hero: "A multi-manager fund where the PMs are AI agents", with an illustrated mandate tree in which two agents holding overlapping positions (one trade under two names) are cut together, flagged because they also share an operator, and one agent is stopped out. The allocator groups the cut by overlapping positions only.](docs/img/hero.png)
+
+![The four guarantees: (R) reserved at grant with delegate, (A) resized by risk-adjusted record with resize, (G) one trade, one cut with a group resize, and (C) a stop-out closes the subtree with close.](docs/img/guarantees.png)
+
+![Fund console, virtual world: the mandate tree replayed to Day 34 with picker-0 and desk-0 ringed, next to the decision log filtered to one-trade cuts whose members share an operator (flagged).](docs/img/fund-console.png)
+
+![Sealed evidence, virtual worlds: the paired uplift in certainty-equivalent return of each loop's merged change with 90% intervals; superseded results are hollow and dashed.](docs/img/sealed-evidence.png)
+
+![Sealed evidence, virtual worlds: the center book's mean max drawdown on each loop's block B before and after its change, against per-agent guardrails. On loop 2's block B it is 7.75% against the guardrails' 6.88%: still above them.](docs/img/sealed-drawdown.png)
+
+![Integrations: AgentHire (runs locally, settlement simulated), World ID (mock verifier), ENS (names in code, registry mock), Intercepta (mock), 1inch Aqua (mock) and the Uniswap v4 SpendCapHook (contract and tests, not deployed).](docs/img/integrations.png)
+
+The drawdown chart is there on purpose: on sealed blocks the center book's
+certainty equivalent beats per-agent guardrails (about 11.7% vs 6.1% on loop 2's
+block B), but its mean max drawdown is still above theirs (7.75% vs 6.88%).
+[`docs/LOOPS.md`](docs/LOOPS.md) is the ledger.
+
 ## The mandate primitive
 
 > **Give your AI agents an allowance, not your wallet.**

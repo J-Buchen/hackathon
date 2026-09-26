@@ -201,7 +201,7 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
 
       <div className="panel cb-panel">
         <div className="panel-head">
-          <h2>Agent track records</h2>
+          <h3>Agent track records</h3>
           <p className="panel-sub">
             Per unit of capital, so they're attributable. Twin = the agent whose returns most resemble this one.
           </p>
@@ -250,7 +250,7 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
       <div className="grid cb-grid">
         <div className="panel">
           <div className="panel-head">
-            <h2>Center-book decisions</h2>
+            <h3>Center-book decisions</h3>
             <p className="panel-sub">
               Every cut is a mandate <code>resize</code>, every stop-out one <code>close</code> of the agent's
               subtree, in the same tree as payments. Plus {snapshot.decisionCounts.REALLOCATE ?? 0} routine
@@ -274,7 +274,7 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
         </div>
         <div className="panel cb-panel">
           <div className="panel-head">
-            <h2>What earns its keep?</h2>
+            <h3>What earns its keep?</h3>
             <p className="panel-sub">
               Components switched off one at a time, averaged over {snapshot.sweep.seeds} seeds. Reported as-is.
             </p>
@@ -343,7 +343,7 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
     <div className="panel cb-panel cb-thesis">
       <div className="panel-head">
         <span className="overline">The trend · research as of {thesis.asOf}</span>
-        <h2>{thesis.trend.name}</h2>
+        <h3>{thesis.trend.name}</h3>
         <p className="panel-sub">{thesis.trend.thesis}</p>
       </div>
       <div className="cb-thesis-body">
@@ -398,7 +398,7 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
         {longRow && (
           <div className="cb-pick">
             <div className="cb-pick-col">
-              <h3>Why {longRow.ticker}</h3>
+              <h4>Why {longRow.ticker}</h4>
               {(Object.keys(Q_LABEL) as Question[]).map((q) => (
                 <div key={q} className="cb-q">
                   <div className="cb-q-head">
@@ -429,7 +429,7 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
               )}
             </div>
             <div className="cb-pick-col">
-              <h3>Catalyst calendar</h3>
+              <h4>Catalyst calendar</h4>
               <ul className="cb-catalysts">
                 {longRow.catalysts.map((cat, i) => (
                   <li key={i}>
@@ -439,7 +439,7 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
               </ul>
               {shortRow && (
                 <>
-                  <h3>The pair: short {shortRow.ticker}</h3>
+                  <h4>The pair: short {shortRow.ticker}</h4>
                   <p className="cb-risk">
                     Rides the same trend (exposure {shortRow.trendExposure}/5) but fails "Why now?"{" "}
                     <Score v={shortRow.scores.whyNow} />. {shortRow.evidence.whyNow[0]}
@@ -449,7 +449,7 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
                   </p>
                 </>
               )}
-              <h3>The Tiger Cubs in this book</h3>
+              <h4>The Tiger Cubs in this book</h4>
               <ul className="cb-pms">
                 {thesis.pms.map((p) => (
                   <li key={p.agent}>

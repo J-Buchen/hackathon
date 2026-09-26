@@ -8,10 +8,14 @@ import type { IdentityStatus } from "../types";
 export function IdentityBadge({ status, source = "World ID (mock)" }: { status: IdentityStatus; source?: string }) {
   const label =
     status === "verified" ? "verified" : status === "expired" ? "expired" : "no id";
+  // Every demo on the page binds identities through a mock: the badge says so
+  // itself, not only in its tooltip (DESIGN.md §11: no unlabelled mock).
+  const mock = /mock/i.test(source);
   const icon = status === "verified" ? "✓" : status === "expired" ? "⏱" : "∅";
   return (
     <span className={`badge badge-identity id-${status}`} title={`${source}: ${status}`}>
       <span aria-hidden="true">{icon}</span> {label}
+      {mock && <span className="badge-mock"> (mock)</span>}
     </span>
   );
 }

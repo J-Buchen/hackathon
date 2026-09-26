@@ -8,7 +8,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { parseSnapshot } from "./snapshot";
-import { AgentHireSidecarError, parseAgentHireSummary } from "./agenthire";
+import { AgentHireSidecarError, parseAgentHireSummary, roundAmounts } from "./agenthire";
 
 const load = (name: string): unknown => JSON.parse(readFileSync(new URL(`../public/${name}`, import.meta.url), "utf8"));
 
@@ -48,4 +48,17 @@ test("parseAgentHireSummary rejects a malformed sidecar with the path", () => {
     () => parseAgentHireSummary({ simulated: true, agenthire: { mode: "mock" }, audit: { headline: 3 }, incidents: [], honesty: [] }),
     /sidecar\.audit\.headline: expected string/,
   );
+});
+
+test("the audit headline shows USDC amounts to 2 decimals, leaving ratios alone", () => {
+  assert.equal(
+    roundAmounts("3 of 13 (90.900000 of 239.616200 USDC unbudgeted) at 1.25 x the quote"),
+    "3 of 13 (90.90 of 239.62 USDC unbudgeted) at 1.25 x the quote",
+  );
+  // A non-zero sub-cent amount is a bound, not a false zero; a true zero stays 0.00.
+  assert.equal(roundAmounts("0.004000 USDC of 0.000000 USDC"), "<0.01 USDC of 0.00 USDC");
+  // Ratios and shares with 3–5 decimals are not money and keep their precision.
+  assert.equal(roundAmounts("weight 0.125, drift 1.2345 x"), "weight 0.125, drift 1.2345 x");
+  const summary = parseAgentHireSummary(load("agenthire-receipts.json"));
+  assert.doesNotMatch(summary.auditHeadline, /\d\.\d{3,}/);
 });
