@@ -21,7 +21,8 @@
   "tigerPairedChange": {
    "mean": -0.017062985770789286,
    "lo": -0.02108186986414622,
-   "hi": -0.013044101677432352
+   "hi": -0.013044101677432352,
+   "wins": 0.305
   },
   "tigerMaxDDBeforeFirstMeasure": 0.282897514551927,
   "tigerMaxDDAfterFirstMeasure": 0.25775053674056075,
@@ -680,6 +681,14 @@
    "lo": 0.0019286061675262787,
    "hi": 0.029236240198574882,
    "wins": 0.59
+  },
+  "tigerGainOnAAfterFix": {
+   "vs": "9dab3e5 with the corrected arena",
+   "mean": 0.012950605272027849,
+   "lo": -0.0032223455339878346,
+   "hi": 0.029123556078043532,
+   "wins": 0.59
   }
- }
+ },
+ "headNote": "head 9dab3e5 is the commit the research was pinned to; the judged baselines (baselineA/baselineB.sha) are d96c1a4, which differs from 9dab3e5 only in docs (docs/loops/loop-4/candidate-0.diff and candidate-1.diff archived by the driver), so the arena code is identical"
 }

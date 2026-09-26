@@ -219,11 +219,14 @@ test("evidence rows plot only merged, confirmed changes", () => {
   assert.equal(first.key, corrected.key.slice(0, -1), "its first confirmation comes right before it");
   assert.equal(first.superseded, true);
   assert.equal(corrected.superseded, false);
-  const corrections = confirmed.reduce((n, l) => n + (l.correctedB ? 1 : 0) + (l.correctedA ? 1 : 0), 0);
+  const corrections = confirmed.reduce((n, l) => n + (l.correctedB && l.blockB ? 1 : 0) + (l.correctedA && l.blockA ? 1 : 0), 0);
   assert.equal(rows.filter((r) => r.superseded).length, corrections, "only rows a correction replaced are marked superseded");
   // Plain words on the chart; the commit hash stays in the hover title and the data table.
   assert.doesNotMatch(`${corrected.label} ${corrected.sub}`, /[0-9a-f]{7}|post-push/);
   assert.match(corrected.detail ?? "", /f5b2d80/);
+  // A tiger-track loop's rows say they measure the Tiger overlay, not the fund.
+  for (const l of confirmed.filter((x) => x.merged[0]?.track === "tiger"))
+    assert.ok(rows.filter((r) => r.key.startsWith(String(l.loop))).every((r) => r.label.includes("Tiger overlay")), `loop ${l.loop} rows are labelled`);
   assert.deepEqual(evidenceRows([unmerged]), []);
 });
 
@@ -494,7 +497,8 @@ test("showcase context without a sealed confirmation: the card stays and says so
   assert.match(html, /No sealed average yet/);
   assert.match(html, /no average to be read\s+against/);
 
-  // A guardrails Sharpe the report could not vouch for is left out, not guessed.
+  // A guardrails Sharpe the report could not vouch for is left out, not guessed;
+  // the center book's own sealed Sharpe is still shown.
   const noSharpe = {
     ...s,
     evidence: {
@@ -502,7 +506,10 @@ test("showcase context without a sealed confirmation: the card stays and says so
       loops: s.evidence.loops.map((l) => (l.booksB ? { ...l, booksB: { ...l.booksB, guardrails: { ...l.booksB.guardrails, sharpe: null } } } : l)),
     },
   };
-  assert.equal(showcaseContext(noSharpe).rows[1]!.sealed, null);
+  const sharpeRow = showcaseContext(noSharpe).rows[1]!.sealed;
+  assert.equal(sharpeRow?.guardrails, "not recorded");
+  assert.equal(sharpeRow?.better, "tie");
+  assert.match(sharpeRow?.center ?? "", /^-?\d+\.\d\d$/);
 });
 
 /* -------------------------------------------------------------------------- */

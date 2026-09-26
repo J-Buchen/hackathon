@@ -114,7 +114,9 @@ npm run dev:web      # opens the dashboard that renders the snapshot
   AgentHire booted with `scripts/agenthire-up.sh`. It writes
   `apps/web/public/agenthire-snapshot.json` and a receipts sidecar. AgentHire's
   prices move (surge) and the run is timestamped, so each run rewrites both
-  files with different quotes; the event sequence is the same.
+  files with different quotes and audit counts. The event sequence follows the
+  PM's simulated path, so it changes when the Tiger overlay changes (loop 4
+  added a restore and a second cut); regenerate both files after such a change.
 - `npm run typecheck` runs `tsc -b` across every package.
 - `npm test` runs the aggregated Node test suite (core, adapters, swarm, lab and
   orchestrator).

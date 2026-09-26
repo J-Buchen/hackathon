@@ -585,10 +585,13 @@ export interface CounterpartyUpdate {
  * A cap lifts at the first tick after it was set on which the name's own
  * record shows a recovery: a strict new high (it has re-earned its capital),
  * or its own ladder lifting a cut this tick (`restoredNow`: back within its
- * recover rung of its high-water mark). The cap and the ladder's cut are one
- * ceiling (cutFactor of full size), so they compound neither in size (see
- * `cutToCeiling`) nor in time: a credit event never holds a name at the cut
- * size after its own ladder has judged it recovered from that very cut.
+ * recover rung of its high-water mark). The cap is a ceiling (cutFactor of
+ * full size) kept apart from the name's own size, and the name holds the
+ * smaller of the two (`nextSizing` / `sizedBudget`), so they compound neither
+ * in size (the ceiling never multiplies the ladder's own cut, and the ladder's
+ * cut is never weakened by the ceiling) nor in time: a credit event never
+ * holds a name at the cut size after its own ladder has judged it recovered
+ * from that very cut.
  *
  * Pure bookkeeping on names and records: capital is not an input, and ladder
  * states are only read, never written, so no name's stop-out can move.

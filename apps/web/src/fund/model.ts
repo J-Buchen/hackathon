@@ -287,10 +287,12 @@ export function evidenceRows(loops: readonly LoopEvidence[]): EvidenceRow[] {
     const track = l.merged[0]?.track === "tiger" ? "tiger" : "allocator";
     const corrected = l.correctedB;
     const correctedA = l.correctedA ?? null;
+    // A tiger-track loop measures the Tiger overlay, not the fund: say so on every row.
+    const book = track === "tiger" ? " · Tiger overlay" : "";
     if (l.blockA) {
       rows.push({
         key: `${l.loop}A`,
-        label: `Loop ${l.loop} · block A`,
+        label: `Loop ${l.loop}${book} · block A`,
         sub: correctedA ? "first measured · before the fix" : worlds(l.blocks.A),
         u: l.blockA[track],
         superseded: correctedA !== null,
@@ -300,8 +302,10 @@ export function evidenceRows(loops: readonly LoopEvidence[]): EvidenceRow[] {
     if (correctedA) {
       rows.push({
         key: `${l.loop}Ac`,
-        label: `Loop ${l.loop} · block A`,
-        sub: "re-measured after the fix",
+        label: `Loop ${l.loop}${book} · block A`,
+        // A merged combination may never have been judged on block A as one
+        // change (each member was): then there is no first number to replace.
+        sub: l.blockA ? "re-measured after the fix" : "measured after the fix",
         u: correctedA.uplift,
         superseded: false,
         detail: `the same ${l.blocks.A.count} worlds, on the code that shipped${correctedA.vs ? `, vs ${correctedA.vs}` : ""}`,
@@ -310,7 +314,7 @@ export function evidenceRows(loops: readonly LoopEvidence[]): EvidenceRow[] {
     if (l.blockB) {
       rows.push({
         key: `${l.loop}B`,
-        label: `Loop ${l.loop} · block B`,
+        label: `Loop ${l.loop}${book} · block B`,
         sub: corrected ? "first confirmed · before the fix" : worlds(l.blocks.B),
         u: l.blockB[track],
         superseded: corrected !== null,
@@ -320,7 +324,7 @@ export function evidenceRows(loops: readonly LoopEvidence[]): EvidenceRow[] {
     if (corrected) {
       rows.push({
         key: `${l.loop}Bc`,
-        label: `Loop ${l.loop} · block B`,
+        label: `Loop ${l.loop}${book} · block B`,
         sub: "re-measured after the fix",
         u: corrected.uplift,
         superseded: false,
@@ -528,14 +532,18 @@ export function showcaseContext(s: FundSnapshot): ShowcaseContext {
     {
       metric: "Sharpe",
       world: { center: c.sharpe.toFixed(2), guardrails: g.sharpe.toFixed(2), better: better(c.sharpe, g.sharpe, true, 0.005) },
+      // The ledger records the center book's sealed Sharpe but not always the
+      // guardrails'; show the one it has and say which is missing.
       sealed:
-        b === null || b.guardrails.sharpe === null
+        b === null
           ? null
-          : {
-              center: b.center.sharpe.toFixed(2),
-              guardrails: b.guardrails.sharpe.toFixed(2),
-              better: better(b.center.sharpe, b.guardrails.sharpe, true, 0.005),
-            },
+          : b.guardrails.sharpe === null
+            ? { center: b.center.sharpe.toFixed(2), guardrails: "not recorded", better: "tie" }
+            : {
+                center: b.center.sharpe.toFixed(2),
+                guardrails: b.guardrails.sharpe.toFixed(2),
+                better: better(b.center.sharpe, b.guardrails.sharpe, true, 0.005),
+              },
     },
     {
       metric: "Max drawdown",

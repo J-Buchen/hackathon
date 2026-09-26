@@ -368,6 +368,13 @@
      "hi": 0.019949144187695105,
      "wins": 0.45
     }
+   },
+   "tiger": {
+    "mean": 0.008603595517261656,
+    "lo": -0.0003586407356963462,
+    "hi": 0.017565831770219656,
+    "wins": 0.465,
+    "source": "backfilled after loop 5's independent verification reproduced it (node scripts/loop-judge.mjs 15500 200 on 1d672c1 vs 1d672c1 + candidate-0.diff); the driver at the time did not record tiger in confirmations (fixed)"
    }
   }
  ],
@@ -576,6 +583,13 @@
       "hi": 0.019949144187695105,
       "wins": 0.45
      }
+    },
+    "tiger": {
+     "mean": 0.008603595517261656,
+     "lo": -0.0003586407356963462,
+     "hi": 0.017565831770219656,
+     "wins": 0.465,
+     "source": "backfilled after loop 5's independent verification reproduced it (node scripts/loop-judge.mjs 15500 200 on 1d672c1 vs 1d672c1 + candidate-0.diff); the driver at the time did not record tiger in confirmations (fixed)"
     }
    }
   ]

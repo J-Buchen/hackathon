@@ -1,5 +1,5 @@
 {
-  "asOf": 1790368622,
+  "asOf": 1790391008,
   "currency": "USDC",
   "decimals": 6,
   "principal": {
@@ -14,11 +14,11 @@
       "mandate": {
         "budget": "1000000000000",
         "spentDirect": "0",
-        "reserved": "96203",
-        "available": "999999903797",
+        "reserved": "92498",
+        "available": "999999907502",
         "allowedMerchants": null,
         "allowedPurposes": null,
-        "expiry": 1792960602,
+        "expiry": 1792982947,
         "revoked": false
       }
     },
@@ -27,9 +27,9 @@
       "parent": "fund.eth",
       "identityStatus": "verified",
       "mandate": {
-        "budget": "96203",
+        "budget": "92498",
         "spentDirect": "0",
-        "reserved": "96203",
+        "reserved": "92498",
         "available": "0",
         "allowedMerchants": [
           "otc:LKNCY",
@@ -39,7 +39,7 @@
           "agenthire:3"
         ],
         "allowedPurposes": null,
-        "expiry": 1792960602,
+        "expiry": 1792982947,
         "revoked": true
       }
     },
@@ -48,9 +48,9 @@
       "parent": "luckin-pm.fund.eth",
       "identityStatus": "verified",
       "mandate": {
-        "budget": "96203",
-        "spentDirect": "35310",
-        "reserved": "60893",
+        "budget": "92498",
+        "spentDirect": "33990",
+        "reserved": "58508",
         "available": "0",
         "allowedMerchants": [
           "agenthire:5",
@@ -58,7 +58,7 @@
           "agenthire:3"
         ],
         "allowedPurposes": null,
-        "expiry": 1792960602,
+        "expiry": 1792982947,
         "revoked": false
       }
     },
@@ -67,15 +67,15 @@
       "parent": "scraper.luckin-pm.fund.eth",
       "identityStatus": "verified",
       "mandate": {
-        "budget": "3543",
-        "spentDirect": "3543",
+        "budget": "3408",
+        "spentDirect": "3408",
         "reserved": "0",
         "available": "0",
         "allowedMerchants": [
           "agenthire:6"
         ],
         "allowedPurposes": null,
-        "expiry": 1792960602,
+        "expiry": 1792982947,
         "revoked": false
       }
     },
@@ -84,15 +84,15 @@
       "parent": "scraper.luckin-pm.fund.eth",
       "identityStatus": "verified",
       "mandate": {
-        "budget": "57350",
-        "spentDirect": "57350",
+        "budget": "55100",
+        "spentDirect": "55100",
         "reserved": "0",
         "available": "0",
         "allowedMerchants": [
           "agenthire:3"
         ],
         "allowedPurposes": null,
-        "expiry": 1792960602,
+        "expiry": 1792982947,
         "revoked": false
       }
     },
@@ -109,7 +109,7 @@
           "agenthire:5"
         ],
         "allowedPurposes": null,
-        "expiry": 1790369202,
+        "expiry": 1790391547,
         "revoked": false
       }
     }
@@ -137,52 +137,52 @@
       "seq": 2,
       "type": "DELEGATE",
       "node": "scraper.luckin-pm.fund.eth",
-      "detail": "luckin-pm.fund.eth delegated budget 144305 to scraper",
+      "detail": "luckin-pm.fund.eth delegated budget 138747 to scraper",
       "result": "OK",
-      "amount": "144305",
+      "amount": "138747",
       "merchant": null
     },
     {
       "seq": 3,
       "type": "DELEGATE",
       "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "scraper.luckin-pm.fund.eth delegated budget 6342 to a6-via-a5",
+      "detail": "scraper.luckin-pm.fund.eth delegated budget 6102 to a6-via-a5",
       "result": "OK",
-      "amount": "6342",
+      "amount": "6102",
       "merchant": null
     },
     {
       "seq": 4,
       "type": "DELEGATE",
       "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "scraper.luckin-pm.fund.eth delegated budget 102653 to a3-via-a5",
+      "detail": "scraper.luckin-pm.fund.eth delegated budget 98655 to a3-via-a5",
       "result": "OK",
-      "amount": "102653",
+      "amount": "98655",
       "merchant": null
     },
     {
       "seq": 5,
       "type": "PAYMENT",
       "node": "scraper.luckin-pm.fund.eth",
-      "detail": "paid 35310 to agenthire:5",
+      "detail": "paid 33990 to agenthire:5",
       "result": "SETTLED",
-      "amount": "35310",
+      "amount": "33990",
       "merchant": "agenthire:5"
     },
     {
       "seq": 6,
       "type": "DELEGATE",
       "node": "spot-check.luckin-pm.fund.eth",
-      "detail": "luckin-pm.fund.eth delegated budget 35310 to spot-check",
+      "detail": "luckin-pm.fund.eth delegated budget 33990 to spot-check",
       "result": "OK",
-      "amount": "35310",
+      "amount": "33990",
       "merchant": null
     },
     {
       "seq": 7,
       "type": "PAYMENT",
       "node": "spot-check.luckin-pm.fund.eth",
-      "detail": "payment of 1 to agenthire:5 -> BLOCKED_MANDATE: settlement: amount 1 != AgentHire quote 35310 micro-USDC for agent 5",
+      "detail": "payment of 1 to agenthire:5 -> BLOCKED_MANDATE: settlement: amount 1 != AgentHire quote 33990 micro-USDC for agent 5",
       "result": "BLOCKED_MANDATE",
       "amount": "1",
       "merchant": "agenthire:5"
@@ -191,81 +191,81 @@
       "seq": 8,
       "type": "PAYMENT",
       "node": "spot-check.luckin-pm.fund.eth",
-      "detail": "payment of 35310 to agenthire:5 -> BLOCKED_MANDATE: settlement: challenge rejected: validBefore 1790372202 outlives the mandate (expiry 1790369202)",
+      "detail": "payment of 33990 to agenthire:5 -> BLOCKED_MANDATE: settlement: challenge rejected: validBefore 1790394547 outlives the mandate (expiry 1790391547)",
       "result": "BLOCKED_MANDATE",
-      "amount": "35310",
+      "amount": "33990",
       "merchant": "agenthire:5"
     },
     {
       "seq": 9,
       "type": "PAYMENT",
       "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "paid 3543 to agenthire:6",
+      "detail": "paid 3408 to agenthire:6",
       "result": "SETTLED",
-      "amount": "3543",
+      "amount": "3408",
       "merchant": "agenthire:6"
     },
     {
       "seq": 10,
       "type": "PAYMENT",
       "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "paid 57350 to agenthire:3",
+      "detail": "paid 55100 to agenthire:3",
       "result": "SETTLED",
-      "amount": "57350",
+      "amount": "55100",
       "merchant": "agenthire:3"
     },
     {
       "seq": 11,
       "type": "PAYMENT",
       "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "payment of 57350 to agenthire:3 -> BLOCKED_MANDATE: amount 57350 exceeds available 45303",
+      "detail": "payment of 55100 to agenthire:3 -> BLOCKED_MANDATE: amount 55100 exceeds available 43555",
       "result": "BLOCKED_MANDATE",
-      "amount": "57350",
+      "amount": "55100",
       "merchant": "agenthire:3"
     },
     {
       "seq": 12,
       "type": "PAYMENT",
       "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "payment of 35430 to agenthire:6 -> BLOCKED_MANDATE: amount 35430 exceeds available 2799",
+      "detail": "payment of 34080 to agenthire:6 -> BLOCKED_MANDATE: amount 34080 exceeds available 2694",
       "result": "BLOCKED_MANDATE",
-      "amount": "35430",
+      "amount": "34080",
       "merchant": "agenthire:6"
     },
     {
       "seq": 13,
       "type": "PAYMENT",
       "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "payment of 35430 to agenthire:6 -> BLOCKED_MANDATE: amount 35430 exceeds available 2799",
+      "detail": "payment of 34080 to agenthire:6 -> BLOCKED_MANDATE: amount 34080 exceeds available 2694",
       "result": "BLOCKED_MANDATE",
-      "amount": "35430",
+      "amount": "34080",
       "merchant": "agenthire:6"
     },
     {
       "seq": 14,
       "type": "RESIZE",
       "node": "scraper.luckin-pm.fund.eth",
-      "detail": "budget of \"scraper.luckin-pm.fund.eth\" resized 144305 -> 288610",
+      "detail": "budget of \"scraper.luckin-pm.fund.eth\" resized 138747 -> 277494",
       "result": "OK",
-      "amount": "288610",
+      "amount": "277494",
       "merchant": null
     },
     {
       "seq": 15,
       "type": "RESIZE",
       "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "budget of \"a6-via-a5.scraper.luckin-pm.fund.eth\" resized 6342 -> 12684",
+      "detail": "budget of \"a6-via-a5.scraper.luckin-pm.fund.eth\" resized 6102 -> 12204",
       "result": "OK",
-      "amount": "12684",
+      "amount": "12204",
       "merchant": null
     },
     {
       "seq": 16,
       "type": "RESIZE",
       "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "budget of \"a3-via-a5.scraper.luckin-pm.fund.eth\" resized 102653 -> 205306",
+      "detail": "budget of \"a3-via-a5.scraper.luckin-pm.fund.eth\" resized 98655 -> 197310",
       "result": "OK",
-      "amount": "205306",
+      "amount": "197310",
       "merchant": null
     },
     {
@@ -280,82 +280,100 @@
     {
       "seq": 18,
       "type": "RESIZE",
-      "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"a6-via-a5.scraper.luckin-pm.fund.eth\" shrunk 12684 -> 3543 (what its subtree spent)",
+      "node": "luckin-pm.fund.eth",
+      "detail": "budget of \"luckin-pm.fund.eth\" resized 125000000000 -> 250000000000",
       "result": "OK",
-      "amount": "3543",
+      "amount": "250000000000",
       "merchant": null
     },
     {
       "seq": 19,
       "type": "RESIZE",
-      "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"a3-via-a5.scraper.luckin-pm.fund.eth\" shrunk 205306 -> 57350 (what its subtree spent)",
+      "node": "luckin-pm.fund.eth",
+      "detail": "budget of \"luckin-pm.fund.eth\" resized 250000000000 -> 125000000000",
       "result": "OK",
-      "amount": "57350",
+      "amount": "125000000000",
       "merchant": null
     },
     {
       "seq": 20,
       "type": "RESIZE",
-      "node": "scraper.luckin-pm.fund.eth",
-      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"scraper.luckin-pm.fund.eth\" shrunk 288610 -> 96203 (what its subtree spent)",
+      "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
+      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"a6-via-a5.scraper.luckin-pm.fund.eth\" shrunk 12204 -> 3408 (what its subtree spent)",
       "result": "OK",
-      "amount": "96203",
+      "amount": "3408",
       "merchant": null
     },
     {
       "seq": 21,
       "type": "RESIZE",
-      "node": "spot-check.luckin-pm.fund.eth",
-      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"spot-check.luckin-pm.fund.eth\" shrunk 35310 -> 0 (what its subtree spent)",
+      "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
+      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"a3-via-a5.scraper.luckin-pm.fund.eth\" shrunk 197310 -> 55100 (what its subtree spent)",
       "result": "OK",
-      "amount": "0",
+      "amount": "55100",
       "merchant": null
     },
     {
       "seq": 22,
       "type": "RESIZE",
-      "node": "luckin-pm.fund.eth",
-      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"luckin-pm.fund.eth\" shrunk 125000000000 -> 96203 (what its subtree spent)",
+      "node": "scraper.luckin-pm.fund.eth",
+      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"scraper.luckin-pm.fund.eth\" shrunk 277494 -> 92498 (what its subtree spent)",
       "result": "OK",
-      "amount": "96203",
+      "amount": "92498",
       "merchant": null
     },
     {
       "seq": 23,
-      "type": "REVOKE",
-      "node": "luckin-pm.fund.eth",
-      "detail": "mandate for \"luckin-pm.fund.eth\" closed: subtree kept 96203 spent, freed 124999903797 back to \"fund.eth\"; all descendants disabled",
-      "result": "REVOKED",
-      "amount": "124999903797",
+      "type": "RESIZE",
+      "node": "spot-check.luckin-pm.fund.eth",
+      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"spot-check.luckin-pm.fund.eth\" shrunk 33990 -> 0 (what its subtree spent)",
+      "result": "OK",
+      "amount": "0",
       "merchant": null
     },
     {
       "seq": 24,
-      "type": "PAYMENT",
-      "node": "scraper.luckin-pm.fund.eth",
-      "detail": "payment of 35310 to agenthire:5 -> REVOKED: node or an ancestor is revoked",
-      "result": "REVOKED",
-      "amount": "35310",
-      "merchant": "agenthire:5"
+      "type": "RESIZE",
+      "node": "luckin-pm.fund.eth",
+      "detail": "close(\"luckin-pm.fund.eth\"): budget of \"luckin-pm.fund.eth\" shrunk 125000000000 -> 92498 (what its subtree spent)",
+      "result": "OK",
+      "amount": "92498",
+      "merchant": null
     },
     {
       "seq": 25,
-      "type": "PAYMENT",
-      "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "payment of 3543 to agenthire:6 -> REVOKED: node or an ancestor is revoked",
+      "type": "REVOKE",
+      "node": "luckin-pm.fund.eth",
+      "detail": "mandate for \"luckin-pm.fund.eth\" closed: subtree kept 92498 spent, freed 124999907502 back to \"fund.eth\"; all descendants disabled",
       "result": "REVOKED",
-      "amount": "3543",
-      "merchant": "agenthire:6"
+      "amount": "124999907502",
+      "merchant": null
     },
     {
       "seq": 26,
       "type": "PAYMENT",
-      "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
-      "detail": "payment of 57350 to agenthire:3 -> REVOKED: node or an ancestor is revoked",
+      "node": "scraper.luckin-pm.fund.eth",
+      "detail": "payment of 33990 to agenthire:5 -> REVOKED: node or an ancestor is revoked",
       "result": "REVOKED",
-      "amount": "57350",
+      "amount": "33990",
+      "merchant": "agenthire:5"
+    },
+    {
+      "seq": 27,
+      "type": "PAYMENT",
+      "node": "a6-via-a5.scraper.luckin-pm.fund.eth",
+      "detail": "payment of 3408 to agenthire:6 -> REVOKED: node or an ancestor is revoked",
+      "result": "REVOKED",
+      "amount": "3408",
+      "merchant": "agenthire:6"
+    },
+    {
+      "seq": 28,
+      "type": "PAYMENT",
+      "node": "a3-via-a5.scraper.luckin-pm.fund.eth",
+      "detail": "payment of 55100 to agenthire:3 -> REVOKED: node or an ancestor is revoked",
+      "result": "REVOKED",
+      "amount": "55100",
       "merchant": "agenthire:3"
     }
   ]

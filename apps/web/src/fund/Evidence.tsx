@@ -268,6 +268,8 @@ function LoopFacts({ l, dd }: { l: LoopEvidence; dd: DrawdownRow | undefined }) 
             <strong className="fc-fact-v">{pp(lead.mean)}</strong>{" "}
             <span className="fc-fact-ci">
               90% interval {range(lead)}; better in {winPct(lead.wins)} of worlds
+              {Math.max(Math.abs(lead.lo), Math.abs(lead.hi)) < 0.0001 &&
+                " (the whole interval is inside ±0.01 pp: the other worlds are tied or differ by a hair, not a loss)"}
             </span>
           </dd>
           {fixed && first && (
@@ -419,7 +421,12 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
       </ol>
       {rows.length > 0 && (
         <figure className="chart fc-forest-fig">
-          <figcaption className="chart-title">Paired uplift of the merged change, certainty-equivalent return (γ = 3), 90% interval</figcaption>
+          <figcaption className="chart-title">
+            Paired uplift of the merged change, certainty-equivalent return (γ = 3), 90% interval
+            {rows.some((r) => r.label.includes("Tiger overlay")) && (
+              <span className="fc-note"> · the fund's center book, except rows marked Tiger overlay (that loop changed only the single-name overlay)</span>
+            )}
+          </figcaption>
           <Forest rows={rows} />
           {rows.some((r) => r.superseded) && (
             <p className="fc-note fc-dd-caption">

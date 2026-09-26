@@ -91,7 +91,19 @@ async function main(): Promise<void> {
     if (l.note) line(`  note: ${l.note}`);
     const tr = l.merged[0]?.track === "tiger" ? "tiger" : "allocator";
     if (tr === "tiger") line("  track: the Tiger overlay (the allocator is unchanged)");
-    if (l.blockA) line(`  block A (${l.blocks.A.count} worlds from ${l.blocks.A.from}): ${pp(l.blockA[tr].mean)} [${pp(l.blockA[tr].lo)}, ${pp(l.blockA[tr].hi)}] 90% CI`);
+    if (l.blockA) {
+      line(
+        `  block A (${l.blocks.A.count} worlds from ${l.blocks.A.from})${l.correctedA ? ", as first measured, before the fix (superseded)" : ""}: ` +
+          `${pp(l.blockA[tr].mean)} [${pp(l.blockA[tr].lo)}, ${pp(l.blockA[tr].hi)}] 90% CI`,
+      );
+    }
+    if (l.correctedA) {
+      const u = l.correctedA.uplift;
+      line(
+        `  block A re-measured after the fix${l.correctedA.vs ? ` (vs ${l.correctedA.vs})` : ""}: ` +
+          `${pp(u.mean)} [${pp(u.lo)}, ${pp(u.hi)}] 90% CI`,
+      );
+    }
     if (l.blockB) {
       line(
         `  block B (${l.blocks.B.count} worlds from ${l.blocks.B.from})${l.correctedB ? ", as first confirmed, before the fix" : ""}: ` +

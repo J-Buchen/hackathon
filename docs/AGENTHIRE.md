@@ -294,33 +294,35 @@ pinned to the instance's own origin. It uses one gunicorn worker, because the
 simulator lives in a single process. It then starts AgentHire's simulator, which
 upstream only auto-starts under the Werkzeug reloader (`app.py:4229`).
 
-### One run (2026-09-25, simulated marketplace)
+### One run (2026-09-26, simulated marketplace)
 
 From `AGENTHIRE_AUDIT_SECONDS=60 npm run demo:agenthire` against a freshly
-seeded AgentHire (`AGENTHIRE_RESET=1`) on 127.0.0.1, mock mode. All 55 checks
-passed. These are the committed `agenthire-snapshot.json` and
-`agenthire-receipts.json`.
+seeded AgentHire (`AGENTHIRE_RESET=1`) on 127.0.0.1, mock mode, on the code
+after loop 5 (loop 4 changed the Tiger overlay, which changed the PM's
+simulated path). All 55 checks passed. These are the committed
+`agenthire-snapshot.json` and `agenthire-receipts.json` (6 nodes, 29 events).
 
-- The hire settled at WebCrawler X's quote of 0.039390 USDC (surge ×1.313),
+- The hire settled at WebCrawler X's quote of 0.033990 USDC (surge ×1.133),
   confirmed by AgentHire as `mock` (no unconfirmed receipts).
-- The scripted ResearchBot Pro sub-hire settled at 0.003948 USDC.
+- The scripted ResearchBot Pro sub-hire settled at 0.003408 USDC.
 - Two scripted DataSift hires were fired at once against room for one: one
   settled and one was blocked.
 - Two scripted over-mandate attempts produced `ALW-INC-1`, and the second
   buyer, whose own ledger loaded it from disk, was refused at screening.
-- The PM funded the next scrape (0.161157 USDC). The ladder cut the PM on day 49
-  (drawdown 10.4%) and stopped it out on day 84 (24.7%). At the stop-out the
-  data subtree still held 0.214876 USDC unspent, at least one hire at its quote
-  at every level.
-- `close()` freed 124,999.892562 USDC. The subtree kept the 0.107438 USDC it had
+- The PM funded the next scrape (0.138747 USDC). The ladder cut the PM on day 52
+  (drawdown 10.6%), restored it on day 63 (4.7%), cut it again on day 71
+  (10.5%) and stopped it out on day 84 (21.2%). At the stop-out the data
+  subtree still held 0.184996 USDC unspent, at least one hire at its quote at
+  every level.
+- `close()` freed 124,999.907502 USDC. The subtree kept the 0.092498 USDC it had
   spent, the data subtree's unspent budget went to 0, and the three quote-priced
   next hires were `REVOKED`.
-- The shadow audit (60 s capture) replayed 47 sub-agent payments from 29
-  primary jobs, 28 of them AgentHire's force-all demo cascade. 7 of 47 would
+- The shadow audit (60 s capture) replayed 51 sub-agent payments from 29
+  primary jobs, 28 of them AgentHire's force-all demo cascade. 4 of 51 would
   have been blocked even under AgentHire's own displayed Hard Spend Cap
-  (68.34 USDC); 23 of 47 under `primaryFundsSubs` (225.65 USDC). All 47
-  (1100.47 USDC) were outside the buyer's authorization by definition
-  (`strict`). CodeReview Pro's sub-agent fees were 6.08× its simulated revenue.
+  (35.69 USDC); 15 of 51 under `primaryFundsSubs` (157.24 USDC). All 51
+  (1163.92 USDC) were outside the buyer's authorization by definition
+  (`strict`). CodeReview Pro's sub-agent fees were 5.78× its simulated revenue.
 
 All of these numbers come from AgentHire's simulation, and they change from run
 to run.

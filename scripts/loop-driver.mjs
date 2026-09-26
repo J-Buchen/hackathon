@@ -189,7 +189,7 @@ function confirmIn(dir, kept, dropped, label) {
     (risky
       ? lowersRisk(c) && untargeted.every((t) => c[t].mean > -0.001)
       : untargeted.every((t) => c[t].mean > -0.0005 && c[t].lo > -0.002));
-  report.confirmations.push({ label, kept: kept.map((x) => x.k), dropped, ok, allocator: c.allocator, risk: c.risk });
+  report.confirmations.push({ label, kept: kept.map((x) => x.k), dropped, ok, allocator: c.allocator, tiger: c.tiger, risk: c.risk });
   return { ok, kept: kept.map((x) => x.k), dropped, blockB: { allocator: c.allocator, tiger: c.tiger, risk: c.risk }, booksB: books(c.summary), baselineB: { ...res.baseline, dir: undefined, books: books(res.baseline) }, dir: wt.dir };
 }
 if (winners.length) {
