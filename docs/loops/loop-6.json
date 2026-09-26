@@ -1,0 +1,441 @@
+{
+ "loop": 6,
+ "title": "Every stop-out goes on the operator's record, and the mandate tree is audited against its own log",
+ "note": "Both structural, no utility claimed: bit-identical on both sealed blocks (every paired change exactly 0). A stop-out now files a 'stop-out' incident (a loss, never misconduct, never a slash) against the agent's operator, and new grants and hires for an operator over its stop-out limit are refused. The book rebuilds the tree from its own event log at every audit, so a write that bypassed the API is caught even when it keeps every invariant. Limits: the log is not signed (a forged event can hide a write), replay holds in memory only (snapshot JSON does not carry the grant and prior-budget fields), and the audit makes the arena about 25% slower. The wildcard researcher returned nothing.",
+ "riskSummary": {
+  "block": "B",
+  "seeds": "16500-16699",
+  "centerMaxDDBefore": 0.07320605764447119,
+  "centerMaxDDAfter": 0.07320605764447119,
+  "guardrailsMaxDD": 0.06945022187069144,
+  "pairedChange": {
+   "mean": 0,
+   "lo": 0,
+   "hi": 0,
+   "wins": 0
+  },
+  "centerMaxDDAtGuardrailsVolAfter": 0.06578189427591268,
+  "volMatchedSource": "npm run arena (ARENA_SEALED=1) eval --from 16500 --count 200 on the merged code; its books equal confirmation.booksB exactly"
+ },
+ "rejections": [
+  {
+   "title": "Wildcard",
+   "reason": "no diff: the researcher returned a placeholder, so there was nothing to review or judge"
+  }
+ ],
+ "head": "87f49ef382c2562ae0c4323f50630ab66a9b06d4",
+ "blocks": {
+  "A": {
+   "from": 16000,
+   "count": 200
+  },
+  "B": {
+   "from": 16500,
+   "count": 200
+  }
+ },
+ "riskGuard": {
+  "maxDDUp": 0.005,
+  "sharpeDown": 0.03
+ },
+ "candidates": [
+  {
+   "k": 0,
+   "angle": "incident (structure): every stop-out now files an incident against the agent's operator, and that record is screened before any new grant or hire for the operator",
+   "track": "structure",
+   "hypothesis": "Before this change, a stop-out (DelegationTree.close in book.ts) and the operator incident record (the adapters' IncidentLedger / AgentHireScreeningService) never met, so an operator whose names kept getting stopped out could still be granted a new mandate or hire. This change adds a small port in swarm: RunBookOptions.incidents, an IncidentSink taking a StopOutIncident. The book reports each STOP_OUT to that port exactly once, right after the close, with kind \"stop-out\", the operator (AgentSpec.operator), the agent name and label, the tick and its unix time, what was freed (whole USDC plus the exact micro-USDC bigint that tree.close returned), the drawdown and the stop rung. The adapters side implements the port with StopOutIncidentSink, which writes to the existing IncidentLedger. Swarm still depends only on core; adapters gains a dependency on swarm (the allowed direction). Stop-outs count as a loss, not misconduct: they are never sent to AgentHire's dispute route, never slash, and have their own threshold (maxOperatorStopOuts, default 2), kept apart from the misconduct threshold (maxOperatorIncidents, default 0, which behaves as before). The same rule (operatorRecordRefusal) is used by AgentHireScreeningService for new hires and by a new OperatorGrantScreen.grant for new mandates in a fund's tree. A refused grant creates no node and reserves nothing. The book never reads the sink back, and the arena passes no sink, so the arena's utility is bit-identical.",
+   "reviewOk": true,
+   "reviewProblems": [
+    "Minor, not blocking: the claim that misconduct refusal messages are 'unchanged' is not quite right. The old text joined bare agentIds, as in '(agent 5, 7)'. The new whereOf gives '(agent 5, agent 7)' for several AgentHire agents, and the book agent name for an incident that carries `agent`. The single-agent case is byte-identical, and the existing agenthire tests pass.",
+    "Minor: adapters now declares a runtime dependency on @allowance/swarm, but operator-record.ts imports only types from it (`import type`). The dependency is in the allowed direction (swarm does not import adapters anywhere, which I checked by grep), but a devDependency or peer dependency would be enough.",
+    "Minor: StopOutIncidentSink's default binding uses agentId 0 and deployerWallet '', so screening refusal messages for such stop-outs show an empty wallet only when a book-only operator is later screened by the grant screen. That is cosmetic."
+   ],
+   "diffFile": "docs/loops/loop-6/candidate-0.diff",
+   "blockA": {
+    "allocator": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tiger": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "allocatorSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     }
+    }
+   },
+   "booksA": {
+    "allocator": {
+     "utility": 0.12082569858790908,
+     "sharpe": 1.2506823666420381,
+     "maxDD": 0.07346054771702497,
+     "baselineUtility": 0.07115125432560426,
+     "baselineMaxDD": 0.06568026772952557
+    },
+    "tiger": {
+     "utility": -0.02290653690470406,
+     "sharpe": -0.07456628922632265,
+     "maxDD": 0.23481671081932273,
+     "baselineUtility": -0.07515320394765446,
+     "baselineMaxDD": 0.3869447799447385
+    }
+   },
+   "status": "winner-A",
+   "reviewSummary": "I recommend approving it. The diff applies cleanly to 64b1690 (`git apply --check` passed). I applied it in a scratch worktree at /tmp/loop-review-6-incident/wt, wired it with scripts/worktree-setup.sh, and removed the worktree afterwards. `tsc -b` passes, and `npm test` passes 301 of 301, including the 3 new test files. No existing test was edited, skipped or deleted: the only package.json test-script changes add files. It does not touch the arena or the judge (arena.ts, arena-cli.ts, loop-judge.mjs, worktree-setup.sh). The book change only runs inside the existing STOP_OUT branch. It reports the value `tree.close` already returned, plus `currentDrawdown(a.unitReturns)` (realized past returns only), `rungs.ddStop` and `tickToUnix(t)`. It never reads the sink back. So it reads no future ticks, drift or whole-sample statistics, it does not pick agents by strategy class, it has no seed-specific values, and it is point-in-time.\n\nThe tests prove what the change claims:\n- **incidents.test.ts:** one incident per STOP_OUT, with the matching node, tick, label, operator and reason, and freedUnits exactly equal to what a wrapped `tree.close` returned. It also shows nav, returns, decisions, agents and tree events are identical with and without a sink, and that an async sink is awaited in order while one that throws aborts the run.\n- **arena-incidents.test.ts:** the same bit-identity across 8 arena worlds under both policies, with at least 20 stop-outs and at least one stop-out of a two-name operator.\n- **operator-record.test.ts:** stop-outs are never sent to the dispute or slash routes. Stop-out and misconduct thresholds are counted separately and bad limits are rejected. A refused grant creates no node and reserves nothing, and stop-outs filed in one process are screened in another through JsonFileIncidentStore.\n\nRISK GUARD on research seeds 1-40, comparing a fresh 64b1690 worktree with the patched one: the two eval JSON outputs are byte-identical (`cmp`). allocator utility 0.12759 vs 0.12759, tiger -0.10996 vs -0.10996, allocatorMaxDD 6.677% vs 6.677% (+0.000 pp), tigerMaxDD 25.299% vs 25.299% (+0.000 pp), allocatorSharpe 1.33549 vs 1.33549 (change 0), tigerSharpe -0.36093 vs -0.36093 (change 0). That is well within the +0.5 pp maxDD and -0.03 Sharpe limits.\n\nRelevant files: packages/swarm/src/book.ts, packages/adapters/src/operator-record.ts and packages/adapters/src/agenthire.ts. The diff is at /tmp/claude-0/-home-user-hackathon/4acc9e66-6757-5937-8dcf-eea6aa2ad843/scratchpad/w1/final.diff.",
+   "research": {
+    "checkBefore": "Seeds 6800-6949 (150 worlds), base 64b1690: allocator CE 12.72% vs guardrails 5.51% | uplift 7.21% [90% 5.82%, 8.59%] | wins 81% | Sharpe 1.29 vs 0.72 | maxDD 7.14% vs 7.07% (6.25% at the guardrails' vol). Tiger: -4.07% vs -16.57% | uplift 12.50% | Sharpe -0.16 vs -0.07 | maxDD 23.50% vs 38.08%.",
+    "checkAfter": "Seeds 6800-6949 with the change: identical in every figure (CE 12.72%, uplift 7.21% [5.82%, 8.59%], Sharpe 1.29, maxDD 7.14%; tiger unchanged). The arena JSON output (perWorld utilities, maxDD, Sharpe) is byte-identical to the base (cmp). Delta maxDD 0.00 pp, delta Sharpe 0.00.",
+    "devBefore": "Seeds 2401-2600 (200 worlds), base 64b1690: allocator CE 11.94% vs guardrails 5.76% | uplift 6.17% [90% 5.06%, 7.29%] | wins 74% | Sharpe 1.25 vs 0.77 | maxDD 7.32% vs 7.04% (6.67% at the guardrails' vol). Tiger: -2.32% vs -11.91% | uplift 9.59% | Sharpe -0.09 vs -0.06 | maxDD 23.51% vs 38.13%.",
+    "devAfter": "Seeds 2401-2600 with the change: identical (CE 11.94%, uplift 6.17% [5.06%, 7.29%], Sharpe 1.25, maxDD 7.32%; tiger unchanged). The arena JSON output is byte-identical to the base (cmp).",
+    "variantsTried": 1
+   }
+  },
+  {
+   "k": 1,
+   "angle": "replay (structure): the mandate tree can be audited from its own event log. DelegationTree.replay(events) rebuilds a tree from the log, verifyAgainstLog() lists every way the live tree differs from that rebuild, and runBook runs the check at the start, trade and end audits of every tick.",
+   "track": "structure",
+   "hypothesis": "Loop 3's reserve review found that the book's audits (tree.audit(), bookViolations, tradeViolations) only check that the tree's current state is sound. They trust tree.available() and cannot tell whether a state was reached through the API. A write that bypasses the API, such as moving budget between two agents of one pod, keeps every invariant, so nothing catches it. If every API call logs enough to be replayed exactly, the log can be treated as the source of truth. A replayed copy of the tree must then equal the live tree on every field, so any unlogged write is caught at the next check. That holds even if the write keeps every invariant, and even if a later resize or close overwrote it, because each RESIZE event now records the budget it started from. This is a structure guarantee with no return claim, so arena utility should be bit-identical.",
+   "reviewOk": true,
+   "reviewProblems": [
+    "Non-blocking: the log is not authenticated. recordEvent is public, so a direct write paired with a forged event (for example a RESIZE with a matching `before`) passes verifyAgainstLog. The diff says so itself and has a test for it ('division of labour'), and audit() still catches over-commitment. The guarantee therefore covers writes that bypass the API and are not logged, not adversaries who also write to the log.",
+    "Non-blocking: a direct `revoked = true` followed in the same hook by an API revoke(), with no check in between, cannot be detected afterwards. A plain revoke logs amount=null, so the REVOKE-amount check only covers close(). This is documented in the verifyAgainstLog JSDoc. In runBook, a direct write followed by an API revoke inside one onTick/onTrade callback would slip through.",
+    "Non-blocking: serializeEvent (packages/core/src/serialize.ts) picks fields one by one and drops the new `grant` and `before` fields. Persisted snapshots cannot be replayed, so 'auditable from its own history' holds only in memory.",
+    "Non-blocking: recordEvent now freezes every event. That is safe at 64b1690, since nothing mutates an event after recording it (checked payment.ts, agenthire.ts, flow.ts). Any later code that does will throw a TypeError in strict mode.",
+    "Non-blocking: the arena eval took 16.6s against 13.2s at base for 200 worlds, about 25% slower, because verifyAgainstLog runs 3 times per tick. The timing is rough because both runs were in parallel."
+   ],
+   "diffFile": "docs/loops/loop-6/candidate-1.diff",
+   "blockA": {
+    "allocator": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tiger": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "allocatorSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     }
+    }
+   },
+   "booksA": {
+    "allocator": {
+     "utility": 0.12082569858790908,
+     "sharpe": 1.2506823666420381,
+     "maxDD": 0.07346054771702497,
+     "baselineUtility": 0.07115125432560426,
+     "baselineMaxDD": 0.06568026772952557
+    },
+    "tiger": {
+     "utility": -0.02290653690470406,
+     "sharpe": -0.07456628922632265,
+     "maxDD": 0.23481671081932273,
+     "baselineUtility": -0.07515320394765446,
+     "baselineMaxDD": 0.3869447799447385
+    }
+   },
+   "status": "winner-A",
+   "reviewSummary": "I recommend accepting this diff (ok=true). It applies cleanly to 64b1690, the tests prove what it claims, and arena results are bit-identical to the base.\n\n**Applies cleanly.** I set up two worktrees at 64b1690: `/tmp/loop-review-6-replay/wt` (candidate) and `/tmp/loop-review-6-replay/base`, both wired with `scripts/worktree-setup.sh`.\n- The patch to `packages/core/{package.json,src/tree.ts,src/types.ts}` and `packages/swarm/src/book.ts` passed `git apply --check` with exact hunk counts, no `--recount` needed.\n- The appended block in `packages/swarm/src/reserve.test.ts` fits the file exactly: 502 lines plus 68 gives the hunk's 570.\n- The new `packages/core/src/replay.test.ts` is 644 lines, as the diff header says.\n\n**Typecheck and tests pass.** `tsc -b` is clean. `npm test` gives 294/294 against 280/280 at base: 11 new replay tests and 3 new reserve tests. No existing test was weakened, skipped or deleted. `npm run demo` still passes.\n\n**The tests catch the failures they claim to.** I disabled each check in turn and re-ran `replay.test.ts` and `reserve.test.ts`. Every change made at least one test fail:\n\n| Check removed | Tests failing |\n|---|---|\n| RESIZE `before` check | 3 |\n| close REVOKE-on-revoked check | 1 |\n| `logViolations` in the start/end audit | 1 |\n| `logViolations` in the trade audit | 1 |\n| children-index diff | 1 |\n| expiry compare | 2 |\n| identity compare | 2 |\n| principal compare | 1 |\n| `Object.freeze` on events | 2 |\n| grant copy-and-freeze | 3 |\n| sequence-counter check | 1 |\n| check that replayed events are unchanged | 1 |\n\nThat covers every part of the claim:\n- a write that keeps every invariant, such as budget moved between two agents of one pod;\n- a write later overwritten through resize() or close();\n- a log that is rewritten, truncated or has an event smuggled in;\n- 80 random direct writes, all caught at the next check.\n\n**Other reject criteria.**\n- Nothing reads future information, and the check only uses the tree and log as they stand, so it is point-in-time.\n- No agent is picked out by strategy class.\n- It does not touch the arena or judge files (`arena.ts`, `arena-cli.ts`, `loop-judge.mjs`, `worktree-setup.sh`).\n- No seed-specific values are hard-coded; the property tests use their own PRNG seeds.\n\n**Risk guard (research block, not sealed).** I ran `arena-cli eval` for seeds 0–39 and 0–199 on base and candidate. The output JSON files are byte-identical (`cmp` shows no difference). Candidate minus base:\n- allocator maxDD: +0.000 pp (7.1558% both)\n- allocator Sharpe: 0.0000 (1.29115 both)\n- tiger maxDD: +0.000 pp (23.908% both)\n- tiger Sharpe: 0.0000 (-0.24123 both)\n- allocator utility: 12.804% both; tiger utility: -6.104% both\n\nThe guard passes (limits: maxDD rise ≤ 0.5 pp, Sharpe fall ≤ 0.03). The arena calls `runBook` (`arena.ts` lines 234–235), so the new log audit ran on every tick of all 200 worlds under both policies without firing once.\n\nThe problems list has five non-blocking caveats, three of which the diff documents itself.",
+   "research": {
+    "checkBefore": "Current code (64b1690), run with npm run arena -- eval.\nResearch block seeds 2401-2600 (n=200): allocator utility 11.94% vs baseline 5.76%, uplift 6.17% [90% 5.06%, 7.29%], wins 74%, Sharpe 1.25 vs 0.77, maxDD 7.32% vs 7.04% (6.67% at the baseline's vol). Tiger -2.32% vs -11.91%, uplift 9.59% [6.13%, 13.05%], Sharpe -0.09 vs -0.06, maxDD 23.51% vs 38.13%. Arena time 13.2 s (13.9 s wall).\nCheck block seeds 6800-6949 (n=150): allocator utility 12.72% vs 5.51%, uplift 7.21% [5.82%, 8.59%], wins 81%, Sharpe 1.29 vs 0.72, maxDD 7.14% vs 7.07% (6.25% at the baseline's vol). Tiger -4.07% vs -16.57%, uplift 12.50% [9.14%, 15.85%], Sharpe -0.16 vs -0.07, maxDD 23.50% vs 38.08%. Arena time 11.5 s (12.2 s wall).",
+    "checkAfter": "With the change: bit-identical on both blocks. `cmp` on the output JSONs (per-world utilities, max drawdowns and Sharpes) shows they are byte-for-byte equal to the baseline runs.\nSeeds 2401-2600: allocator 11.94% vs 5.76%, uplift 6.17% [5.06%, 7.29%], Sharpe 1.25, maxDD 7.32% (6.67% at the baseline's vol). Tiger -2.32%, maxDD 23.51%. Arena time 16.8 s (17.6 s wall), vs 13.2 s before (+27%).\nSeeds 6800-6949: allocator 12.72% vs 5.51%, uplift 7.21% [5.82%, 8.59%], Sharpe 1.29, maxDD 7.14% (6.25% at the baseline's vol). Tiger -4.07%, maxDD 23.50%. Arena time 14.0 s (14.6 s wall), vs 11.5 s before (+22%).\nRisk guard: maxDD change 0.00 pp and Sharpe change 0.00 on both blocks. No return claim.",
+    "devBefore": "seeds 2401-2600: center book CE 11.94%, Sharpe 1.25, maxDD 7.32%; tiger CE -2.32%, maxDD 23.51%; 13.2 s",
+    "devAfter": "seeds 2401-2600: identical (the JSON is byte-equal): CE 11.94%, Sharpe 1.25, maxDD 7.32%; tiger CE -2.32%, maxDD 23.51%; 16.8 s",
+    "variantsTried": 1
+   }
+  },
+  {
+   "k": 2,
+   "angle": "wildcard",
+   "track": "allocator",
+   "hypothesis": "Placeholder",
+   "reviewOk": false,
+   "reviewProblems": [
+    "no diff"
+   ],
+   "status": "rejected-review",
+   "reviewSummary": "nothing to review",
+   "research": {
+    "checkBefore": "",
+    "checkAfter": "",
+    "variantsTried": 0
+   }
+  }
+ ],
+ "confirmations": [
+  {
+   "label": "combined (pre-composed)",
+   "kept": [
+    0,
+    1
+   ],
+   "dropped": [],
+   "ok": true,
+   "allocator": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "tiger": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "allocatorSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    }
+   }
+  }
+ ],
+ "merged": {
+  "kept": [
+   0,
+   1
+  ],
+  "diffFile": "docs/loops/loop-6/merge.diff"
+ },
+ "baselineA": {
+  "sha": "87f49ef382c2562ae0c4323f50630ab66a9b06d4",
+  "dirty": false,
+  "allocator": {
+   "worlds": 200,
+   "utility": 0.12082569858790908,
+   "baseline": 0.07115125432560426,
+   "uplift": 0.04967444426230484,
+   "upliftLo": 0.038161699804253574,
+   "upliftHi": 0.06118718872035611,
+   "winRate": 0.685,
+   "sharpe": 1.2506823666420381,
+   "baselineSharpe": 0.8965758751143715,
+   "maxDD": 0.07346054771702497,
+   "baselineMaxDD": 0.06568026772952557,
+   "maxDDAtBaselineVol": 0.06405107584519283
+  },
+  "tiger": {
+   "worlds": 200,
+   "utility": -0.02290653690470406,
+   "baseline": -0.07515320394765446,
+   "uplift": 0.052246667042950425,
+   "upliftLo": -0.061288106556932544,
+   "upliftHi": 0.1657814406428334,
+   "winRate": 0.75,
+   "sharpe": -0.07456628922632265,
+   "baselineSharpe": -0.012136891439026963,
+   "maxDD": 0.23481671081932273,
+   "baselineMaxDD": 0.3869447799447385
+  },
+  "books": {
+   "allocator": {
+    "utility": 0.12082569858790908,
+    "sharpe": 1.2506823666420381,
+    "maxDD": 0.07346054771702497,
+    "baselineUtility": 0.07115125432560426,
+    "baselineMaxDD": 0.06568026772952557
+   },
+   "tiger": {
+    "utility": -0.02290653690470406,
+    "sharpe": -0.07456628922632265,
+    "maxDD": 0.23481671081932273,
+    "baselineUtility": -0.07515320394765446,
+    "baselineMaxDD": 0.3869447799447385
+   }
+  }
+ },
+ "confirmation": {
+  "ok": true,
+  "kept": [
+   0,
+   1
+  ],
+  "dropped": [],
+  "blockB": {
+   "allocator": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "tiger": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "allocatorSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    }
+   }
+  },
+  "booksB": {
+   "allocator": {
+    "utility": 0.13711110260712264,
+    "sharpe": 1.335133897567849,
+    "maxDD": 0.07320605764447119,
+    "baselineUtility": 0.0820344993340821,
+    "baselineMaxDD": 0.06945022187069144
+   },
+   "tiger": {
+    "utility": -0.07347287443357699,
+    "sharpe": -0.30173705236643805,
+    "maxDD": 0.2461285533469969,
+    "baselineUtility": -0.2189427575827463,
+    "baselineMaxDD": 0.4194492094092799
+   }
+  },
+  "baselineB": {
+   "sha": "87f49ef382c2562ae0c4323f50630ab66a9b06d4",
+   "dirty": false,
+   "allocator": {
+    "worlds": 200,
+    "utility": 0.13711110260712264,
+    "baseline": 0.0820344993340821,
+    "uplift": 0.055076603273040474,
+    "upliftLo": 0.04264256232950383,
+    "upliftHi": 0.06751064421657713,
+    "winRate": 0.695,
+    "sharpe": 1.335133897567849,
+    "baselineSharpe": 0.9494289606059759,
+    "maxDD": 0.07320605764447119,
+    "baselineMaxDD": 0.06945022187069144,
+    "maxDDAtBaselineVol": 0.06578189427591268
+   },
+   "tiger": {
+    "worlds": 200,
+    "utility": -0.07347287443357699,
+    "baseline": -0.2189427575827463,
+    "uplift": 0.14546988314916912,
+    "upliftLo": 0.11248164440678726,
+    "upliftHi": 0.17845812189155097,
+    "winRate": 0.81,
+    "sharpe": -0.30173705236643805,
+    "baselineSharpe": -0.20293484696603567,
+    "maxDD": 0.2461285533469969,
+    "baselineMaxDD": 0.4194492094092799
+   },
+   "books": {
+    "allocator": {
+     "utility": 0.13711110260712264,
+     "sharpe": 1.335133897567849,
+     "maxDD": 0.07320605764447119,
+     "baselineUtility": 0.0820344993340821,
+     "baselineMaxDD": 0.06945022187069144
+    },
+    "tiger": {
+     "utility": -0.07347287443357699,
+     "sharpe": -0.30173705236643805,
+     "maxDD": 0.2461285533469969,
+     "baselineUtility": -0.2189427575827463,
+     "baselineMaxDD": 0.4194492094092799
+    }
+   }
+  }
+ },
+ "compositions": [
+  {
+   "members": [
+    0,
+    1
+   ],
+   "note": "incident + replay composed by the orchestrator (conflict: the root package.json test list only)"
+  }
+ ]
+}

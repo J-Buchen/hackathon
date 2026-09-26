@@ -1,0 +1,1141 @@
+diff --git a/package-lock.json b/package-lock.json
+index 2feffb9..7f2204b 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -11113,6 +11113,7 @@
+       "version": "0.1.0",
+       "dependencies": {
+         "@allowance/core": "*",
++        "@allowance/swarm": "*",
+         "ethers": "^6.17.0"
+       }
+     },
+diff --git a/package.json b/package.json
+index 056f571..78cc336 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/operator-sizing.test.ts packages/lab/src/arena-operator-sizing.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/operator-sizing.test.ts packages/lab/src/arena-operator-sizing.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts packages/swarm/src/incidents.test.ts packages/adapters/src/operator-record.test.ts packages/lab/src/arena-incidents.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/adapters/package.json b/packages/adapters/package.json
+index 6da400d..cf728ff 100644
+--- a/packages/adapters/package.json
++++ b/packages/adapters/package.json
+@@ -10,10 +10,11 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/adapters.test.ts src/agenthire.test.ts src/agenthire-audit.test.ts"
++    "test": "node --import tsx --test src/adapters.test.ts src/agenthire.test.ts src/agenthire-audit.test.ts src/operator-record.test.ts"
+   },
+   "dependencies": {
+     "@allowance/core": "*",
++    "@allowance/swarm": "*",
+     "ethers": "^6.17.0"
+   }
+ }
+diff --git a/packages/adapters/src/agenthire.ts b/packages/adapters/src/agenthire.ts
+index c087419..1a7233d 100644
+--- a/packages/adapters/src/agenthire.ts
++++ b/packages/adapters/src/agenthire.ts
+@@ -17,6 +17,7 @@
+  *   - `AgentHireScreeningService`   core `ScreeningService`: reputation, stake, and operator incidents
+  *   - `OperatorRegistry`            agentId -> operator (deployer wallet + World ID nullifier)
+  *   - `IncidentLedger` (+ `JsonFileIncidentStore`), `OverspendWatch`, `pushIncidentReport`   the incident loop
++ *                                   (fund stop-outs reach the same ledger: see operator-record.ts)
+  *   - `SerializedPayer`             core `pay()` run one-at-a-time per root mandate
+  *   - `QuoteBook`, `planHire`, `delegateAll`, `aliasNodeLabel`   hire sizing: the amount is the
+  *                                   quote, sub-agents split (cap - main) pro rata, all-or-nothing
+@@ -97,6 +98,7 @@ import {
+   pay,
+ } from "@allowance/core";
+ import { MockPrincipalVerifier } from "./worldidkit";
++import { operatorRecordLimits, operatorRecordRefusal } from "./operator-record";
+ 
+ /* ------------------------------------------------------------------ */
+ /* Constants                                                          */
+@@ -1759,10 +1761,13 @@ export class OperatorRegistry {
+ 
+ /**
+  * An incident recorded by Allowance, keyed by agent AND operator. This is not
+- * a slash: it records that an agent kept trying to spend past its mandate.
++ * a slash: it records that an agent kept trying to spend past its mandate
++ * (`mandate_overspend`), or that a fund book stopped one of the operator's
++ * agents out (`stop-out`: a loss, not misconduct; see operator-record.ts).
+  */
+ export interface AllowanceIncident {
+   id: string;
++  /** AgentHire agent id; 0 when the incident is a fund agent's with no AgentHire id (see `agent`). */
+   agentId: number;
+   /** Operator counterparty key (World ID nullifier). */
+   operator: string;
+@@ -1771,6 +1776,12 @@ export interface AllowanceIncident {
+   reason: string;
+   node?: string;
+   attempts?: number;
++  /** The fund book agent (full node name) a stop-out was recorded against. */
++  agent?: string;
++  /** The book tick of a stop-out. */
++  tick?: number;
++  /** Authority (whole USDC) a stop-out's close took back. */
++  freed?: number;
+   at: number;
+   /** Provenance, e.g. "scripted by the Allowance demo acting for agent 5". */
+   note?: string;
+@@ -1888,7 +1899,17 @@ export class IncidentLedger {
+ 
+   async record(
+     binding: OperatorBinding,
+-    input: { kind: string; reason: string; node?: string; attempts?: number; at?: number; note?: string },
++    input: {
++      kind: string;
++      reason: string;
++      node?: string;
++      attempts?: number;
++      at?: number;
++      note?: string;
++      agent?: string;
++      tick?: number;
++      freed?: number;
++    },
+   ): Promise<AllowanceIncident> {
+     await this.sync();
+     const incident: AllowanceIncident = {
+@@ -1903,6 +1924,9 @@ export class IncidentLedger {
+     if (input.node !== undefined) incident.node = input.node;
+     if (input.attempts !== undefined) incident.attempts = input.attempts;
+     if (input.note !== undefined) incident.note = input.note;
++    if (input.agent !== undefined) incident.agent = input.agent;
++    if (input.tick !== undefined) incident.tick = input.tick;
++    if (input.freed !== undefined) incident.freed = input.freed;
+     this.incidents_.push(incident);
+     await this.store?.save(this.incidents_);
+     return incident;
+@@ -2073,8 +2097,14 @@ export interface AgentHireScreeningConfig {
+   minTier?: number;
+   /** Most AgentHire-side incidents (reputation or stake) accepted. Default 2 (its 3rd incident bans). */
+   maxIncidents?: number;
+-  /** Most Allowance incidents against the agent's OPERATOR accepted. Default 0. */
++  /** Most Allowance incidents against the agent's OPERATOR accepted, stop-outs aside. Default 0. */
+   maxOperatorIncidents?: number;
++  /**
++   * Most fund stop-outs (incidents of kind "stop-out", filed by a book through
++   * `StopOutIncidentSink`) against the agent's OPERATOR accepted, whichever of
++   * its names they were. Default 2: the third refuses.
++   */
++  maxOperatorStopOuts?: number;
+   /** Runs first (e.g. sanctions screening) and alone for non-AgentHire merchants. */
+   inner?: ScreeningService;
+ }
+@@ -2086,22 +2116,24 @@ export interface AgentHireScreeningConfig {
+  *   - the agent is banned on AgentHire,
+  *   - its reputation tier is below `minTier`,
+  *   - its AgentHire incident count is above `maxIncidents`,
+- *   - its OPERATOR has more than `maxOperatorIncidents` Allowance incidents,
+- *     whichever of that operator's agents they were recorded against.
++ *   - its OPERATOR has more than `maxOperatorIncidents` Allowance incidents
++ *     that are not stop-outs, or more than `maxOperatorStopOuts` fund
++ *     stop-outs, whichever of that operator's agents they were recorded
++ *     against (`operatorRecordRefusal`, shared with `OperatorGrantScreen`).
+  */
+ export class AgentHireScreeningService implements ScreeningService {
+   private readonly config: AgentHireScreeningConfig;
+   private readonly agentIdOf: (merchant: string) => number | undefined;
+   private readonly minTier: number;
+   private readonly maxIncidents: number;
+-  private readonly maxOperatorIncidents: number;
++  private readonly operatorLimits: ReturnType<typeof operatorRecordLimits>;
+ 
+   constructor(config: AgentHireScreeningConfig) {
+     this.config = config;
+     this.agentIdOf = config.agentIdOf ?? parseAgentHireMerchant;
+     this.minTier = config.minTier ?? 1;
+     this.maxIncidents = config.maxIncidents ?? 2;
+-    this.maxOperatorIncidents = config.maxOperatorIncidents ?? 0;
++    this.operatorLimits = operatorRecordLimits({ maxIncidents: config.maxOperatorIncidents, maxStopOuts: config.maxOperatorStopOuts });
+   }
+ 
+   async screen(req: ScreeningRequest): Promise<ScreeningResult> {
+@@ -2156,13 +2188,11 @@ export class AgentHireScreeningService implements ScreeningService {
+       return { approved: false, reason: `screening: incident record ${this.config.incidents.location} unreadable: ${errorMessage(err)}`, reference };
+     }
+     const operatorIncidents = this.config.incidents.forOperator(binding.worldIdNullifier);
+-    if (operatorIncidents.length > this.maxOperatorIncidents) {
+-      const agents = [...new Set(operatorIncidents.map((i) => i.agentId))].join(", ");
++    const refusal = operatorRecordRefusal(operatorIncidents, this.operatorLimits);
++    if (refusal) {
+       return {
+         approved: false,
+-        reason:
+-          `screening: operator ${binding.deployerWallet} (World ID nullifier ${binding.worldIdNullifier.slice(0, 10)}…) ` +
+-          `has ${operatorIncidents.length} Allowance incident(s) (agent ${agents}) > ${this.maxOperatorIncidents} allowed`,
++        reason: `screening: operator ${binding.deployerWallet} (World ID nullifier ${binding.worldIdNullifier.slice(0, 10)}…) ${refusal}`,
+         reference,
+       };
+     }
+diff --git a/packages/adapters/src/index.ts b/packages/adapters/src/index.ts
+index da0dfb5..f10f387 100644
+--- a/packages/adapters/src/index.ts
++++ b/packages/adapters/src/index.ts
+@@ -19,6 +19,8 @@
+  *                  (x402/EIP-3009 on Mock USDC, reputation + operator incidents),
+  *                  plus SerializedPayer (one payment at a time per root mandate)
+  *   agenthire-audit.ts  AgentHire A2A    -> shadow audit (replay sub-agent hires through pay())
++ *   operator-record.ts  fund stop-outs   -> IncidentLedger (the book's IncidentSink port), and the
++ *                  operator-record screen for NEW grants and hires
+  */
+ 
+ import type { PaymentAdapters } from "@allowance/core";
+@@ -37,6 +39,7 @@ export * from "./curvegrid";
+ export * from "./sui";
+ export * from "./agenthire";
+ export * from "./agenthire-audit";
++export * from "./operator-record";
+ // Both AgentHire modules define these two names. The package-level ones are
+ // agenthire.ts's: its `usdcToMicro` throws on a negative or non-finite amount,
+ // which is what payment code wants. The audit's lenient variant (clamps
+diff --git a/packages/adapters/src/operator-record.test.ts b/packages/adapters/src/operator-record.test.ts
+new file mode 100644
+index 0000000..793338a
+--- /dev/null
++++ b/packages/adapters/src/operator-record.test.ts
+@@ -0,0 +1,293 @@
++/**
++ * The operator record, end to end: a fund book's stop-outs are filed in the
++ * adapters' IncidentLedger (through the book's IncidentSink port), keyed by
++ * operator, and a NEW hire (AgentHire screening) or a NEW grant (a mandate in
++ * a fund's tree) for an operator over its stop-out limit is refused, while
++ * other operators are not. Nothing is sent to AgentHire's dispute or slash
++ * routes. Offline: a fake fetch stands in for AgentHire.
++ */
++import { strict as assert } from "node:assert";
++import { mkdtemp, rm } from "node:fs/promises";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { test } from "node:test";
++
++import { DelegationTree } from "@allowance/core";
++import {
++  defaultCenterBookPolicy,
++  defaultNaivePolicy,
++  generateMarket,
++  genericMarketConfig,
++  NoiseStrategy,
++  runBook,
++  TrendStrategy,
++  type IncidentSink,
++  type Market,
++  type Strategy,
++  type SwarmSpec,
++  type Weights,
++} from "@allowance/swarm";
++
++import {
++  AgentHireClient,
++  AgentHireScreeningService,
++  DEFAULT_MAX_OPERATOR_STOP_OUTS,
++  IncidentLedger,
++  JsonFileIncidentStore,
++  OperatorGrantScreen,
++  OperatorRegistry,
++  STOP_OUT_KIND,
++  StopOutIncidentSink,
++  agentHireMerchant,
++  operatorRecordLimits,
++  operatorRecordRefusal,
++  type FetchLike,
++} from "./index";
++
++/* ------------------------------------------------------------------ */
++/* A minimal AgentHire: agents, reputation, stake                      */
++/* ------------------------------------------------------------------ */
++
++const SHARED = "0xa34a8dcb86249dac8d611cfdd0713e672ba72143"; // runs agents 15 and 27
++const CRAWLTECH = "0x1ce3b4044124714daa6a68b95441963679eea6ec"; // runs agent 5
++const AUDITOR = "0xf5aff70e7d78473ea14f7110af047fd144f638e4"; // runs agent 7
++const WALLETS = new Map<number, string>([
++  [15, SHARED],
++  [27, SHARED],
++  [5, CRAWLTECH],
++  [7, AUDITOR],
++]);
++
++function fakeAgentHire() {
++  const calls: string[] = [];
++  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
++  const fetch: FetchLike = async (url) => {
++    const path = new URL(url).pathname;
++    calls.push(path);
++    let m: RegExpExecArray | null;
++    if ((m = /^\/api\/agents\/(\d+)$/.exec(path))) {
++      const id = Number(m[1]);
++      const w = WALLETS.get(id);
++      return w ? json({ id, name: `agent-${id}`, deployer_wallet: w, use_case: "x", current_price: 0.1 }) : json({ error: "agent not found" }, 404);
++    }
++    if (/^\/api\/agents\/\d+\/reputation$/.test(path)) return json({ score: 510, tier: 1, incidentCount: 0, simulated: true });
++    if (/^\/api\/agents\/\d+\/stake$/.test(path)) return json({ stakedUSDC: "150000000", incidentCount: 0, banned: false, simulated: true });
++    return json({ error: `unexpected ${path}` }, 404);
++  };
++  return { calls, client: new AgentHireClient("http://127.0.0.1:5055", fetch) };
++}
++
++const hire = (agentId: number) => ({ node: "buyer.eth", merchant: agentHireMerchant(agentId), amount: 1n });
++
++/* ------------------------------------------------------------------ */
++/* A book with doomed agents                                          */
++/* ------------------------------------------------------------------ */
++
++const TURN = 80;
++function scriptedMarket(): Market {
++  const m = generateMarket(genericMarketConfig(7));
++  m.ticks.forEach((tick, t) => {
++    tick.returns.GOLD = t < TURN ? 0.004 + (t % 2 === 0 ? 0.002 : -0.002) : -0.02;
++  });
++  return m;
++}
++const market = scriptedMarket();
++
++class LongGold implements Strategy {
++  readonly style = "long-gold";
++  constructor(private readonly w: number) {}
++  decide(): Weights {
++    return { GOLD: this.w };
++  }
++}
++
++/** Two GOLD holders run by `shared` (under different names), one by `other`; two survivors run by `clean`. */
++function spec(ops: { shared: string; other: string; clean: string }): SwarmSpec {
++  const all = [...market.instruments];
++  return {
++    principal: "alice",
++    fund: "fund.eth",
++    aum: 10_000_000,
++    pods: [
++      { label: "systematic", instruments: all },
++      { label: "macro", instruments: all },
++    ],
++    agents: [
++      { label: "testsmith", pod: "systematic", operator: ops.shared, instruments: all, strategy: new LongGold(0.5), subMandates: [{ label: "exec", share: 0.3 }] },
++      { label: "stacktracer", pod: "macro", operator: ops.shared, instruments: all, strategy: new LongGold(0.45) },
++      { label: "crawler", pod: "macro", operator: ops.other, instruments: all, strategy: new LongGold(0.55) },
++      { label: "trend", pod: "systematic", operator: ops.clean, instruments: all, strategy: new TrendStrategy(30) },
++      { label: "noise", pod: "macro", operator: ops.clean, instruments: all, strategy: new NoiseStrategy(5) },
++    ],
++  };
++}
++
++/** Operators keyed as in production: AgentSpec.operator is the operator's World ID nullifier. */
++async function operatorsOf(client: AgentHireClient) {
++  const registry = new OperatorRegistry();
++  const shared = (await registry.bindFromAgentHire(client, 15)).worldIdNullifier;
++  const other = (await registry.bindFromAgentHire(client, 5)).worldIdNullifier;
++  const clean = (await registry.bindFromAgentHire(client, 7)).worldIdNullifier;
++  return { registry, shared, other, clean };
++}
++
++for (const [what, policy] of [
++  ["center book", defaultCenterBookPolicy()],
++  ["per-agent guardrails", defaultNaivePolicy()],
++] as const) {
++  test(`${what}: each stop-out is filed once as a "stop-out" incident against its operator; no dispute, no slash`, async () => {
++    const { calls, client } = fakeAgentHire();
++    const ops = await operatorsOf(client);
++    const ledger = new IncidentLedger();
++    const sink = new StopOutIncidentSink({ ledger });
++    const port: IncidentSink = sink; // the adapters' sink IS the book's port
++    const book = await runBook(market, spec(ops), policy, { incidents: port });
++
++    const stops = book.decisions.filter((d) => d.kind === "STOP_OUT");
++    assert.equal(stops.length, 3);
++    assert.equal(ledger.list().length, stops.length, "exactly one incident per stop-out");
++    assert.deepEqual(sink.filed, ledger.list());
++    const operatorOf = new Map(book.agents.map((a) => [a.name, a.operator!]));
++    stops.forEach((d, k) => {
++      const i = ledger.list()[k]!;
++      assert.equal(i.kind, STOP_OUT_KIND);
++      assert.equal(i.kind, "stop-out");
++      assert.equal(i.operator, operatorOf.get(d.node), "keyed by the agent's operator");
++      assert.equal(i.agent, d.node);
++      assert.equal(i.node, d.node);
++      assert.equal(i.tick, d.t);
++      assert.ok(typeof i.freed === "number" && i.freed >= 0);
++      assert.match(d.detail, new RegExp(`${i.freed!.toFixed(0)} USDC handed back`), "the freed amount is the close's");
++      assert.match(i.reason, /a loss, not misconduct; nothing slashed/);
++      assert.equal(i.agentHireReport, undefined, "never sent to AgentHire");
++    });
++    assert.equal(ledger.countForOperator(ops.shared), 2, "two names, one operator: two incidents on one record");
++    assert.equal(ledger.countForOperator(ops.other), 1);
++    assert.equal(ledger.countForOperator(ops.clean), 0);
++    assert.equal(calls.filter((c) => c.includes("dispute") || c.includes("slash")).length, 0);
++  });
++}
++
++test("screening refuses a NEW hire for an operator over its stop-out threshold, and not other operators", async () => {
++  const { client } = fakeAgentHire();
++  const ops = await operatorsOf(client);
++  const ledger = new IncidentLedger();
++  await runBook(market, spec(ops), defaultCenterBookPolicy(), { incidents: new StopOutIncidentSink({ ledger }) });
++  assert.deepEqual([ledger.countForOperator(ops.shared), ledger.countForOperator(ops.other)], [2, 1]);
++
++  const screen = (maxOperatorStopOuts?: number) =>
++    new AgentHireScreeningService({
++      client,
++      operators: new OperatorRegistry(),
++      incidents: ledger,
++      ...(maxOperatorStopOuts === undefined ? {} : { maxOperatorStopOuts }),
++    });
++
++  // Threshold 1: the shared operator (2 stop-outs) is refused, on BOTH its names,
++  // including agent 27, which was never in the book under that name.
++  const strict = screen(1);
++  for (const id of [15, 27]) {
++    const r = await strict.screen(hire(id));
++    assert.equal(r.approved, false, `agent ${id}`);
++    assert.match(r.reason!, new RegExp(`^screening: operator ${SHARED} .* has 2 fund stop-out\\(s\\) \\(.*testsmith.*stacktracer.*\\) > 1 allowed`));
++  }
++  assert.equal((await strict.screen(hire(5))).approved, true, "one stop-out is within a threshold of 1");
++  assert.equal((await strict.screen(hire(7))).approved, true, "an operator never stopped out");
++
++  // Threshold 0: any stop-out refuses; the clean operator still passes.
++  const zero = screen(0);
++  assert.equal((await zero.screen(hire(5))).approved, false);
++  assert.equal((await zero.screen(hire(27))).approved, false);
++  assert.equal((await zero.screen(hire(7))).approved, true);
++
++  // The default (2) accepts two; stop-outs never count against the misconduct limit (default 0).
++  assert.equal(DEFAULT_MAX_OPERATOR_STOP_OUTS, 2);
++  const lenient = screen();
++  assert.equal((await lenient.screen(hire(27))).approved, true, (await lenient.screen(hire(27))).reason);
++  assert.equal((await lenient.screen(hire(5))).approved, true);
++});
++
++test("misconduct and stop-outs are counted apart", () => {
++  const base = { agentId: 0, operator: "op", deployerWallet: "", reason: "r", at: 0 };
++  const stop = (n: number) => ({ ...base, id: `S${n}`, kind: STOP_OUT_KIND, agent: `a${n}` });
++  const overspend = { ...base, id: "O1", kind: "mandate_overspend", agentId: 5 };
++  assert.equal(operatorRecordRefusal([stop(1), stop(2)]), null, "two stop-outs: within the defaults");
++  assert.match(operatorRecordRefusal([stop(1), stop(2), stop(3)])!, /has 3 fund stop-out\(s\) \(a1, a2, a3\) > 2 allowed/);
++  assert.match(operatorRecordRefusal([overspend])!, /has 1 Allowance incident\(s\) \(agent 5\) > 0 allowed/);
++  assert.equal(operatorRecordRefusal([overspend, stop(1)], { maxIncidents: 1, maxStopOuts: 1 }), null);
++  assert.equal(operatorRecordRefusal([stop(1), stop(2)], { maxStopOuts: Infinity }), null);
++  for (const bad of [-1, 0.5, Number.NaN]) {
++    assert.throws(() => operatorRecordLimits({ maxStopOuts: bad }), RangeError);
++    assert.throws(() => new OperatorGrantScreen({ incidents: new IncidentLedger(), maxStopOuts: bad }), RangeError);
++  }
++});
++
++test("a NEW grant in a fund's tree is refused for an operator over the threshold: no node, nothing reserved", async () => {
++  const ledger = new IncidentLedger();
++  await runBook(market, spec({ shared: "op-shared", other: "op-other", clean: "op-clean" }), defaultCenterBookPolicy(), {
++    incidents: new StopOutIncidentSink({ ledger }),
++  });
++  const tree = new DelegationTree();
++  tree.fundRoot({ principal: "bob", rootName: "fund2.eth", mandate: { budget: 1_000_000_000000n, expiry: 4_000_000_000 } });
++  const screen = new OperatorGrantScreen({ incidents: ledger, maxStopOuts: 1 });
++  const mandate = { budget: 100_000_000000n, expiry: 4_000_000_000 };
++  const before = { nodes: tree.listNodes().length, available: tree.available("fund2.eth") };
++
++  const refused = await screen.grant(tree, "fund2.eth", "newname", mandate, "op-shared");
++  assert.equal(refused.granted, false);
++  assert.match(refused.screening.reason!, /operator op-shared has 2 fund stop-out\(s\) .* > 1 allowed/);
++  assert.equal(tree.listNodes().length, before.nodes, "no node created");
++  assert.equal(tree.available("fund2.eth"), before.available, "nothing reserved");
++
++  for (const op of ["op-other", "op-clean", "op-never-seen"]) {
++    const ok = await screen.grant(tree, "fund2.eth", `pm-${op}`, mandate, op);
++    assert.equal(ok.granted, true, `${op}: ${ok.screening.reason}`);
++  }
++  assert.equal(tree.available("fund2.eth"), before.available - 3n * mandate.budget);
++  assert.equal((await screen.screen("")).approved, false, "no operator named: refused");
++});
++
++test("stop-outs filed by one process screen out the operator in another (JsonFileIncidentStore)", async () => {
++  const dir = await mkdtemp(join(tmpdir(), "allowance-stopouts-"));
++  try {
++    const file = join(dir, "incidents.json");
++    const { client } = fakeAgentHire();
++    const ops = await operatorsOf(client);
++    await runBook(market, spec(ops), defaultNaivePolicy(), {
++      incidents: new StopOutIncidentSink({ ledger: new IncidentLedger(new JsonFileIncidentStore(file)) }),
++    });
++    // "Another process": a fresh ledger on the same file, a fresh registry.
++    const later = new IncidentLedger(new JsonFileIncidentStore(file));
++    const screening = new AgentHireScreeningService({ client, operators: new OperatorRegistry(), incidents: later, maxOperatorStopOuts: 1 });
++    assert.equal((await screening.screen(hire(27))).approved, false);
++    assert.equal((await screening.screen(hire(5))).approved, true);
++    assert.equal(later.list().length, 3);
++    assert.ok(later.list().every((i) => i.kind === "stop-out" && typeof i.tick === "number" && typeof i.freed === "number" && i.agent));
++  } finally {
++    await rm(dir, { recursive: true, force: true });
++  }
++});
++
++test("the sink refuses to guess an operator, and files under a binding when one is given", async () => {
++  const { client } = fakeAgentHire();
++  const ops = await operatorsOf(client);
++  const anon = spec(ops);
++  delete anon.agents[2]!.operator; // the crawler: no operator
++  await assert.rejects(
++    runBook(market, anon, defaultCenterBookPolicy(), { incidents: new StopOutIncidentSink({ ledger: new IncidentLedger() }) }),
++    /crawler\.macro\.fund\.eth was stopped out at tick \d+ but has no operator/,
++  );
++
++  // With a binding: the AgentHire agent id and wallet come from the registry.
++  const ids = new Map([["testsmith", 15], ["stacktracer", 27], ["crawler", 5], ["trend", 7], ["noise", 7]]);
++  const ledger = new IncidentLedger();
++  await runBook(market, anon, defaultCenterBookPolicy(), {
++    incidents: new StopOutIncidentSink({
++      ledger,
++      bindingOf: (i) => ops.registry.bindFromAgentHire(client, ids.get(i.label)!),
++    }),
++  });
++  const crawler = ledger.list().find((i) => i.agent?.startsWith("crawler."))!;
++  assert.deepEqual([crawler.agentId, crawler.deployerWallet, crawler.operator], [5, CRAWLTECH, ops.other]);
++  assert.deepEqual(ledger.list().filter((i) => i.operator === ops.shared).map((i) => i.agentId).sort(), [15, 27]);
++});
+diff --git a/packages/adapters/src/operator-record.ts b/packages/adapters/src/operator-record.ts
+new file mode 100644
+index 0000000..9609b8b
+--- /dev/null
++++ b/packages/adapters/src/operator-record.ts
+@@ -0,0 +1,206 @@
++/**
++ * The operator's record: where the fund book's stop-outs meet the screening
++ * of anything NEW that goes to that operator.
++ *
++ *   runBook(..., { incidents: new StopOutIncidentSink({ ledger }) })
++ *        │  one "stop-out" incident per STOP_OUT, keyed by the agent's operator
++ *        ▼
++ *   IncidentLedger  (in memory, or a JsonFileIncidentStore other processes read)
++ *        │
++ *        ├─► OperatorGrantScreen.grant()        a NEW mandate in a fund's tree
++ *        └─► AgentHireScreeningService.screen() a NEW hire on AgentHire
++ *
++ * The book (`@allowance/swarm`) defines the port (`IncidentSink`); this module
++ * implements it. Swarm does not depend on adapters.
++ *
++ * A stop-out is a LOSS, not misconduct: the agent's own drawdown reached its
++ * stop and its mandate was closed. It is recorded Allowance-side only, is
++ * never sent to AgentHire's dispute route, and never slashes anything. It is
++ * counted apart from misconduct incidents (e.g. `mandate_overspend`), under
++ * its own limit: one stop-out is ordinary attrition, a run of them across an
++ * operator's names is a record a new grant should not ignore.
++ *
++ * A refusal takes nothing back. What the operator already runs is the book's
++ * business (its ladder, its operator cap); this only stops something new.
++ */
++import type { AgentNode, DelegateOptions, DelegationTree, MandateInput, ScreeningResult } from "@allowance/core";
++import type { IncidentSink, StopOutIncident } from "@allowance/swarm";
++import type { AllowanceIncident, IncidentLedger, OperatorBinding } from "./agenthire";
++
++/** The `kind` a fund stop-out is recorded under: the book's own (`StopOutIncident["kind"]`). */
++export const STOP_OUT_KIND: StopOutIncident["kind"] = "stop-out";
++
++/** Default: one misconduct incident against the operator refuses (unchanged from before stop-outs were recorded). */
++export const DEFAULT_MAX_OPERATOR_INCIDENTS = 0;
++/** Default: two stop-outs are accepted, the third refuses (AgentHire bans on an agent's 3rd incident too). */
++export const DEFAULT_MAX_OPERATOR_STOP_OUTS = 2;
++
++export interface OperatorRecordLimits {
++  /** Most incidents that are NOT stop-outs accepted. Default `DEFAULT_MAX_OPERATOR_INCIDENTS`. */
++  maxIncidents?: number | undefined;
++  /** Most fund stop-outs accepted. Default `DEFAULT_MAX_OPERATOR_STOP_OUTS`. */
++  maxStopOuts?: number | undefined;
++}
++
++function limit(x: number | undefined, fallback: number, what: string): number {
++  const v = x ?? fallback;
++  if (!(v >= 0) || !(Number.isInteger(v) || v === Infinity)) throw new RangeError(`${what} must be a whole number ≥ 0, got ${x}`);
++  return v;
++}
++
++/** Resolve limits once (validated): refusing on a garbled threshold beats silently never refusing. */
++export function operatorRecordLimits(limits: OperatorRecordLimits = {}): Required<{ [K in keyof OperatorRecordLimits]: number }> {
++  return {
++    maxIncidents: limit(limits.maxIncidents, DEFAULT_MAX_OPERATOR_INCIDENTS, "maxIncidents"),
++    maxStopOuts: limit(limits.maxStopOuts, DEFAULT_MAX_OPERATOR_STOP_OUTS, "maxStopOuts"),
++  };
++}
++
++/** Where an incident happened, for a refusal message: the book agent, else the AgentHire agent id. */
++function whereOf(i: AllowanceIncident): string {
++  return i.agent ?? `agent ${i.agentId}`;
++}
++
++/**
++ * Why an operator with these incidents (its own, e.g. `ledger.forOperator`)
++ * is refused under `limits`, or null when it is not. Misconduct is checked
++ * first; stop-outs are counted apart.
++ */
++export function operatorRecordRefusal(incidents: readonly AllowanceIncident[], limits: OperatorRecordLimits = {}): string | null {
++  const { maxIncidents, maxStopOuts } = operatorRecordLimits(limits);
++  const misconduct = incidents.filter((i) => i.kind !== STOP_OUT_KIND);
++  if (misconduct.length > maxIncidents) {
++    const where = [...new Set(misconduct.map(whereOf))].join(", ");
++    return `has ${misconduct.length} Allowance incident(s) (${where}) > ${maxIncidents} allowed`;
++  }
++  const stopOuts = incidents.filter((i) => i.kind === STOP_OUT_KIND);
++  if (stopOuts.length > maxStopOuts) {
++    const where = [...new Set(stopOuts.map(whereOf))].join(", ");
++    return `has ${stopOuts.length} fund stop-out(s) (${where}) > ${maxStopOuts} allowed`;
++  }
++  return null;
++}
++
++/* ------------------------------------------------------------------ */
++/* The book's port                                                    */
++/* ------------------------------------------------------------------ */
++
++export interface StopOutIncidentSinkConfig {
++  ledger: IncidentLedger;
++  /**
++   * The operator binding a stop-out is filed under. Default: the book's
++   * `operator` IS the counterparty key (in production `AgentSpec.operator` is
++   * the operator's World ID nullifier), with no AgentHire agent id (0) and no
++   * wallet. Return undefined to refuse (the sink then throws).
++   */
++  bindingOf?: (incident: StopOutIncident) => OperatorBinding | undefined | Promise<OperatorBinding | undefined>;
++}
++
++/**
++ * The adapters' implementation of the book's `IncidentSink`: files each
++ * stop-out in an `IncidentLedger` as ONE incident of kind "stop-out", keyed by
++ * the agent's operator, carrying the agent, the tick and the authority the
++ * close freed. It never sends anything to AgentHire and never slashes.
++ *
++ * A stop-out whose agent has no operator throws: an operator record that
++ * files incidents under a guessed key would either shield the operator or
++ * blame another. (Give every agent an operator, or a `bindingOf` that knows.)
++ */
++export class StopOutIncidentSink implements IncidentSink {
++  private readonly config: StopOutIncidentSinkConfig;
++  /** The incidents this sink filed, in order. */
++  readonly filed: AllowanceIncident[] = [];
++
++  constructor(config: StopOutIncidentSinkConfig) {
++    this.config = config;
++  }
++
++  async record(incident: StopOutIncident): Promise<void> {
++    if (incident.kind !== STOP_OUT_KIND) throw new Error(`StopOutIncidentSink: not a stop-out: ${String(incident.kind)}`);
++    const binding = this.config.bindingOf
++      ? await this.config.bindingOf(incident)
++      : incident.operator !== undefined && incident.operator !== ""
++        ? { agentId: 0, deployerWallet: "", worldIdNullifier: incident.operator, simulated: true }
++        : undefined;
++    if (!binding) {
++      throw new Error(`StopOutIncidentSink: ${incident.agent} was stopped out at tick ${incident.tick} but has no operator to file it under`);
++    }
++    const filed = await this.config.ledger.record(binding, {
++      kind: STOP_OUT_KIND,
++      reason:
++        `stopped out at a ${(incident.drawdown * 100).toFixed(1)}% drawdown (stop ${(incident.ddStop * 100).toFixed(1)}%): ` +
++        `${incident.reason} (a loss, not misconduct; nothing slashed)`,
++      node: incident.agent,
++      agent: incident.agent,
++      tick: incident.tick,
++      freed: incident.freed,
++      at: incident.at,
++    });
++    this.filed.push(filed);
++  }
++}
++
++/* ------------------------------------------------------------------ */
++/* New grants                                                         */
++/* ------------------------------------------------------------------ */
++
++export interface OperatorGrantScreenConfig extends OperatorRecordLimits {
++  incidents: IncidentLedger;
++}
++
++export type GrantResult =
++  | { granted: true; node: AgentNode; screening: ScreeningResult }
++  | { granted: false; screening: ScreeningResult };
++
++/**
++ * Screens a NEW grant (a mandate for an agent run by `operator`) against the
++ * operator's record. It re-reads the ledger on every check (another process,
++ * or an earlier run, may have filed a stop-out since) and fails closed when
++ * the record cannot be read.
++ */
++export class OperatorGrantScreen {
++  private readonly incidents: IncidentLedger;
++  private readonly limits: ReturnType<typeof operatorRecordLimits>;
++
++  constructor(config: OperatorGrantScreenConfig) {
++    this.incidents = config.incidents;
++    this.limits = operatorRecordLimits(config);
++  }
++
++  async screen(operator: string): Promise<ScreeningResult> {
++    const reference = `operator-record:${operator}`;
++    if (!operator) return { approved: false, reason: "grant screening: no operator named", reference };
++    try {
++      await this.incidents.sync();
++    } catch (err) {
++      return {
++        approved: false,
++        reason: `grant screening: incident record ${this.incidents.location} unreadable: ${err instanceof Error ? err.message : String(err)}`,
++        reference,
++      };
++    }
++    const mine = this.incidents.forOperator(operator);
++    const refusal = operatorRecordRefusal(mine, this.limits);
++    if (refusal) return { approved: false, reason: `grant screening: operator ${operator} ${refusal}`, reference };
++    return { approved: true, reason: `cleared: operator ${operator} has ${mine.length} Allowance incident(s) on record`, reference };
++  }
++
++  /**
++   * Delegate `childLabel` under `parentName` for an agent run by `operator`,
++   * only if the operator's record clears. A refused grant creates no node and
++   * reserves nothing; a cleared one is an ordinary `tree.delegate` (which can
++   * still refuse on attenuation).
++   */
++  async grant(
++    tree: DelegationTree,
++    parentName: string,
++    childLabel: string,
++    mandate: MandateInput,
++    operator: string,
++    opts?: DelegateOptions,
++  ): Promise<GrantResult> {
++    const screening = await this.screen(operator);
++    if (!screening.approved) return { granted: false, screening };
++    return { granted: true, node: tree.delegate(parentName, childLabel, mandate, opts), screening };
++  }
++}
+diff --git a/packages/adapters/tsconfig.json b/packages/adapters/tsconfig.json
+index 3b9243c..acc4684 100644
+--- a/packages/adapters/tsconfig.json
++++ b/packages/adapters/tsconfig.json
+@@ -6,5 +6,5 @@
+     "tsBuildInfoFile": "dist/.tsbuildinfo"
+   },
+   "include": ["src/**/*.ts"],
+-  "references": [{ "path": "../core" }]
++  "references": [{ "path": "../core" }, { "path": "../swarm" }]
+ }
+diff --git a/packages/lab/package.json b/packages/lab/package.json
+index 1ea6986..70b4477 100644
+--- a/packages/lab/package.json
++++ b/packages/lab/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-counterparty.test.ts src/arena-operator-sizing.test.ts src/arena-reserve.test.ts",
++    "test": "node --import tsx --test src/series.test.ts src/metrics.test.ts src/strategy.test.ts src/research.test.ts src/arena-close.test.ts src/arena-counterparty.test.ts src/arena-operator-sizing.test.ts src/arena-reserve.test.ts src/arena-incidents.test.ts",
+     "lab": "tsx src/cli.ts"
+   },
+   "dependencies": {
+diff --git a/packages/lab/src/arena-incidents.test.ts b/packages/lab/src/arena-incidents.test.ts
+new file mode 100644
+index 0000000..fe0467b
+--- /dev/null
++++ b/packages/lab/src/arena-incidents.test.ts
+@@ -0,0 +1,60 @@
++/**
++ * The operator record on randomized arena worlds (clones under two names run
++ * by one operator, herders, a rogue, crowd crashes): every stop-out reaches
++ * the book's IncidentSink exactly once, keyed by the agent's operator, and a
++ * book that reports to a sink trades bit-for-bit like the book the arena
++ * scores (which passes no sink), so the arena's utility cannot move.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { defaultCenterBookPolicy, defaultNaivePolicy, runBook, type BookResult, type StopOutIncident } from "@allowance/swarm";
++import { makeWorld } from "./arena";
++
++const sameBook = (a: BookResult, b: BookResult, what: string) => {
++  assert.equal(a.nav.length, b.nav.length);
++  a.nav.forEach((x, t) => assert.ok(Object.is(x, b.nav[t]), `${what}: nav at tick ${t}`));
++  a.returns.forEach((x, t) => assert.ok(Object.is(x, b.returns[t]), `${what}: return at tick ${t}`));
++  a.crowdExposure.forEach((x, t) => assert.ok(Object.is(x, b.crowdExposure[t]), `${what}: crowd exposure at tick ${t}`));
++  assert.deepEqual(a.decisions, b.decisions, what);
++  assert.deepEqual(a.agents.map((x) => [x.capital, x.pnl, x.ladder]), b.agents.map((x) => [x.capital, x.pnl, x.ladder]), what);
++};
++
++let stopOuts = 0;
++let sharedOperatorStops = 0;
++for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
++  test(`arena world ${seed}: one incident per stop-out, keyed by operator; the book is bit-identical with and without a sink`, async () => {
++    const world = makeWorld(seed);
++    for (const policy of [defaultCenterBookPolicy(), defaultNaivePolicy()]) {
++      const incidents: StopOutIncident[] = [];
++      const reported = await runBook(world.market, world.swarm(), policy, { incidents: { record: (i) => void incidents.push(i) } });
++      const scored = await runBook(world.market, world.swarm(), policy);
++      sameBook(reported, scored, `${policy.kind} world ${seed}`);
++
++      const stops = reported.decisions.filter((d) => d.kind === "STOP_OUT");
++      assert.equal(incidents.length, stops.length);
++      const byAgent = new Map(reported.agents.map((a) => [a.name, a]));
++      stops.forEach((d, k) => {
++        const i = incidents[k]!;
++        const agent = byAgent.get(d.node)!;
++        assert.equal(i.kind, "stop-out");
++        assert.equal(i.agent, d.node);
++        assert.equal(i.tick, d.t);
++        assert.ok(agent.operator, "every arena agent has an operator");
++        assert.equal(i.operator, agent.operator);
++        assert.equal(agent.ladder, "stopped");
++        // After its close the agent runs nothing: what the close freed was all it had.
++        assert.equal(agent.capital[d.t + 1] ?? 0, 0);
++      });
++      assert.equal(new Set(incidents.map((i) => i.agent)).size, incidents.length, "no agent reported twice");
++      stopOuts += incidents.length;
++      const names = new Map<string, number>();
++      for (const a of reported.agents) names.set(a.operator!, (names.get(a.operator!) ?? 0) + 1);
++      sharedOperatorStops += incidents.filter((i) => names.get(i.operator!)! > 1).length;
++    }
++  });
++}
++
++test("those worlds stopped agents out, including names of operators running two", () => {
++  assert.ok(stopOuts >= 20, `stop-outs: ${stopOuts}`);
++  assert.ok(sharedOperatorStops >= 1, `stop-outs of a two-name operator: ${sharedOperatorStops}`);
++});
+diff --git a/packages/swarm/package.json b/packages/swarm/package.json
+index f9270cf..cba640a 100644
+--- a/packages/swarm/package.json
++++ b/packages/swarm/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/operator-sizing.test.ts src/example.test.ts src/reserve.test.ts"
++    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/operator-sizing.test.ts src/example.test.ts src/reserve.test.ts src/incidents.test.ts"
+   },
+   "dependencies": {
+     "@allowance/core": "*"
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index 43f09f6..c88da16 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -24,6 +24,11 @@
+  *                           size, so a name holds min(own size, ceiling): the cap never
+  *                           compounds with a ladder cut or an earlier cap, never weakens
+  *                           the name's own ladder, and never revokes)
++ *   - operator record     = IncidentSink           (optional: every stop-out is reported, once,
++ *                           as a "stop-out" incident against the agent's operator, with
++ *                           the agent, the tick and the authority the close freed; a
++ *                           loss, not misconduct: nothing is slashed. The book defines
++ *                           the port; @allowance/adapters' IncidentLedger implements it)
+  *   - trading size        = available × leverage   (available = the budget − what the node
+  *                           spent itself − what it handed down; sized by `sizeOrder` in the
+  *                           gate, never from a number the book keeps)
+@@ -65,7 +70,7 @@ import {
+   type SizingEvent,
+ } from "./allocator";
+ import { orderNotional, orderPnl, preTradeCheck, sizeOrder, type GateViolation, type SizedOrder } from "./gate";
+-import { cosineSimilarity } from "./stats";
++import { cosineSimilarity, currentDrawdown } from "./stats";
+ import { SIM_START, type Market } from "./market";
+ import type { Observation, Strategy, Weights } from "./strategies";
+ import type { TrendThesis } from "./tigercub";
+@@ -459,7 +464,68 @@ export function tradeViolations(
+ /* Run                                                                */
+ /* ------------------------------------------------------------------ */
+ 
++/* ------------------------------------------------------------------ */
++/* Operator record (port)                                             */
++/* ------------------------------------------------------------------ */
++
++/** The incident kind a stop-out is recorded as: a loss, not misconduct. */
++export const STOP_OUT_INCIDENT_KIND = "stop-out" as const;
++
++/**
++ * A stop-out, as reported to the operator record. One per STOP_OUT decision,
++ * in the same tick, after the close. It says what happened to capital (a
++ * drawdown stop, and what the close took back); it is NOT an accusation and
++ * carries no penalty of its own: whoever keeps the record decides what a
++ * history of stop-outs means for a NEW grant (see the adapters' screening).
++ */
++export interface StopOutIncident {
++  kind: typeof STOP_OUT_INCIDENT_KIND;
++  /**
++   * The counterparty key: `AgentSpec.operator` (in production a World ID
++   * nullifier). Absent when the spec names no operator; a record that keys by
++   * operator must then decide how to treat it (the adapters' sink refuses to
++   * guess).
++   */
++  operator?: string;
++  /** Full node name of the stopped agent. */
++  agent: string;
++  /** The agent's label (`AgentSpec.label`). */
++  label: string;
++  /** The tick at whose close the agent was stopped out. */
++  tick: number;
++  /** Unix seconds of that tick (`tickToUnix`). */
++  at: number;
++  /** Authority the close took back (the agent's and every sub-mandate's unspent budget), whole USDC. */
++  freed: number;
++  /** The same, in the tree's units (micro-USDC): exactly what `tree.close` returned. */
++  freedUnits: bigint;
++  /** The agent's drawdown from its own high-water mark when it was stopped. */
++  drawdown: number;
++  /** The stop rung in force (risk-scaled in the center book). */
++  ddStop: number;
++  /** The STOP_OUT decision's detail. */
++  reason: string;
++}
++
++/**
++ * Where the book reports stop-outs: the port an operator record implements
++ * (e.g. the adapters' `IncidentLedger`, through `StopOutIncidentSink`). The
++ * book awaits every `record()` before it goes on; a sink that throws aborts
++ * the run (an operator record that silently drops incidents would be worse).
++ * The sink is handed a fresh object per stop-out, never the tree.
++ */
++export interface IncidentSink {
++  record(incident: StopOutIncident): void | Promise<void>;
++}
++
+ export interface RunBookOptions {
++  /**
++   * The operator record. When set, every stop-out is reported to it exactly
++   * once (see `StopOutIncident`). It changes nothing the book does: the book
++   * never reads it back, so a run with a sink trades exactly as the run
++   * without one.
++   */
++  incidents?: IncidentSink;
+   /**
+    * Called at the start of every tick, before the allocator acts, with the
+    * live tree: the seam through which agents' sub-mandates act outside the
+@@ -821,10 +887,11 @@ export async function runBook(
+         // sub-mandate it handed out (each shrinks to what it spent, then the
+         // subtree is revoked). The freed authority is available to the pod.
+         const subs = tree.subtree(a.name).length - 1;
+-        const freed = toUsdc(tree.close(a.name));
++        const freedUnits = tree.close(a.name);
++        const freed = toUsdc(freedUnits);
+         holds.delete(a.name);
+         stoppedNow.push(a.name);
+-        decisions.push({
++        const stop: Decision = {
+           t,
+           kind: "STOP_OUT",
+           node: a.name,
+@@ -833,7 +900,24 @@ export async function runBook(
+             (subs > 0 ? ` with its ${subs} sub-mandate${subs === 1 ? "" : "s"}` : "") +
+             ", " +
+             (freed > 0 ? `${freed.toFixed(0)} USDC handed back to the pod` : "no capital was at risk (already allocated zero)"),
+-        });
++        };
++        decisions.push(stop);
++        // The operator record: one incident per stop-out, after the close.
++        if (options.incidents) {
++          await options.incidents.record({
++            kind: STOP_OUT_INCIDENT_KIND,
++            ...(a.operator === undefined ? {} : { operator: a.operator }),
++            agent: a.name,
++            label: a.label,
++            tick: t,
++            at: now,
++            freed,
++            freedUnits,
++            drawdown: currentDrawdown(a.unitReturns),
++            ddStop: rungs.ddStop,
++            reason: stop.detail,
++          });
++        }
+       } else if (next === "cut" && center) {
+         const factor = center.cutFactor ?? 1;
+         const held = holds.get(a.name);
+diff --git a/packages/swarm/src/incidents.test.ts b/packages/swarm/src/incidents.test.ts
+new file mode 100644
+index 0000000..92aa3e4
+--- /dev/null
++++ b/packages/swarm/src/incidents.test.ts
+@@ -0,0 +1,185 @@
++/**
++ * The operator record: every stop-out is reported, once, to the book's
++ * `IncidentSink`, keyed by the stopped agent's operator, with the agent, the
++ * tick, and exactly what the close freed; and reporting changes nothing the
++ * book does. Each test fails if its guarantee breaks.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { defaultCenterBookPolicy, defaultNaivePolicy, type AllocationPolicy } from "./allocator";
++import { runBook, STOP_OUT_INCIDENT_KIND, tickToUnix, type BookResult, type StopOutIncident, type SwarmSpec } from "./book";
++import { generateMarket, genericMarketConfig, type Market } from "./market";
++import { NoiseStrategy, TrendStrategy, type Strategy, type Weights } from "./strategies";
++
++const FUND = "fund.eth";
++const TURN = 80;
++
++/** Seed-7 generic market with GOLD scripted: a calm run-up, then a 2%-a-day slide. */
++function scriptedMarket(): Market {
++  const m = generateMarket(genericMarketConfig(7));
++  m.ticks.forEach((tick, t) => {
++    tick.returns.GOLD = t < TURN ? 0.004 + (t % 2 === 0 ? 0.002 : -0.002) : -0.02;
++  });
++  return m;
++}
++const market = scriptedMarket();
++
++class LongGold implements Strategy {
++  readonly style = "long-gold";
++  constructor(private readonly w = 0.5) {}
++  decide(): Weights {
++    return { GOLD: this.w };
++  }
++}
++
++/**
++ * Four GOLD holders (all doomed on the slide): two names of operator "op-a",
++ * one of "op-b", one with no operator; one of op-a's holds sub-mandates, so
++ * its close frees their budgets too. Two survivors of other operators.
++ */
++function spec(): SwarmSpec {
++  const all = [...market.instruments];
++  return {
++    principal: "alice",
++    fund: FUND,
++    aum: 10_000_000,
++    pods: [
++      { label: "systematic", instruments: all },
++      { label: "macro", instruments: all },
++    ],
++    agents: [
++      {
++        label: "gold-a1",
++        pod: "systematic",
++        operator: "op-a",
++        instruments: all,
++        strategy: new LongGold(0.5),
++        subMandates: [
++          { label: "exec", share: 0.3 },
++          { label: "data", share: 0.02, instruments: ["GOLD"] },
++        ],
++      },
++      { label: "gold-a2", pod: "macro", operator: "op-a", instruments: all, strategy: new LongGold(0.45) },
++      { label: "gold-b", pod: "macro", operator: "op-b", instruments: all, strategy: new LongGold(0.55) },
++      { label: "gold-anon", pod: "systematic", instruments: all, strategy: new LongGold(0.4) },
++      { label: "trend", pod: "systematic", operator: "op-c", instruments: all, strategy: new TrendStrategy(30) },
++      { label: "noise", pod: "macro", operator: "op-d", instruments: all, strategy: new NoiseStrategy(5) },
++    ],
++  };
++}
++
++interface Run {
++  book: BookResult;
++  incidents: StopOutIncident[];
++  /** Every tree.close the book made: node, tick, and what it returned. */
++  closes: { name: string; t: number; freed: bigint }[];
++}
++
++async function run(policy: AllocationPolicy, withSink = true): Promise<Run> {
++  const incidents: StopOutIncident[] = [];
++  const closes: Run["closes"] = [];
++  let now = -1;
++  const book = await runBook(market, spec(), policy, {
++    ...(withSink ? { incidents: { record: (i: StopOutIncident) => void incidents.push(i) } } : {}),
++    onTick: (t, tree) => {
++      now = t;
++      if (t === 0) {
++        const close = tree.close.bind(tree);
++        tree.close = (name: string) => {
++          const freed = close(name);
++          closes.push({ name, t: now, freed });
++          return freed;
++        };
++      }
++    },
++  });
++  return { book, incidents, closes };
++}
++
++const policies: [string, AllocationPolicy][] = [
++  ["center book", defaultCenterBookPolicy()],
++  ["per-agent guardrails", defaultNaivePolicy()],
++];
++
++for (const [what, policy] of policies) {
++  test(`${what}: every STOP_OUT is exactly one "stop-out" incident keyed by operator, with the agent, tick and freed amount`, async () => {
++    const { book, incidents, closes } = await run(policy);
++    const stops = book.decisions.filter((d) => d.kind === "STOP_OUT");
++    assert.equal(stops.length, 4, "the four GOLD holders were stopped out");
++    assert.equal(incidents.length, stops.length, "one incident per stop-out");
++    assert.equal(closes.length, stops.length, "one close per stop-out");
++    const operatorOf = new Map(book.agents.map((a) => [a.name, a.operator]));
++    const labelOf = new Map(book.agents.map((a) => [a.name, a.label]));
++    stops.forEach((d, k) => {
++      const i = incidents[k]!;
++      assert.equal(i.kind, STOP_OUT_INCIDENT_KIND);
++      assert.equal(i.kind, "stop-out");
++      assert.equal(i.agent, d.node);
++      assert.equal(i.label, labelOf.get(d.node));
++      assert.equal(i.tick, d.t);
++      assert.equal(i.at, tickToUnix(d.t));
++      assert.equal(i.operator, operatorOf.get(d.node));
++      assert.equal("operator" in i, operatorOf.get(d.node) !== undefined, "no operator is reported as absent, not guessed");
++      assert.equal(i.reason, d.detail);
++      // What the close returned, exactly, and nothing else.
++      const c = closes[k]!;
++      assert.deepEqual([c.name, c.t], [d.node, d.t]);
++      assert.equal(i.freedUnits, c.freed);
++      assert.equal(i.freed, Number(c.freed) / 1e6);
++      assert.ok(i.drawdown >= i.ddStop, `stopped at ${i.drawdown} ≥ its stop ${i.ddStop}`);
++    });
++    // Keyed by operator: op-a's two names give op-a two incidents.
++    const byOp = new Map<string, string[]>();
++    for (const i of incidents) byOp.set(i.operator ?? "(none)", [...(byOp.get(i.operator ?? "(none)") ?? []), i.label]);
++    assert.deepEqual([...byOp.get("op-a")!].sort(), ["gold-a1", "gold-a2"]);
++    assert.deepEqual(byOp.get("op-b"), ["gold-b"]);
++    assert.deepEqual(byOp.get("(none)"), ["gold-anon"]);
++    assert.equal(byOp.has("op-c") || byOp.has("op-d"), false, "operators never stopped out have no incident");
++    // The agent with sub-mandates: the close freed their budgets as well.
++    const a1 = incidents.find((i) => i.label === "gold-a1")!;
++    assert.ok(a1.freed > 0);
++    assert.equal(book.tree.subtree(a1.agent).length, 3);
++  });
++
++  test(`${what}: reporting to a sink changes nothing the book does (bit-identical)`, async () => {
++    const withSink = await run(policy, true);
++    const without = await run(policy, false);
++    assert.equal(without.incidents.length, 0);
++    assert.ok(withSink.incidents.length > 0);
++    assert.equal(withSink.book.nav.length, without.book.nav.length);
++    withSink.book.nav.forEach((x, t) => assert.ok(Object.is(x, without.book.nav[t]), `nav at ${t}`));
++    withSink.book.returns.forEach((x, t) => assert.ok(Object.is(x, without.book.returns[t]), `return at ${t}`));
++    assert.deepEqual(withSink.book.decisions, without.book.decisions);
++    assert.deepEqual(
++      withSink.book.agents.map((a) => [a.capital, a.pnl, a.ladder]),
++      without.book.agents.map((a) => [a.capital, a.pnl, a.ladder]),
++    );
++    assert.deepEqual(withSink.book.tree.events, without.book.tree.events);
++  });
++}
++
++test("the book awaits an asynchronous sink, in order, and a sink that throws aborts the run", async () => {
++  const seen: string[] = [];
++  const book = await runBook(market, spec(), defaultCenterBookPolicy(), {
++    incidents: {
++      record: async (i) => {
++        await new Promise((r) => setTimeout(r, 1));
++        seen.push(`${i.tick}:${i.label}`);
++      },
++    },
++  });
++  assert.deepEqual(
++    seen,
++    book.decisions.filter((d) => d.kind === "STOP_OUT").map((d) => `${d.t}:${book.agents.find((a) => a.name === d.node)!.label}`),
++  );
++  await assert.rejects(
++    runBook(market, spec(), defaultCenterBookPolicy(), {
++      incidents: {
++        record: () => {
++          throw new Error("record unavailable");
++        },
++      },
++    }),
++    /record unavailable/,
++  );
++});

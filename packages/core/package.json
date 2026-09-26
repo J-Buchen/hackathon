@@ -10,6 +10,6 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc -b",
-    "test": "node --import tsx --test src/attenuation.test.ts src/tree.test.ts src/payment.test.ts src/amount.test.ts src/serialize.test.ts"
+    "test": "node --import tsx --test src/attenuation.test.ts src/tree.test.ts src/payment.test.ts src/amount.test.ts src/serialize.test.ts src/replay.test.ts"
   }
 }

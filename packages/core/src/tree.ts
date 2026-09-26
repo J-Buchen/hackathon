@@ -18,6 +18,7 @@ import {
 import type {
   AgentNode,
   AllowanceEvent,
+  EventGrant,
   IdentityStatus,
   MandateInput,
   Principal,
@@ -90,6 +91,69 @@ export interface TreeViolation {
   message: string;
 }
 
+/**
+ * A way the live tree departs from its own event log (see
+ * `DelegationTree.verifyAgainstLog`):
+ *  - UNLOGGED_WRITE  state the log does not explain: a live field (budget,
+ *                    spend, revocation, scope, expiry, identity, parent,
+ *                    children, the principal) that differs from the tree the
+ *                    log replays to, a node held by one and not the other, or
+ *                    an event whose recorded before-state is not the state the
+ *                    log had left the node in (a write that bypassed the API,
+ *                    then overwritten through it)
+ *  - BAD_EVENT       an event replay cannot apply: out of sequence, a grant
+ *                    without its `grant` or amount, a resize without `before`,
+ *                    a node that does not exist (or, for a grant, already
+ *                    does), or a type/result pair the tree never records
+ *  - LOG_REWRITTEN   the log changed other than by `recordEvent` appending to
+ *                    it: an event already replayed was replaced or removed, or
+ *                    the log's length and the sequence counter disagree
+ */
+export type LogDiscrepancyKind = "UNLOGGED_WRITE" | "BAD_EVENT" | "LOG_REWRITTEN";
+
+export interface LogDiscrepancy {
+  kind: LogDiscrepancyKind;
+  /** The node concerned, or null for the principal or the log as a whole. */
+  node: string | null;
+  /** The event concerned, or null for a difference in the tree as it stands. */
+  seq: number | null;
+  message: string;
+}
+
+/** Thrown by `DelegationTree.replay` for a log that does not replay cleanly. */
+export class ReplayError extends Error {
+  constructor(readonly discrepancies: readonly LogDiscrepancy[]) {
+    super(`the event log does not replay: ${discrepancies.map((d) => d.message).join("; ")}`);
+    this.name = "ReplayError";
+  }
+}
+
+/** A frozen copy of a grant, so nothing a caller or node holds can rewrite the log. */
+function freezeGrant(g: EventGrant): EventGrant {
+  const copy: EventGrant = { parent: g.parent, identityStatus: g.identityStatus, expiry: g.expiry };
+  if (g.allowedMerchants !== undefined) copy.allowedMerchants = Object.freeze([...g.allowedMerchants]);
+  if (g.allowedPurposes !== undefined) copy.allowedPurposes = Object.freeze([...g.allowedPurposes]);
+  if (g.principal !== undefined) {
+    copy.principal = Object.freeze({ name: g.principal.name, verified: g.principal.verified });
+  }
+  return Object.freeze(copy);
+}
+
+/** Two allowlists are the same list (`undefined` = any, equal only to itself). */
+function sameList(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b;
+  return a.length === b.length && a.every((x, i) => x === b[i]);
+}
+
+const showList = (l: readonly string[] | undefined): string => (l === undefined ? "any" : `[${l.join(", ")}]`);
+
+/** `verifyAgainstLog`'s incremental replica (see `DelegationTree.replica_`). */
+interface Replica {
+  tree: DelegationTree;
+  issues: LogDiscrepancy[];
+  rewritten: LogDiscrepancy | null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Options                                                            */
 /* ------------------------------------------------------------------ */
@@ -131,13 +195,23 @@ export class DelegationTree {
   private readonly childrenIndex_ = new Map<string | null, AgentNode[]>();
   private readonly events_: AllowanceEvent[] = [];
   private seq_ = 0;
+  /**
+   * `verifyAgainstLog`'s replica: the tree rebuilt from the events replayed so
+   * far (its log holds those very event objects), what replaying them found,
+   * and whether the replayed part of the log was since rewritten.
+   */
+  private replica_: Replica | null = null;
 
   /** The human principal, or null before `fundRoot`. */
   get principal(): Principal | null {
     return this.principal_;
   }
 
-  /** Ordered event log (live reference — treat as read-only). */
+  /**
+   * Ordered event log (live reference — treat as read-only). Every event is
+   * frozen when it is recorded, and the tree's state is exactly what replaying
+   * this log gives (`verifyAgainstLog`).
+   */
   get events(): readonly AllowanceEvent[] {
     return this.events_;
   }
@@ -257,7 +331,8 @@ export class DelegationTree {
       throw new DuplicateNodeError(opts.rootName);
     }
 
-    this.principal_ = { name: opts.principal, verified: opts.principalVerified ?? true };
+    const principal: Principal = { name: opts.principal, verified: opts.principalVerified ?? true };
+    this.principal_ = principal;
 
     const node: AgentNode = {
       name: opts.rootName,
@@ -281,6 +356,7 @@ export class DelegationTree {
       result: "OK",
       amount: opts.mandate.budget,
       merchant: null,
+      grant: { ...DelegationTree.grantOf_(node), principal },
     });
 
     return node;
@@ -349,6 +425,7 @@ export class DelegationTree {
       result: "OK",
       amount: mandate.budget,
       merchant: null,
+      grant: DelegationTree.grantOf_(node),
     });
 
     return node;
@@ -433,6 +510,7 @@ export class DelegationTree {
       result: "OK",
       amount: newBudget,
       merchant: null,
+      before: oldBudget,
     });
     return node;
   }
@@ -501,6 +579,7 @@ export class DelegationTree {
         result: "OK",
         amount: spent,
         merchant: null,
+        before: old,
       });
       return spent;
     };
@@ -608,13 +687,284 @@ export class DelegationTree {
     return out;
   }
 
+  /* ---------------------------------------------------------------- */
+  /* Replay: the tree is what its own log says happened               */
+  /* ---------------------------------------------------------------- */
+
+  /** What a FUND / DELEGATE event records about the node it created. */
+  private static grantOf_(node: AgentNode): EventGrant {
+    const m = node.mandate;
+    return {
+      parent: node.parent,
+      identityStatus: node.identityStatus,
+      allowedMerchants: m.allowedMerchants,
+      allowedPurposes: m.allowedPurposes,
+      expiry: m.expiry,
+    };
+  }
+
+  /**
+   * Rebuild a tree from an event log alone: FUND and DELEGATE create nodes
+   * (from their `grant` and `amount`), RESIZE sets a budget, a SETTLED
+   * PAYMENT adds to its node's spend, REVOKE revokes; rejected, blocked and
+   * denied attempts change nothing. `close` needs no event of its own: it is
+   * logged as the RESIZEs and the REVOKE it is made of.
+   *
+   * The rebuilt tree holds the same event objects as its log, so it can be
+   * snapshotted, audited or carried on like the original.
+   *
+   * @throws ReplayError if the log does not replay cleanly (a BAD_EVENT, or
+   *   an UNLOGGED_WRITE between two of its events; see `LogDiscrepancy`).
+   */
+  static replay(events: readonly AllowanceEvent[]): DelegationTree {
+    const tree = new DelegationTree();
+    const issues: LogDiscrepancy[] = [];
+    for (const event of events) tree.applyLogged_(event, issues);
+    if (issues.length > 0) throw new ReplayError(issues);
+    return tree;
+  }
+
+  /**
+   * Check that the tree is exactly what replaying its own event log gives,
+   * and return every discrepancy (empty when it is). This is what makes the
+   * tree auditable from its history: `audit()` checks that the state is
+   * sound, this checks that every change to it was logged. It catches a
+   * write that bypassed the API (`requireNode(x).mandate.budget *= 2n`, an
+   * allowlist pushed to, a node re-parented or un-revoked) even when the
+   * write keeps every invariant `audit()` checks, and even when a later
+   * resize or close overwrote it (each RESIZE records the budget it started
+   * from, and a close's REVOKE is only ever logged for a live node).
+   *
+   * Compared, node by node and in insertion order: budget, spentDirect,
+   * revoked, allowlists, expiry, identity, parent and name, plus each node's
+   * children and the principal.
+   *
+   * Incremental: the replica rebuilt on the previous call is kept and only
+   * the events recorded since are applied, after checking by identity that
+   * the events it already applied are still the log's (events are frozen, so
+   * none can have been edited in place). The result is what replaying the
+   * whole log gives (`fromScratch: true` does exactly that), plus a sticky
+   * LOG_REWRITTEN once the replayed part of the log has changed.
+   *
+   * What it does not do: authenticate the log. `recordEvent` is public, so a
+   * caller that also forges a matching event makes its write part of the
+   * history (still held to `audit()`), and a node revoked by a direct write
+   * and then again by `revoke()` looks, after the fact, like the logged
+   * revoke alone (every check in between catches it).
+   */
+  verifyAgainstLog(opts: { fromScratch?: boolean } = {}): LogDiscrepancy[] {
+    const fresh = (): Replica => ({ tree: new DelegationTree(), issues: [], rewritten: null });
+    const replica = opts.fromScratch ? fresh() : (this.replica_ ??= fresh());
+    if (replica.rewritten === null) {
+      const applied = replica.tree.events_;
+      let changed = this.events_.length < applied.length ? this.events_.length : -1;
+      for (let i = 0; changed < 0 && i < applied.length; i++) if (this.events_[i] !== applied[i]) changed = i;
+      if (changed >= 0) {
+        replica.rewritten = {
+          kind: "LOG_REWRITTEN",
+          node: null,
+          seq: changed,
+          message: `event ${changed} of the log, already replayed, was replaced or removed`,
+        };
+      } else {
+        for (let i = applied.length; i < this.events_.length; i++) {
+          replica.tree.applyLogged_(this.events_[i]!, replica.issues);
+        }
+      }
+    }
+    const out = [...replica.issues];
+    if (replica.rewritten) out.push(replica.rewritten);
+    if (this.seq_ !== this.events_.length) {
+      out.push({
+        kind: "LOG_REWRITTEN",
+        node: null,
+        seq: null,
+        message: `the log holds ${this.events_.length} events, but ${this.seq_} were recorded`,
+      });
+    }
+    return out.concat(this.diffFrom_(replica.tree));
+  }
+
+  /**
+   * Apply one logged event to this (replica) tree, exactly as the API call
+   * that recorded it changed the live tree, noting anything that does not
+   * replay in `issues`. The event is appended to this tree's own log.
+   */
+  private applyLogged_(e: AllowanceEvent, issues: LogDiscrepancy[]): void {
+    const index = this.events_.length;
+    this.events_.push(e);
+    this.seq_ = this.events_.length;
+    const at = `seq ${e.seq} (${e.type} / ${e.result} "${e.node}")`;
+    const bad = (why: string): void => {
+      issues.push({ kind: "BAD_EVENT", node: e.node, seq: e.seq, message: `${at}: ${why}` });
+    };
+    if (e.seq !== index) bad(`out of sequence: it is event ${index} of the log`);
+    const node = this.nodes_.get(e.node);
+
+    switch (e.type) {
+      case "FUND": {
+        if (e.result !== "OK") return bad("the tree records FUND only as OK");
+        if (this.principal_ !== null) return bad("the root was already funded");
+        const g = e.grant;
+        if (!g || g.parent !== null || !g.principal || e.amount === null) {
+          return bad("no grant (root, principal, budget) to replay");
+        }
+        if (node) return bad("the node already exists");
+        this.principal_ = { name: g.principal.name, verified: g.principal.verified };
+        this.indexNode_(DelegationTree.nodeFromGrant_(e.node, e.amount, g));
+        return;
+      }
+      case "DELEGATE": {
+        if (e.result === "ATTENUATION_REJECTED") return;
+        if (e.result !== "OK") return bad("the tree records DELEGATE only as OK or ATTENUATION_REJECTED");
+        const g = e.grant;
+        if (!g || g.parent === null || e.amount === null) return bad("no grant (parent, budget) to replay");
+        if (node) return bad("the node already exists");
+        if (!this.nodes_.has(g.parent)) return bad(`its parent "${g.parent}" does not exist`);
+        if (!e.node.endsWith(`.${g.parent}`) || e.node.length <= g.parent.length + 1) {
+          return bad(`"${e.node}" is not a child name of "${g.parent}"`);
+        }
+        this.indexNode_(DelegationTree.nodeFromGrant_(e.node, e.amount, g));
+        return;
+      }
+      case "RESIZE": {
+        if (e.result === "ATTENUATION_REJECTED") return;
+        if (e.result !== "OK") return bad("the tree records RESIZE only as OK or ATTENUATION_REJECTED");
+        if (!node) return bad("no such node");
+        if (e.amount === null || e.before === undefined) return bad("no budget before and after to replay");
+        if (node.mandate.budget !== e.before) {
+          issues.push({
+            kind: "UNLOGGED_WRITE",
+            node: e.node,
+            seq: e.seq,
+            message: `${at}: resized from a budget of ${e.before}, but the log had left it at ${node.mandate.budget}`,
+          });
+        }
+        node.mandate.budget = e.amount;
+        return;
+      }
+      case "REVOKE": {
+        if (e.result !== "REVOKED") return bad("the tree records REVOKE only as REVOKED");
+        if (!node) return bad("no such node");
+        // Only close() logs a REVOKE with an amount (what it freed), and only
+        // for a node that was live.
+        if (e.amount !== null && node.mandate.revoked) {
+          issues.push({
+            kind: "UNLOGGED_WRITE",
+            node: e.node,
+            seq: e.seq,
+            message: `${at}: closed as a live mandate, but the log had already revoked it`,
+          });
+        }
+        node.mandate.revoked = true;
+        return;
+      }
+      case "PAYMENT": {
+        if (e.result !== "SETTLED") return; // every attempt is logged; only a settlement spends
+        if (!node) return bad("no such node");
+        if (e.amount === null) return bad("no amount to replay");
+        node.mandate.spentDirect += e.amount;
+        return;
+      }
+      default:
+        return bad("unknown event type");
+    }
+  }
+
+  private static nodeFromGrant_(name: string, budget: bigint, g: EventGrant): AgentNode {
+    return {
+      name,
+      parent: g.parent,
+      identityStatus: g.identityStatus,
+      mandate: {
+        budget,
+        spentDirect: 0n,
+        allowedMerchants: g.allowedMerchants === undefined ? undefined : [...g.allowedMerchants],
+        allowedPurposes: g.allowedPurposes === undefined ? undefined : [...g.allowedPurposes],
+        expiry: g.expiry,
+        revoked: false,
+      },
+    };
+  }
+
+  /** Every way this (live) tree's state differs from `replayed`'s. */
+  private diffFrom_(replayed: DelegationTree): LogDiscrepancy[] {
+    const out: LogDiscrepancy[] = [];
+    const unlogged = (node: string | null, message: string): void => {
+      out.push({ kind: "UNLOGGED_WRITE", node, seq: null, message });
+    };
+    const lp = this.principal_;
+    const rp = replayed.principal_;
+    if (lp?.name !== rp?.name || lp?.verified !== rp?.verified) {
+      const show = (p: Principal | null): string => (p ? `"${p.name}" (verified: ${p.verified})` : "none");
+      unlogged(null, `the principal is ${show(lp)}, but the log says ${show(rp)}`);
+    }
+
+    const liveNames = [...this.nodes_.keys()];
+    const logNames = [...replayed.nodes_.keys()];
+    for (const name of liveNames) {
+      if (!replayed.nodes_.has(name)) unlogged(name, `"${name}" exists, but the log never created it`);
+    }
+    for (const name of logNames) {
+      if (!this.nodes_.has(name)) unlogged(name, `the log created "${name}", but the tree does not hold it`);
+    }
+    if (liveNames.length === logNames.length && liveNames.some((n, i) => n !== logNames[i])) {
+      unlogged(null, "the tree holds its nodes in another order than the log created them");
+    }
+
+    for (const [name, live] of this.nodes_) {
+      const log = replayed.nodes_.get(name);
+      if (!log) continue;
+      const field = (what: string, is: unknown, says: unknown): void => {
+        unlogged(name, `${what} of "${name}" is ${String(is)}, but the log says ${String(says)}`);
+      };
+      const l = live.mandate;
+      const r = log.mandate;
+      if (live.name !== name) field("the name", `"${live.name}"`, `"${name}"`);
+      if (live.parent !== log.parent) field("the parent", live.parent, log.parent);
+      if (live.identityStatus !== log.identityStatus) {
+        field("the identity status", live.identityStatus, log.identityStatus);
+      }
+      if (l.budget !== r.budget) field("the budget", l.budget, r.budget);
+      if (l.spentDirect !== r.spentDirect) field("spentDirect", l.spentDirect, r.spentDirect);
+      if (l.revoked !== r.revoked) field("revoked", l.revoked, r.revoked);
+      if (l.expiry !== r.expiry) field("the expiry", l.expiry, r.expiry);
+      if (!sameList(l.allowedMerchants, r.allowedMerchants)) {
+        field("the merchants", showList(l.allowedMerchants), showList(r.allowedMerchants));
+      }
+      if (!sameList(l.allowedPurposes, r.allowedPurposes)) {
+        field("the purposes", showList(l.allowedPurposes), showList(r.allowedPurposes));
+      }
+    }
+
+    // The children index (what reserved() and available() sum) against the log's.
+    const parents = new Set([...this.childrenIndex_.keys(), ...replayed.childrenIndex_.keys()]);
+    for (const parent of parents) {
+      const bucket = this.childrenIndex_.get(parent) ?? [];
+      const is = bucket.map((n) => n.name);
+      const says = (replayed.childrenIndex_.get(parent) ?? []).map((n) => n.name);
+      const stray = bucket.some((n) => this.nodes_.get(n.name) !== n);
+      if (stray || !sameList(is, says)) {
+        const of = parent === null ? "the root level" : `"${parent}"`;
+        unlogged(
+          parent,
+          `the children of ${of} are ${showList(is)}${stray ? " (not all the tree's own nodes)" : ""}, but the log says ${showList(says)}`,
+        );
+      }
+    }
+    return out;
+  }
+
   /**
    * Append an event to the log, assigning the next sequence number. Used
    * internally and by the payment pipeline; orchestrators may also use it to
-   * record custom events into the same ordered stream.
+   * record custom events into the same ordered stream. The event is frozen
+   * (its `grant` copied and frozen too): the log can only be appended to.
    */
   recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent {
     const full: AllowanceEvent = { seq: this.seq_++, ...event };
+    if (event.grant !== undefined) full.grant = freezeGrant(event.grant);
+    Object.freeze(full);
     this.events_.push(full);
     return full;
   }

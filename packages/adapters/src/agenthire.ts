@@ -17,6 +17,7 @@
  *   - `AgentHireScreeningService`   core `ScreeningService`: reputation, stake, and operator incidents
  *   - `OperatorRegistry`            agentId -> operator (deployer wallet + World ID nullifier)
  *   - `IncidentLedger` (+ `JsonFileIncidentStore`), `OverspendWatch`, `pushIncidentReport`   the incident loop
+ *                                   (fund stop-outs reach the same ledger: see operator-record.ts)
  *   - `SerializedPayer`             core `pay()` run one-at-a-time per root mandate
  *   - `QuoteBook`, `planHire`, `delegateAll`, `aliasNodeLabel`   hire sizing: the amount is the
  *                                   quote, sub-agents split (cap - main) pro rata, all-or-nothing
@@ -97,6 +98,7 @@ import {
   pay,
 } from "@allowance/core";
 import { MockPrincipalVerifier } from "./worldidkit";
+import { operatorRecordLimits, operatorRecordRefusal } from "./operator-record";
 
 /* ------------------------------------------------------------------ */
 /* Constants                                                          */
@@ -1759,10 +1761,13 @@ export class OperatorRegistry {
 
 /**
  * An incident recorded by Allowance, keyed by agent AND operator. This is not
- * a slash: it records that an agent kept trying to spend past its mandate.
+ * a slash: it records that an agent kept trying to spend past its mandate
+ * (`mandate_overspend`), or that a fund book stopped one of the operator's
+ * agents out (`stop-out`: a loss, not misconduct; see operator-record.ts).
  */
 export interface AllowanceIncident {
   id: string;
+  /** AgentHire agent id; 0 when the incident is a fund agent's with no AgentHire id (see `agent`). */
   agentId: number;
   /** Operator counterparty key (World ID nullifier). */
   operator: string;
@@ -1771,6 +1776,12 @@ export interface AllowanceIncident {
   reason: string;
   node?: string;
   attempts?: number;
+  /** The fund book agent (full node name) a stop-out was recorded against. */
+  agent?: string;
+  /** The book tick of a stop-out. */
+  tick?: number;
+  /** Authority (whole USDC) a stop-out's close took back. */
+  freed?: number;
   at: number;
   /** Provenance, e.g. "scripted by the Allowance demo acting for agent 5". */
   note?: string;
@@ -1888,7 +1899,17 @@ export class IncidentLedger {
 
   async record(
     binding: OperatorBinding,
-    input: { kind: string; reason: string; node?: string; attempts?: number; at?: number; note?: string },
+    input: {
+      kind: string;
+      reason: string;
+      node?: string;
+      attempts?: number;
+      at?: number;
+      note?: string;
+      agent?: string;
+      tick?: number;
+      freed?: number;
+    },
   ): Promise<AllowanceIncident> {
     await this.sync();
     const incident: AllowanceIncident = {
@@ -1903,6 +1924,9 @@ export class IncidentLedger {
     if (input.node !== undefined) incident.node = input.node;
     if (input.attempts !== undefined) incident.attempts = input.attempts;
     if (input.note !== undefined) incident.note = input.note;
+    if (input.agent !== undefined) incident.agent = input.agent;
+    if (input.tick !== undefined) incident.tick = input.tick;
+    if (input.freed !== undefined) incident.freed = input.freed;
     this.incidents_.push(incident);
     await this.store?.save(this.incidents_);
     return incident;
@@ -2073,8 +2097,14 @@ export interface AgentHireScreeningConfig {
   minTier?: number;
   /** Most AgentHire-side incidents (reputation or stake) accepted. Default 2 (its 3rd incident bans). */
   maxIncidents?: number;
-  /** Most Allowance incidents against the agent's OPERATOR accepted. Default 0. */
+  /** Most Allowance incidents against the agent's OPERATOR accepted, stop-outs aside. Default 0. */
   maxOperatorIncidents?: number;
+  /**
+   * Most fund stop-outs (incidents of kind "stop-out", filed by a book through
+   * `StopOutIncidentSink`) against the agent's OPERATOR accepted, whichever of
+   * its names they were. Default 2: the third refuses.
+   */
+  maxOperatorStopOuts?: number;
   /** Runs first (e.g. sanctions screening) and alone for non-AgentHire merchants. */
   inner?: ScreeningService;
 }
@@ -2086,22 +2116,24 @@ export interface AgentHireScreeningConfig {
  *   - the agent is banned on AgentHire,
  *   - its reputation tier is below `minTier`,
  *   - its AgentHire incident count is above `maxIncidents`,
- *   - its OPERATOR has more than `maxOperatorIncidents` Allowance incidents,
- *     whichever of that operator's agents they were recorded against.
+ *   - its OPERATOR has more than `maxOperatorIncidents` Allowance incidents
+ *     that are not stop-outs, or more than `maxOperatorStopOuts` fund
+ *     stop-outs, whichever of that operator's agents they were recorded
+ *     against (`operatorRecordRefusal`, shared with `OperatorGrantScreen`).
  */
 export class AgentHireScreeningService implements ScreeningService {
   private readonly config: AgentHireScreeningConfig;
   private readonly agentIdOf: (merchant: string) => number | undefined;
   private readonly minTier: number;
   private readonly maxIncidents: number;
-  private readonly maxOperatorIncidents: number;
+  private readonly operatorLimits: ReturnType<typeof operatorRecordLimits>;
 
   constructor(config: AgentHireScreeningConfig) {
     this.config = config;
     this.agentIdOf = config.agentIdOf ?? parseAgentHireMerchant;
     this.minTier = config.minTier ?? 1;
     this.maxIncidents = config.maxIncidents ?? 2;
-    this.maxOperatorIncidents = config.maxOperatorIncidents ?? 0;
+    this.operatorLimits = operatorRecordLimits({ maxIncidents: config.maxOperatorIncidents, maxStopOuts: config.maxOperatorStopOuts });
   }
 
   async screen(req: ScreeningRequest): Promise<ScreeningResult> {
@@ -2156,13 +2188,11 @@ export class AgentHireScreeningService implements ScreeningService {
       return { approved: false, reason: `screening: incident record ${this.config.incidents.location} unreadable: ${errorMessage(err)}`, reference };
     }
     const operatorIncidents = this.config.incidents.forOperator(binding.worldIdNullifier);
-    if (operatorIncidents.length > this.maxOperatorIncidents) {
-      const agents = [...new Set(operatorIncidents.map((i) => i.agentId))].join(", ");
+    const refusal = operatorRecordRefusal(operatorIncidents, this.operatorLimits);
+    if (refusal) {
       return {
         approved: false,
-        reason:
-          `screening: operator ${binding.deployerWallet} (World ID nullifier ${binding.worldIdNullifier.slice(0, 10)}…) ` +
-          `has ${operatorIncidents.length} Allowance incident(s) (agent ${agents}) > ${this.maxOperatorIncidents} allowed`,
+        reason: `screening: operator ${binding.deployerWallet} (World ID nullifier ${binding.worldIdNullifier.slice(0, 10)}…) ${refusal}`,
         reference,
       };
     }

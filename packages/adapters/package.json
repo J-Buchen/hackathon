@@ -10,10 +10,11 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc -b",
-    "test": "node --import tsx --test src/adapters.test.ts src/agenthire.test.ts src/agenthire-audit.test.ts"
+    "test": "node --import tsx --test src/adapters.test.ts src/agenthire.test.ts src/agenthire-audit.test.ts src/operator-record.test.ts"
   },
   "dependencies": {
     "@allowance/core": "*",
+    "@allowance/swarm": "*",
     "ethers": "^6.17.0"
   }
 }

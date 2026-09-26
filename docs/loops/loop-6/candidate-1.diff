@@ -1,0 +1,1299 @@
+diff --git a/package.json b/package.json
+index 056f571..e0308ef 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/operator-sizing.test.ts packages/lab/src/arena-operator-sizing.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/core/src/replay.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/operator-sizing.test.ts packages/lab/src/arena-operator-sizing.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/core/package.json b/packages/core/package.json
+index b88a6d9..3d84bbc 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -10,6 +10,6 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/attenuation.test.ts src/tree.test.ts src/payment.test.ts src/amount.test.ts src/serialize.test.ts"
++    "test": "node --import tsx --test src/attenuation.test.ts src/tree.test.ts src/payment.test.ts src/amount.test.ts src/serialize.test.ts src/replay.test.ts"
+   }
+ }
+diff --git a/packages/core/src/replay.test.ts b/packages/core/src/replay.test.ts
+new file mode 100644
+index 0000000..5aabed1
+--- /dev/null
++++ b/packages/core/src/replay.test.ts
+@@ -0,0 +1,644 @@
++/**
++ * The tree is auditable from its own history: replaying its event log
++ * rebuilds it exactly (`DelegationTree.replay`), and `verifyAgainstLog()`
++ * names every way the live tree departs from that replay.
++ *
++ * Each test pins one side of the guarantee:
++ *  - every API path (fundRoot, delegate, resize, close, revoke, pay in each
++ *    outcome) logs what replay needs, so the replay is exact;
++ *  - a write that bypasses the API is caught at the next check, including one
++ *    that keeps every invariant `audit()` checks, and one that a later API
++ *    call overwrote;
++ *  - the log itself can only be appended to;
++ *  - over random operation sequences, the replay is exact after every
++ *    operation, any direct write is caught at once, and the incremental check
++ *    always agrees with a replay of the whole log.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { AttenuationError } from "./attenuation";
++import { pay, type PaymentAdapters } from "./payment";
++import { toSnapshot } from "./serialize";
++import { DelegationTree, ReplayError, type LogDiscrepancy } from "./tree";
++import type { AgentNode, AllowanceEvent, PaymentOutcome } from "./types";
++
++const FAR = 4_000_000_000;
++const NOW = 1_000;
++
++const allowAll: PaymentAdapters = {
++  identity: { verify: async () => ({ ok: true }) },
++  screening: { screen: async () => ({ approved: true }) },
++  settlement: {
++    settle: async (req) => ({
++      settled: true,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: req.amount,
++      amountOut: req.amount,
++    }),
++  },
++};
++const denyIdentity: PaymentAdapters = { ...allowAll, identity: { verify: async () => ({ ok: false, reason: "no" }) } };
++const rejectScreening: PaymentAdapters = { ...allowAll, screening: { screen: async () => ({ approved: false }) } };
++const failSettlement: PaymentAdapters = {
++  ...allowAll,
++  settlement: {
++    settle: async (req) => ({
++      settled: false,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: 0n,
++      amountOut: 0n,
++      reason: "no liquidity",
++    }),
++  },
++};
++/** Settles after a delay, so two concurrent pay() calls can both pass the budget check. */
++const slow: PaymentAdapters = {
++  ...allowAll,
++  settlement: {
++    settle: async (req) => {
++      await new Promise((res) => setTimeout(res, 2));
++      return allowAll.settlement.settle(req);
++    },
++  },
++};
++
++/**
++ * The replay is exact: the incremental check and a replay of the whole log
++ * find nothing, and the tree `replay` rebuilds is the live tree (every node
++ * field, the principal, the children in order, and the same log).
++ */
++function assertReplays(tree: DelegationTree, label = ""): void {
++  assert.deepEqual(tree.verifyAgainstLog(), [], `${label}: incremental`);
++  assert.deepEqual(tree.verifyAgainstLog({ fromScratch: true }), [], `${label}: from scratch`);
++  const rebuilt = DelegationTree.replay(tree.events);
++  assert.deepEqual(rebuilt.listNodes(), tree.listNodes(), `${label}: nodes`);
++  assert.deepEqual(rebuilt.principal, tree.principal, `${label}: principal`);
++  for (const n of tree.listNodes()) {
++    assert.deepEqual(rebuilt.childrenOf(n.name).map((c) => c.name), tree.childrenOf(n.name).map((c) => c.name), `${label}: children of ${n.name}`);
++  }
++  assert.deepEqual(toSnapshot(rebuilt, { asOf: 0 }), toSnapshot(tree, { asOf: 0 }), `${label}: snapshot`);
++  assert.equal(rebuilt.nextSeq, tree.nextSeq);
++}
++
++const kinds = (d: readonly LogDiscrepancy[]) => d.map((x) => `${x.kind} ${x.node}`);
++
++/* ------------------------------------------------------------------ */
++/* Every API path replays exactly                                     */
++/* ------------------------------------------------------------------ */
++
++test("every API path logs what replay needs: fundRoot, delegate, resize, close, revoke and pay replay exactly", async () => {
++  const tree = new DelegationTree();
++  assertReplays(tree, "empty");
++  tree.fundRoot({
++    principal: "alice",
++    rootName: "alice.eth",
++    mandate: { budget: 1_000n, allowedMerchants: ["m", "n", "o"], allowedPurposes: ["data", "trade"], expiry: FAR },
++    principalVerified: false,
++  });
++  assertReplays(tree, "fundRoot");
++  const fundEvent = tree.events[0]!;
++  assert.deepEqual(fundEvent.grant, {
++    parent: null,
++    identityStatus: "verified",
++    allowedMerchants: ["m", "n", "o"],
++    allowedPurposes: ["data", "trade"],
++    expiry: FAR,
++    principal: { name: "alice", verified: false },
++  });
++
++  tree.delegate("alice.eth", "pod", { budget: 600n, allowedMerchants: ["m", "n"], allowedPurposes: ["data", "trade"], expiry: FAR - 1 });
++  tree.delegate("pod.alice.eth", "a", { budget: 300n, allowedMerchants: ["m"], allowedPurposes: ["trade"], expiry: FAR - 2 }, { identityStatus: "expired" });
++  tree.delegate("pod.alice.eth", "b", { budget: 200n, allowedMerchants: ["m", "n"], allowedPurposes: ["data"], expiry: FAR - 2 });
++  tree.delegate("a.pod.alice.eth", "exec", { budget: 100n, allowedMerchants: ["m"], allowedPurposes: ["trade"], expiry: FAR - 3 });
++  tree.delegate("b.pod.alice.eth", "desk.v2", { budget: 50n, allowedMerchants: ["n"], allowedPurposes: ["data"], expiry: FAR - 3 }); // a dotted label
++  assertReplays(tree, "delegate");
++
++  // Every rejected delegation is logged and changes nothing.
++  const rejected: [string, string, bigint, string[] | undefined, number][] = [
++    ["pod.alice.eth", "greedy", 10_000n, ["m"], FAR - 2], // over available
++    ["pod.alice.eth", "wide", 1n, ["m", "z"], FAR - 2], // merchants broaden
++    ["pod.alice.eth", "anymerchant", 1n, undefined, FAR - 2], // "any" under a restricted parent
++    ["pod.alice.eth", "late", 1n, ["m"], FAR + 5], // expiry broadens
++    ["alice.eth", "neg", -1n, ["m"], FAR], // negative
++  ];
++  for (const [parent, label, budget, merchants, expiry] of rejected) {
++    assert.throws(() => tree.delegate(parent, label, { budget, allowedMerchants: merchants, expiry }), AttenuationError);
++  }
++  assertReplays(tree, "rejected delegate");
++
++  // Resizes: grow and shrink, and every refusal.
++  tree.resize("b.pod.alice.eth", 250n);
++  tree.resize("pod.alice.eth", 900n);
++  tree.resize("a.pod.alice.eth", 150n);
++  tree.resize("alice.eth", 950n);
++  assert.throws(() => tree.resize("a.pod.alice.eth", 50n), AttenuationError); // below committed (exec holds 100)
++  assert.throws(() => tree.resize("alice.eth", 2_000n), AttenuationError); // the root cannot grow
++  assert.throws(() => tree.resize("b.pod.alice.eth", 10_000n), AttenuationError); // over the parent's available
++  assert.throws(() => tree.resize("b.pod.alice.eth", -5n), AttenuationError);
++  assertReplays(tree, "resize");
++  const lastResize = tree.events.filter((e) => e.type === "RESIZE" && e.result === "OK").at(-1)!;
++  assert.equal(lastResize.before, 1_000n);
++  assert.equal(lastResize.amount, 950n);
++
++  // Payments in every outcome: only a settlement changes the tree.
++  const outcomes: [PaymentAdapters, string, string, bigint, string | undefined, PaymentOutcome][] = [
++    [allowAll, "exec.a.pod.alice.eth", "m", 30n, "trade", "SETTLED"],
++    [allowAll, "a.pod.alice.eth", "m", 20n, undefined, "SETTLED"],
++    [allowAll, "b.pod.alice.eth", "m", 5n, "data", "SETTLED"],
++    [allowAll, "exec.a.pod.alice.eth", "m", 1_000n, undefined, "BLOCKED_MANDATE"], // over available
++    [allowAll, "exec.a.pod.alice.eth", "n", 1n, undefined, "BLOCKED_MANDATE"], // merchant
++    [allowAll, "exec.a.pod.alice.eth", "m", 1n, "data", "BLOCKED_MANDATE"], // purpose
++    [failSettlement, "b.pod.alice.eth", "m", 5n, undefined, "BLOCKED_MANDATE"],
++    [rejectScreening, "b.pod.alice.eth", "m", 5n, undefined, "BLOCKED_SCREENING"],
++    [denyIdentity, "b.pod.alice.eth", "m", 5n, undefined, "DENIED_IDENTITY"],
++  ];
++  for (const [adapters, node, merchant, amount, purpose, outcome] of outcomes) {
++    const r = await pay(tree, { node, merchant, amount, purpose }, adapters, { now: NOW });
++    assert.equal(r.outcome, outcome, `${node} ${merchant} ${amount}`);
++    assertReplays(tree, `pay ${outcome}`);
++  }
++  const expired = await pay(tree, { node: "b.pod.alice.eth", merchant: "m", amount: 1n }, allowAll, { now: FAR });
++  assert.equal(expired.outcome, "BLOCKED_MANDATE");
++
++  // Two concurrent payments that both pass the budget check (the overspend
++  // path SerializedPayer prevents): the log still explains the tree.
++  const leaf = tree.delegate("b.pod.alice.eth", "leaf", { budget: 10n, allowedMerchants: ["n"], allowedPurposes: ["data"], expiry: FAR - 3 });
++  const both = await Promise.all([
++    pay(tree, { node: leaf.name, merchant: "n", amount: 10n }, slow, { now: NOW }),
++    pay(tree, { node: leaf.name, merchant: "n", amount: 10n }, slow, { now: NOW }),
++  ]);
++  assert.deepEqual(both.map((r) => r.outcome), ["SETTLED", "SETTLED"]);
++  assert.equal(leaf.mandate.spentDirect, 20n);
++  assertReplays(tree, "overspend");
++
++  // revoke (twice: it is idempotent), then close a subtree holding it, and the
++  // overspent leaf's parent: every RESIZE carries the budget it started from.
++  tree.revoke("desk.v2.b.pod.alice.eth");
++  tree.revoke("desk.v2.b.pod.alice.eth");
++  assertReplays(tree, "revoke");
++  assert.throws(() => tree.resize("desk.v2.b.pod.alice.eth", 0n), AttenuationError); // revoked: refused, logged
++  const from = tree.nextSeq;
++  const freed = tree.close("b.pod.alice.eth");
++  assert.ok(freed > 0n);
++  const closeEvents = tree.events.slice(from);
++  assert.ok(closeEvents.filter((e) => e.type === "RESIZE").every((e) => e.before !== undefined && e.before > e.amount!));
++  assert.equal(closeEvents.at(-1)!.type, "REVOKE");
++  assert.equal(closeEvents.at(-1)!.amount, freed);
++  assertReplays(tree, "close");
++  assert.equal(tree.close("b.pod.alice.eth"), 0n); // idempotent: logs nothing
++  tree.close("a.pod.alice.eth");
++  tree.close("alice.eth"); // the root, back to the principal
++  assertReplays(tree, "close root");
++
++  // Nothing new under a dead subtree: refused and logged.
++  assert.throws(() => tree.delegate("exec.a.pod.alice.eth", "late", { budget: 0n, allowedMerchants: ["m"], expiry: FAR - 3 }), AttenuationError);
++  assert.equal((await pay(tree, { node: "exec.a.pod.alice.eth", merchant: "m", amount: 1n }, allowAll, { now: NOW })).outcome, "REVOKED");
++  assertReplays(tree, "dead");
++  assert.ok(tree.events.length > 40);
++});
++
++test("the log is independent of the arrays a caller or node holds: a grant is copied and frozen when it is recorded", () => {
++  const merchants = ["m", "n"];
++  const tree = new DelegationTree();
++  tree.fundRoot({ principal: "p", rootName: "r.eth", mandate: { budget: 100n, expiry: FAR } });
++  const kid = tree.delegate("r.eth", "kid", { budget: 10n, allowedMerchants: merchants, expiry: FAR });
++  const grant = tree.events.at(-1)!.grant!;
++  assert.notEqual(grant.allowedMerchants, merchants);
++  assert.ok(Object.isFrozen(tree.events.at(-1)) && Object.isFrozen(grant) && Object.isFrozen(grant.allowedMerchants));
++  // The node shares the caller's array (as it always has): a push to it is a
++  // write to the node that the log did not record.
++  merchants.push("z");
++  assert.deepEqual(kid.mandate.allowedMerchants, ["m", "n", "z"]);
++  assert.deepEqual(grant.allowedMerchants, ["m", "n"]);
++  assert.deepEqual(kinds(tree.verifyAgainstLog()), ["UNLOGGED_WRITE kid.r.eth"]);
++  assert.match(tree.verifyAgainstLog()[0]!.message, /the merchants of "kid.r.eth" is \[m, n, z\], but the log says \[m, n\]/);
++});
++
++/* ------------------------------------------------------------------ */
++/* Writes that bypass the API                                         */
++/* ------------------------------------------------------------------ */
++
++/** fund 1000 → pod 600 → a 300 (exec 100, a spent 20), b 200 (spent 5). */
++async function built(): Promise<DelegationTree> {
++  const tree = new DelegationTree();
++  tree.fundRoot({ principal: "p", rootName: "fund.eth", mandate: { budget: 1_000n, allowedMerchants: ["X", "Y"], expiry: FAR } });
++  tree.delegate("fund.eth", "pod", { budget: 600n, allowedMerchants: ["X", "Y"], expiry: FAR });
++  tree.delegate("pod.fund.eth", "a", { budget: 300n, allowedMerchants: ["X", "Y"], expiry: FAR });
++  tree.delegate("pod.fund.eth", "b", { budget: 200n, allowedMerchants: ["X"], expiry: FAR });
++  tree.delegate("a.pod.fund.eth", "exec", { budget: 100n, allowedMerchants: ["X"], expiry: FAR });
++  assert.equal((await pay(tree, { node: "a.pod.fund.eth", merchant: "X", amount: 20n }, allowAll, { now: NOW })).outcome, "SETTLED");
++  assert.equal((await pay(tree, { node: "b.pod.fund.eth", merchant: "X", amount: 5n }, allowAll, { now: NOW })).outcome, "SETTLED");
++  assertReplays(tree, "built");
++  return tree;
++}
++const A = "a.pod.fund.eth";
++const B = "b.pod.fund.eth";
++const POD = "pod.fund.eth";
++const EXEC = `exec.${A}`;
++
++test("the review's case: a direct write to a budget (budget *= 2n) is caught at the next check", async () => {
++  const tree = await built();
++  tree.requireNode(EXEC).mandate.budget *= 2n;
++  const d = tree.verifyAgainstLog();
++  assert.deepEqual(kinds(d), [`UNLOGGED_WRITE ${EXEC}`]);
++  assert.equal(d[0]!.seq, null, "a difference in the tree as it stands");
++  assert.match(d[0]!.message, /the budget of "exec.a.pod.fund.eth" is 200, but the log says 100/);
++  assert.deepEqual(tree.audit(), [], "it still fits inside its parent: audit() cannot see it");
++  assert.equal(DelegationTree.replay(tree.events).requireNode(EXEC).mandate.budget, 100n, "the log alone says 100");
++});
++
++test("writes that keep every invariant audit() checks are caught: the tree is not the one its log built", async () => {
++  const cases: [string, (tree: DelegationTree) => void, string[]][] = [
++    [
++      "budget moved between two agents of one pod",
++      (tree) => {
++        tree.requireNode(A).mandate.budget -= 50n;
++        tree.requireNode(B).mandate.budget += 50n;
++      },
++      [`UNLOGGED_WRITE ${A}`, `UNLOGGED_WRITE ${B}`],
++    ],
++    ["a spend refunded", (tree) => void (tree.requireNode(A).mandate.spentDirect = 0n), [`UNLOGGED_WRITE ${A}`]],
++    ["a bare revoke with no log entry", (tree) => void (tree.requireNode(EXEC).mandate.revoked = true), [`UNLOGGED_WRITE ${EXEC}`]],
++    ["a merchant narrowed in place", (tree) => void tree.requireNode(A).mandate.allowedMerchants!.pop(), [`UNLOGGED_WRITE ${A}`]],
++    ["a purpose list added", (tree) => void (tree.requireNode(B).mandate.allowedPurposes = ["data"]), [`UNLOGGED_WRITE ${B}`]],
++    ["the root's own allowlist widened", (tree) => void tree.requireNode("fund.eth").mandate.allowedMerchants!.push("Z"), ["UNLOGGED_WRITE fund.eth"]],
++    ["an expiry shortened", (tree) => void (tree.requireNode(B).mandate.expiry = FAR - 100), [`UNLOGGED_WRITE ${B}`]],
++    ["an identity downgraded", (tree) => void (tree.requireNode(B).identityStatus = "none"), [`UNLOGGED_WRITE ${B}`]],
++    ["the principal's verification flipped", (tree) => void (tree.principal!.verified = false), ["UNLOGGED_WRITE null"]],
++    [
++      "the mandate object swapped for a copy with a new budget",
++      (tree) => {
++        const n = tree.requireNode(B);
++        n.mandate = { ...n.mandate, budget: 150n };
++      },
++      [`UNLOGGED_WRITE ${B}`],
++    ],
++  ];
++  for (const [label, write, expected] of cases) {
++    const tree = await built();
++    write(tree);
++    assert.deepEqual(tree.audit(), [], `${label}: audit() is clean`);
++    const found = tree.verifyAgainstLog();
++    assert.deepEqual(kinds(found), expected, label);
++    assert.deepEqual(tree.verifyAgainstLog({ fromScratch: true }), found, `${label}: a replay of the whole log agrees`);
++  }
++});
++
++test("structural writes are caught: a re-parented node, a renamed node, a node minted outside the log", async () => {
++  const relinked = await built();
++  relinked.requireNode(EXEC).parent = B;
++  assert.deepEqual(kinds(relinked.verifyAgainstLog()), [`UNLOGGED_WRITE ${EXEC}`]);
++  assert.match(relinked.verifyAgainstLog()[0]!.message, /the parent of "exec.a.pod.fund.eth" is b.pod.fund.eth, but the log says a.pod.fund.eth/);
++
++  const renamed = await built();
++  renamed.requireNode(B).name = "c.pod.fund.eth";
++  assert.deepEqual(kinds(renamed.verifyAgainstLog()), [`UNLOGGED_WRITE ${B}`, `UNLOGGED_WRITE ${POD}`]);
++
++  // Through the private insertion point, as `(tree as any)` would: the node
++  // exists, holds budget and counts against its parent, but was never granted.
++  const minted = await built();
++  const ghost: AgentNode = {
++    name: `ghost.${POD}`,
++    parent: POD,
++    identityStatus: "verified",
++    mandate: { budget: 1n, spentDirect: 0n, allowedMerchants: ["X"], expiry: FAR, revoked: false },
++  };
++  (minted as unknown as { indexNode_(n: AgentNode): void }).indexNode_(ghost);
++  assert.deepEqual(minted.audit(), []);
++  assert.deepEqual(kinds(minted.verifyAgainstLog()), [`UNLOGGED_WRITE ghost.${POD}`, `UNLOGGED_WRITE ${POD}`]);
++  assert.match(minted.verifyAgainstLog()[0]!.message, /exists, but the log never created it/);
++});
++
++test("a write overwritten through the API before the next check is still caught: each RESIZE names the budget it started from", async () => {
++  // Doubled, then resized back: the tree now equals the log's final state,
++  // but the RESIZE says it started from 200, and the log had left it at 100.
++  const back = await built();
++  back.requireNode(EXEC).mandate.budget *= 2n;
++  back.resize(EXEC, 100n);
++  const d = back.verifyAgainstLog();
++  assert.deepEqual(kinds(d), [`UNLOGGED_WRITE ${EXEC}`]);
++  assert.equal(d[0]!.seq, back.nextSeq - 1);
++  assert.match(d[0]!.message, /resized from a budget of 200, but the log had left it at 100/);
++  assert.equal(back.requireNode(EXEC).mandate.budget, 100n);
++  assert.throws(() => DelegationTree.replay(back.events), ReplayError);
++
++  // Inflated, then closed: close() would report freeing authority nobody granted.
++  const inflated = await built();
++  inflated.requireNode(B).mandate.budget = 500n;
++  assert.equal(inflated.close(B), 495n, "close frees the inflated budget");
++  assert.deepEqual(kinds(inflated.verifyAgainstLog()), [`UNLOGGED_WRITE ${B}`]);
++
++  // Un-revoked, then closed again: a close is only ever logged for a live node.
++  const revived = await built();
++  revived.close(EXEC);
++  revived.requireNode(EXEC).mandate.revoked = false;
++  revived.close(EXEC);
++  assert.deepEqual(kinds(revived.verifyAgainstLog()), [`UNLOGGED_WRITE ${EXEC}`]);
++  assert.match(revived.verifyAgainstLog()[0]!.message, /closed as a live mandate, but the log had already revoked it/);
++
++  // A refunded spend followed by a real payment: still off by the refund.
++  const refunded = await built();
++  refunded.requireNode(A).mandate.spentDirect = 0n;
++  await pay(refunded, { node: A, merchant: "X", amount: 7n }, allowAll, { now: NOW });
++  assert.match(refunded.verifyAgainstLog()[0]!.message, /spentDirect of "a.pod.fund.eth" is 7, but the log says 27/);
++
++  // The before-state issue is part of the log's history: it is reported by
++  // every later check, and by a replay of the whole log.
++  back.resize(EXEC, 90n);
++  assert.deepEqual(kinds(back.verifyAgainstLog()), [`UNLOGGED_WRITE ${EXEC}`]);
++  assert.deepEqual(back.verifyAgainstLog({ fromScratch: true }), back.verifyAgainstLog());
++});
++
++/* ------------------------------------------------------------------ */
++/* The log itself                                                     */
++/* ------------------------------------------------------------------ */
++
++test("the log can only be appended to: events are frozen, and a replaced, removed or smuggled-in event is caught", async () => {
++  const frozen = await built();
++  const e = frozen.events[2]!;
++  assert.throws(() => {
++    (e as { amount: bigint | null }).amount = 1n;
++  }, TypeError);
++  assert.throws(() => {
++    (e.grant!.allowedMerchants as string[]).push("Z");
++  }, TypeError);
++
++  // Replaced after it was replayed: caught, and it stays caught.
++  const replaced = await built();
++  const log = replaced.events as AllowanceEvent[];
++  log[3] = { ...log[3]!, amount: 250n };
++  assert.deepEqual(kinds(replaced.verifyAgainstLog()), ["LOG_REWRITTEN null"]);
++  replaced.resize(B, 150n);
++  assert.ok(kinds(replaced.verifyAgainstLog()).includes("LOG_REWRITTEN null"), "sticky");
++  // A replay of the rewritten log alone disagrees with the tree it did not build.
++  assert.deepEqual(kinds(replaced.verifyAgainstLog({ fromScratch: true })), [`UNLOGGED_WRITE ${B}`]);
++
++  // Removed.
++  const truncated = await built();
++  (truncated.events as AllowanceEvent[]).pop();
++  // The replica already replayed the removed event (so the tree still matches
++  // it); the log is now shorter than what was replayed, and than the counter.
++  assert.deepEqual(kinds(truncated.verifyAgainstLog()), ["LOG_REWRITTEN null", "LOG_REWRITTEN null"]);
++  // A replay of what is left does not explain b's spend.
++  assert.deepEqual(kinds(truncated.verifyAgainstLog({ fromScratch: true })), ["LOG_REWRITTEN null", `UNLOGGED_WRITE ${B}`]);
++
++  // Appended without recordEvent (the sequence counter never moved).
++  const smuggled = await built();
++  const next = smuggled.nextSeq;
++  (smuggled.events as AllowanceEvent[]).push({
++    seq: next,
++    type: "RESIZE",
++    node: B,
++    detail: "",
++    result: "OK",
++    amount: 150n,
++    merchant: null,
++    before: 200n,
++  });
++  assert.deepEqual(kinds(smuggled.verifyAgainstLog()), ["LOG_REWRITTEN null", `UNLOGGED_WRITE ${B}`]);
++});
++
++test("events the tree never records do not replay: BAD_EVENT, and DelegationTree.replay throws", async () => {
++  const bad: [string, Omit<AllowanceEvent, "seq">][] = [
++    ["a RESIZE without its before-budget", { type: "RESIZE", node: B, detail: "", result: "OK", amount: 150n, merchant: null }],
++    ["a DELEGATE without its grant", { type: "DELEGATE", node: `x.${B}`, detail: "", result: "OK", amount: 1n, merchant: null }],
++    [
++      "a DELEGATE under a missing parent",
++      {
++        type: "DELEGATE",
++        node: "x.nowhere.eth",
++        detail: "",
++        result: "OK",
++        amount: 1n,
++        merchant: null,
++        grant: { parent: "nowhere.eth", identityStatus: "verified", expiry: FAR },
++      },
++    ],
++    [
++      "a DELEGATE whose name is not its parent's child",
++      {
++        type: "DELEGATE",
++        node: "x.fund.eth",
++        detail: "",
++        result: "OK",
++        amount: 1n,
++        merchant: null,
++        grant: { parent: POD, identityStatus: "verified", expiry: FAR },
++      },
++    ],
++    [
++      "a second FUND",
++      {
++        type: "FUND",
++        node: "other.eth",
++        detail: "",
++        result: "OK",
++        amount: 1n,
++        merchant: null,
++        grant: { parent: null, identityStatus: "verified", expiry: FAR, principal: { name: "q", verified: true } },
++      },
++    ],
++    ["a SETTLED payment by an unknown node", { type: "PAYMENT", node: "nobody.eth", detail: "", result: "SETTLED", amount: 1n, merchant: "X" }],
++    ["a REVOKE logged as OK", { type: "REVOKE", node: B, detail: "", result: "OK", amount: null, merchant: null }],
++  ];
++  for (const [label, event] of bad) {
++    const tree = await built();
++    tree.recordEvent(event);
++    const d = tree.verifyAgainstLog();
++    assert.equal(d[0]?.kind, "BAD_EVENT", label);
++    assert.equal(d[0]!.seq, tree.nextSeq - 1, label);
++    assert.throws(
++      () => DelegationTree.replay(tree.events),
++      (err: unknown) => err instanceof ReplayError && err.discrepancies[0]!.kind === "BAD_EVENT",
++      label,
++    );
++  }
++
++  // Out of order.
++  const tree = await built();
++  const swapped = [...tree.events];
++  [swapped[3], swapped[4]] = [swapped[4]!, swapped[3]!];
++  assert.throws(() => DelegationTree.replay(swapped), (err: unknown) => err instanceof ReplayError && /out of sequence/.test(err.message));
++
++  // What the rest of the codebase records by hand replays as a no-op: a
++  // delegation rejected before anything was created (adapters' delegateAll).
++  const ok = await built();
++  ok.recordEvent({ type: "DELEGATE", node: `x.${B}`, detail: "rejected", result: "ATTENUATION_REJECTED", amount: 1n, merchant: null });
++  assertReplays(ok, "custom rejection");
++});
++
++test("the division of labour: the replay proves the log explains the tree, audit() that the tree is sound", async () => {
++  // A write logged by hand through recordEvent is part of the history (the
++  // log is not authenticated), so the replay agrees; a grow the API would
++  // have refused still breaks the reservation, and audit() names it.
++  const tree = await built();
++  tree.requireNode(B).mandate.budget = 900n;
++  tree.recordEvent({ type: "RESIZE", node: B, detail: "by hand", result: "OK", amount: 900n, merchant: null, before: 200n });
++  assert.deepEqual(tree.verifyAgainstLog(), []);
++  assert.deepEqual(tree.audit().map((v) => `${v.kind} ${v.node}`), [`OVER_COMMITTED ${POD}`]);
++});
++
++/* ------------------------------------------------------------------ */
++/* Property: random operation sequences                               */
++/* ------------------------------------------------------------------ */
++
++function rng(seed: number): () => number {
++  let a = seed >>> 0;
++  return () => {
++    a = (a + 0x6d2b79f5) >>> 0;
++    let t = a;
++    t = Math.imul(t ^ (t >>> 15), t | 1);
++    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
++    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
++  };
++}
++
++const MERCHANTS = ["X", "Y", "Z"];
++
++/** One random API call (any outcome: refusals, blocked payments, overspends). */
++async function randomOp(tree: DelegationTree, r: () => number, step: number): Promise<string> {
++  const nodes = tree.listNodes();
++  const pick = () => nodes[Math.floor(r() * nodes.length)]!;
++  const amount = (n: AgentNode) => BigInt(Math.floor(r() * Number(n.mandate.budget + 10n)));
++  const merchants = () => MERCHANTS.filter(() => r() < 0.6);
++  const op = Math.floor(r() * 8);
++  const n = pick();
++  const tolerate = (f: () => unknown) => {
++    try {
++      f();
++    } catch (e) {
++      if (!(e instanceof AttenuationError)) throw e;
++    }
++  };
++  switch (op) {
++    case 0:
++    case 1:
++      tolerate(() =>
++        tree.delegate(n.name, `n${step}`, {
++          budget: BigInt(Math.floor(r() * Number(tree.available(n.name) + 20n))),
++          allowedMerchants: r() < 0.2 ? undefined : merchants(),
++          allowedPurposes: r() < 0.5 ? undefined : ["p"],
++          expiry: n.mandate.expiry - Math.floor(r() * 3),
++        }, { identityStatus: r() < 0.9 ? "verified" : "expired" }),
++      );
++      return `delegate under ${n.name}`;
++    case 2:
++    case 3:
++      tolerate(() => tree.resize(n.name, amount(n)));
++      return `resize ${n.name}`;
++    case 4:
++      tree.close(n.name);
++      return `close ${n.name}`;
++    case 5:
++      if (r() < 0.3) tree.revoke(n.name);
++      return `revoke ${n.name}`;
++    case 6: {
++      const adapters = [allowAll, allowAll, allowAll, denyIdentity, rejectScreening, failSettlement][Math.floor(r() * 6)]!;
++      await pay(tree, { node: n.name, merchant: MERCHANTS[Math.floor(r() * 3)]!, amount: amount(n), purpose: r() < 0.3 ? "p" : undefined }, adapters, {
++        now: r() < 0.95 ? NOW : FAR + 10,
++      });
++      return `pay from ${n.name}`;
++    }
++    default: {
++      const a = tree.available(n.name);
++      await Promise.all([
++        pay(tree, { node: n.name, merchant: "X", amount: a }, slow, { now: NOW }),
++        pay(tree, { node: n.name, merchant: "X", amount: a }, slow, { now: NOW }),
++      ]);
++      return `concurrent pays from ${n.name}`;
++    }
++  }
++}
++
++/** A direct write to one field of one node that changes its value. */
++function randomWrite(tree: DelegationTree, r: () => number): string {
++  const nodes = tree.listNodes();
++  const n = nodes[Math.floor(r() * nodes.length)]!;
++  const m = n.mandate;
++  switch (Math.floor(r() * 7)) {
++    case 0:
++      m.budget += 1n + BigInt(Math.floor(r() * 50));
++      return `budget up ${n.name}`;
++    case 1:
++      m.budget -= 1n + BigInt(Math.floor(r() * 50));
++      return `budget down ${n.name}`;
++    case 2:
++      m.spentDirect = m.spentDirect === 0n ? 3n : 0n;
++      return `spent ${n.name}`;
++    case 3:
++      m.revoked = !m.revoked;
++      return `revoked ${n.name}`;
++    case 4:
++      m.allowedMerchants = m.allowedMerchants === undefined ? ["X"] : [...m.allowedMerchants, "W"];
++      return `merchants ${n.name}`;
++    case 5:
++      m.expiry -= 1;
++      return `expiry ${n.name}`;
++    default:
++      n.identityStatus = n.identityStatus === "verified" ? "none" : "verified";
++      return `identity ${n.name}`;
++  }
++}
++
++test("property: over random operation sequences the replay is exact after every operation", async () => {
++  let ops = 0;
++  const types = new Set<string>();
++  for (let seed = 1; seed <= 60; seed++) {
++    const r = rng(seed);
++    const tree = new DelegationTree();
++    tree.fundRoot({ principal: "p", rootName: "r.eth", mandate: { budget: 1_000n, allowedMerchants: MERCHANTS, allowedPurposes: r() < 0.5 ? undefined : ["p"], expiry: FAR } });
++    for (let step = 0; step < 40; step++) {
++      const what = await randomOp(tree, r, step);
++      ops++;
++      // The incremental check every step; a full rebuild compared field by
++      // field (snapshot, nodes, children) every few.
++      assert.deepEqual(tree.verifyAgainstLog(), [], `seed ${seed} step ${step}: ${what}`);
++      if (step % 5 === 4) assertReplays(tree, `seed ${seed} step ${step}: ${what}`);
++    }
++    assertReplays(tree, `seed ${seed} end`);
++    for (const e of tree.events) types.add(`${e.type}/${e.result}`);
++  }
++  assert.equal(ops, 60 * 40);
++  // The sequences reached every kind of event the tree records.
++  for (const t of [
++    "FUND/OK",
++    "DELEGATE/OK",
++    "DELEGATE/ATTENUATION_REJECTED",
++    "RESIZE/OK",
++    "RESIZE/ATTENUATION_REJECTED",
++    "REVOKE/REVOKED",
++    "PAYMENT/SETTLED",
++    "PAYMENT/REVOKED",
++    "PAYMENT/BLOCKED_MANDATE",
++    "PAYMENT/BLOCKED_SCREENING",
++    "PAYMENT/DENIED_IDENTITY",
++  ]) {
++    assert.ok(types.has(t), `never produced ${t}`);
++  }
++});
++
++test("property: any direct write is caught at the next check, and the incremental check always agrees with a whole-log replay", async () => {
++  let caught = 0;
++  for (let seed = 101; seed <= 180; seed++) {
++    const r = rng(seed);
++    const tree = new DelegationTree();
++    tree.fundRoot({ principal: "p", rootName: "r.eth", mandate: { budget: 1_000n, allowedMerchants: MERCHANTS, expiry: FAR } });
++    const tamperAt = 5 + Math.floor(r() * 20);
++    for (let step = 0; step < 35; step++) {
++      await randomOp(tree, r, step);
++      if (step === tamperAt) {
++        const what = randomWrite(tree, r);
++        const found = tree.verifyAgainstLog();
++        assert.ok(found.some((d) => d.kind === "UNLOGGED_WRITE"), `seed ${seed}: ${what} was not caught`);
++        caught++;
++      }
++      // Before and after the write, with API calls on top of it.
++      assert.deepEqual(tree.verifyAgainstLog(), tree.verifyAgainstLog({ fromScratch: true }), `seed ${seed} step ${step}`);
++    }
++  }
++  assert.equal(caught, 80);
++});
+diff --git a/packages/core/src/tree.ts b/packages/core/src/tree.ts
+index d75c558..6281791 100644
+--- a/packages/core/src/tree.ts
++++ b/packages/core/src/tree.ts
+@@ -18,6 +18,7 @@ import {
+ import type {
+   AgentNode,
+   AllowanceEvent,
++  EventGrant,
+   IdentityStatus,
+   MandateInput,
+   Principal,
+@@ -90,6 +91,69 @@ export interface TreeViolation {
+   message: string;
+ }
+ 
++/**
++ * A way the live tree departs from its own event log (see
++ * `DelegationTree.verifyAgainstLog`):
++ *  - UNLOGGED_WRITE  state the log does not explain: a live field (budget,
++ *                    spend, revocation, scope, expiry, identity, parent,
++ *                    children, the principal) that differs from the tree the
++ *                    log replays to, a node held by one and not the other, or
++ *                    an event whose recorded before-state is not the state the
++ *                    log had left the node in (a write that bypassed the API,
++ *                    then overwritten through it)
++ *  - BAD_EVENT       an event replay cannot apply: out of sequence, a grant
++ *                    without its `grant` or amount, a resize without `before`,
++ *                    a node that does not exist (or, for a grant, already
++ *                    does), or a type/result pair the tree never records
++ *  - LOG_REWRITTEN   the log changed other than by `recordEvent` appending to
++ *                    it: an event already replayed was replaced or removed, or
++ *                    the log's length and the sequence counter disagree
++ */
++export type LogDiscrepancyKind = "UNLOGGED_WRITE" | "BAD_EVENT" | "LOG_REWRITTEN";
++
++export interface LogDiscrepancy {
++  kind: LogDiscrepancyKind;
++  /** The node concerned, or null for the principal or the log as a whole. */
++  node: string | null;
++  /** The event concerned, or null for a difference in the tree as it stands. */
++  seq: number | null;
++  message: string;
++}
++
++/** Thrown by `DelegationTree.replay` for a log that does not replay cleanly. */
++export class ReplayError extends Error {
++  constructor(readonly discrepancies: readonly LogDiscrepancy[]) {
++    super(`the event log does not replay: ${discrepancies.map((d) => d.message).join("; ")}`);
++    this.name = "ReplayError";
++  }
++}
++
++/** A frozen copy of a grant, so nothing a caller or node holds can rewrite the log. */
++function freezeGrant(g: EventGrant): EventGrant {
++  const copy: EventGrant = { parent: g.parent, identityStatus: g.identityStatus, expiry: g.expiry };
++  if (g.allowedMerchants !== undefined) copy.allowedMerchants = Object.freeze([...g.allowedMerchants]);
++  if (g.allowedPurposes !== undefined) copy.allowedPurposes = Object.freeze([...g.allowedPurposes]);
++  if (g.principal !== undefined) {
++    copy.principal = Object.freeze({ name: g.principal.name, verified: g.principal.verified });
++  }
++  return Object.freeze(copy);
++}
++
++/** Two allowlists are the same list (`undefined` = any, equal only to itself). */
++function sameList(a: readonly string[] | undefined, b: readonly string[] | undefined): boolean {
++  if (a === undefined || b === undefined) return a === b;
++  return a.length === b.length && a.every((x, i) => x === b[i]);
++}
++
++const showList = (l: readonly string[] | undefined): string => (l === undefined ? "any" : `[${l.join(", ")}]`);
++
++/** `verifyAgainstLog`'s incremental replica (see `DelegationTree.replica_`). */
++interface Replica {
++  tree: DelegationTree;
++  issues: LogDiscrepancy[];
++  rewritten: LogDiscrepancy | null;
++}
++
+ /* ------------------------------------------------------------------ */
+ /* Options                                                            */
+ /* ------------------------------------------------------------------ */
+@@ -131,13 +195,23 @@ export class DelegationTree {
+   private readonly childrenIndex_ = new Map<string | null, AgentNode[]>();
+   private readonly events_: AllowanceEvent[] = [];
+   private seq_ = 0;
++  /**
++   * `verifyAgainstLog`'s replica: the tree rebuilt from the events replayed so
++   * far (its log holds those very event objects), what replaying them found,
++   * and whether the replayed part of the log was since rewritten.
++   */
++  private replica_: Replica | null = null;
+ 
+   /** The human principal, or null before `fundRoot`. */
+   get principal(): Principal | null {
+     return this.principal_;
+   }
+ 
+-  /** Ordered event log (live reference — treat as read-only). */
++  /**
++   * Ordered event log (live reference — treat as read-only). Every event is
++   * frozen when it is recorded, and the tree's state is exactly what replaying
++   * this log gives (`verifyAgainstLog`).
++   */
+   get events(): readonly AllowanceEvent[] {
+     return this.events_;
+   }
+@@ -257,7 +331,8 @@ export class DelegationTree {
+       throw new DuplicateNodeError(opts.rootName);
+     }
+ 
+-    this.principal_ = { name: opts.principal, verified: opts.principalVerified ?? true };
++    const principal: Principal = { name: opts.principal, verified: opts.principalVerified ?? true };
++    this.principal_ = principal;
+ 
+     const node: AgentNode = {
+       name: opts.rootName,
+@@ -281,6 +356,7 @@ export class DelegationTree {
+       result: "OK",
+       amount: opts.mandate.budget,
+       merchant: null,
++      grant: { ...DelegationTree.grantOf_(node), principal },
+     });
+ 
+     return node;
+@@ -349,6 +425,7 @@ export class DelegationTree {
+       result: "OK",
+       amount: mandate.budget,
+       merchant: null,
++      grant: DelegationTree.grantOf_(node),
+     });
+ 
+     return node;
+@@ -433,6 +510,7 @@ export class DelegationTree {
+       result: "OK",
+       amount: newBudget,
+       merchant: null,
++      before: oldBudget,
+     });
+     return node;
+   }
+@@ -501,6 +579,7 @@ export class DelegationTree {
+         result: "OK",
+         amount: spent,
+         merchant: null,
++        before: old,
+       });
+       return spent;
+     };
+@@ -608,13 +687,284 @@ export class DelegationTree {
+     return out;
+   }
+ 
++  /* ---------------------------------------------------------------- */
++  /* Replay: the tree is what its own log says happened               */
++  /* ---------------------------------------------------------------- */
++
++  /** What a FUND / DELEGATE event records about the node it created. */
++  private static grantOf_(node: AgentNode): EventGrant {
++    const m = node.mandate;
++    return {
++      parent: node.parent,
++      identityStatus: node.identityStatus,
++      allowedMerchants: m.allowedMerchants,
++      allowedPurposes: m.allowedPurposes,
++      expiry: m.expiry,
++    };
++  }
++
++  /**
++   * Rebuild a tree from an event log alone: FUND and DELEGATE create nodes
++   * (from their `grant` and `amount`), RESIZE sets a budget, a SETTLED
++   * PAYMENT adds to its node's spend, REVOKE revokes; rejected, blocked and
++   * denied attempts change nothing. `close` needs no event of its own: it is
++   * logged as the RESIZEs and the REVOKE it is made of.
++   *
++   * The rebuilt tree holds the same event objects as its log, so it can be
++   * snapshotted, audited or carried on like the original.
++   *
++   * @throws ReplayError if the log does not replay cleanly (a BAD_EVENT, or
++   *   an UNLOGGED_WRITE between two of its events; see `LogDiscrepancy`).
++   */
++  static replay(events: readonly AllowanceEvent[]): DelegationTree {
++    const tree = new DelegationTree();
++    const issues: LogDiscrepancy[] = [];
++    for (const event of events) tree.applyLogged_(event, issues);
++    if (issues.length > 0) throw new ReplayError(issues);
++    return tree;
++  }
++
++  /**
++   * Check that the tree is exactly what replaying its own event log gives,
++   * and return every discrepancy (empty when it is). This is what makes the
++   * tree auditable from its history: `audit()` checks that the state is
++   * sound, this checks that every change to it was logged. It catches a
++   * write that bypassed the API (`requireNode(x).mandate.budget *= 2n`, an
++   * allowlist pushed to, a node re-parented or un-revoked) even when the
++   * write keeps every invariant `audit()` checks, and even when a later
++   * resize or close overwrote it (each RESIZE records the budget it started
++   * from, and a close's REVOKE is only ever logged for a live node).
++   *
++   * Compared, node by node and in insertion order: budget, spentDirect,
++   * revoked, allowlists, expiry, identity, parent and name, plus each node's
++   * children and the principal.
++   *
++   * Incremental: the replica rebuilt on the previous call is kept and only
++   * the events recorded since are applied, after checking by identity that
++   * the events it already applied are still the log's (events are frozen, so
++   * none can have been edited in place). The result is what replaying the
++   * whole log gives (`fromScratch: true` does exactly that), plus a sticky
++   * LOG_REWRITTEN once the replayed part of the log has changed.
++   *
++   * What it does not do: authenticate the log. `recordEvent` is public, so a
++   * caller that also forges a matching event makes its write part of the
++   * history (still held to `audit()`), and a node revoked by a direct write
++   * and then again by `revoke()` looks, after the fact, like the logged
++   * revoke alone (every check in between catches it).
++   */
++  verifyAgainstLog(opts: { fromScratch?: boolean } = {}): LogDiscrepancy[] {
++    const fresh = (): Replica => ({ tree: new DelegationTree(), issues: [], rewritten: null });
++    const replica = opts.fromScratch ? fresh() : (this.replica_ ??= fresh());
++    if (replica.rewritten === null) {
++      const applied = replica.tree.events_;
++      let changed = this.events_.length < applied.length ? this.events_.length : -1;
++      for (let i = 0; changed < 0 && i < applied.length; i++) if (this.events_[i] !== applied[i]) changed = i;
++      if (changed >= 0) {
++        replica.rewritten = {
++          kind: "LOG_REWRITTEN",
++          node: null,
++          seq: changed,
++          message: `event ${changed} of the log, already replayed, was replaced or removed`,
++        };
++      } else {
++        for (let i = applied.length; i < this.events_.length; i++) {
++          replica.tree.applyLogged_(this.events_[i]!, replica.issues);
++        }
++      }
++    }
++    const out = [...replica.issues];
++    if (replica.rewritten) out.push(replica.rewritten);
++    if (this.seq_ !== this.events_.length) {
++      out.push({
++        kind: "LOG_REWRITTEN",
++        node: null,
++        seq: null,
++        message: `the log holds ${this.events_.length} events, but ${this.seq_} were recorded`,
++      });
++    }
++    return out.concat(this.diffFrom_(replica.tree));
++  }
++
++  /**
++   * Apply one logged event to this (replica) tree, exactly as the API call
++   * that recorded it changed the live tree, noting anything that does not
++   * replay in `issues`. The event is appended to this tree's own log.
++   */
++  private applyLogged_(e: AllowanceEvent, issues: LogDiscrepancy[]): void {
++    const index = this.events_.length;
++    this.events_.push(e);
++    this.seq_ = this.events_.length;
++    const at = `seq ${e.seq} (${e.type} / ${e.result} "${e.node}")`;
++    const bad = (why: string): void => {
++      issues.push({ kind: "BAD_EVENT", node: e.node, seq: e.seq, message: `${at}: ${why}` });
++    };
++    if (e.seq !== index) bad(`out of sequence: it is event ${index} of the log`);
++    const node = this.nodes_.get(e.node);
++
++    switch (e.type) {
++      case "FUND": {
++        if (e.result !== "OK") return bad("the tree records FUND only as OK");
++        if (this.principal_ !== null) return bad("the root was already funded");
++        const g = e.grant;
++        if (!g || g.parent !== null || !g.principal || e.amount === null) {
++          return bad("no grant (root, principal, budget) to replay");
++        }
++        if (node) return bad("the node already exists");
++        this.principal_ = { name: g.principal.name, verified: g.principal.verified };
++        this.indexNode_(DelegationTree.nodeFromGrant_(e.node, e.amount, g));
++        return;
++      }
++      case "DELEGATE": {
++        if (e.result === "ATTENUATION_REJECTED") return;
++        if (e.result !== "OK") return bad("the tree records DELEGATE only as OK or ATTENUATION_REJECTED");
++        const g = e.grant;
++        if (!g || g.parent === null || e.amount === null) return bad("no grant (parent, budget) to replay");
++        if (node) return bad("the node already exists");
++        if (!this.nodes_.has(g.parent)) return bad(`its parent "${g.parent}" does not exist`);
++        if (!e.node.endsWith(`.${g.parent}`) || e.node.length <= g.parent.length + 1) {
++          return bad(`"${e.node}" is not a child name of "${g.parent}"`);
++        }
++        this.indexNode_(DelegationTree.nodeFromGrant_(e.node, e.amount, g));
++        return;
++      }
++      case "RESIZE": {
++        if (e.result === "ATTENUATION_REJECTED") return;
++        if (e.result !== "OK") return bad("the tree records RESIZE only as OK or ATTENUATION_REJECTED");
++        if (!node) return bad("no such node");
++        if (e.amount === null || e.before === undefined) return bad("no budget before and after to replay");
++        if (node.mandate.budget !== e.before) {
++          issues.push({
++            kind: "UNLOGGED_WRITE",
++            node: e.node,
++            seq: e.seq,
++            message: `${at}: resized from a budget of ${e.before}, but the log had left it at ${node.mandate.budget}`,
++          });
++        }
++        node.mandate.budget = e.amount;
++        return;
++      }
++      case "REVOKE": {
++        if (e.result !== "REVOKED") return bad("the tree records REVOKE only as REVOKED");
++        if (!node) return bad("no such node");
++        // Only close() logs a REVOKE with an amount (what it freed), and only
++        // for a node that was live.
++        if (e.amount !== null && node.mandate.revoked) {
++          issues.push({
++            kind: "UNLOGGED_WRITE",
++            node: e.node,
++            seq: e.seq,
++            message: `${at}: closed as a live mandate, but the log had already revoked it`,
++          });
++        }
++        node.mandate.revoked = true;
++        return;
++      }
++      case "PAYMENT": {
++        if (e.result !== "SETTLED") return; // every attempt is logged; only a settlement spends
++        if (!node) return bad("no such node");
++        if (e.amount === null) return bad("no amount to replay");
++        node.mandate.spentDirect += e.amount;
++        return;
++      }
++      default:
++        return bad("unknown event type");
++    }
++  }
++
++  private static nodeFromGrant_(name: string, budget: bigint, g: EventGrant): AgentNode {
++    return {
++      name,
++      parent: g.parent,
++      identityStatus: g.identityStatus,
++      mandate: {
++        budget,
++        spentDirect: 0n,
++        allowedMerchants: g.allowedMerchants === undefined ? undefined : [...g.allowedMerchants],
++        allowedPurposes: g.allowedPurposes === undefined ? undefined : [...g.allowedPurposes],
++        expiry: g.expiry,
++        revoked: false,
++      },
++    };
++  }
++
++  /** Every way this (live) tree's state differs from `replayed`'s. */
++  private diffFrom_(replayed: DelegationTree): LogDiscrepancy[] {
++    const out: LogDiscrepancy[] = [];
++    const unlogged = (node: string | null, message: string): void => {
++      out.push({ kind: "UNLOGGED_WRITE", node, seq: null, message });
++    };
++    const lp = this.principal_;
++    const rp = replayed.principal_;
++    if (lp?.name !== rp?.name || lp?.verified !== rp?.verified) {
++      const show = (p: Principal | null): string => (p ? `"${p.name}" (verified: ${p.verified})` : "none");
++      unlogged(null, `the principal is ${show(lp)}, but the log says ${show(rp)}`);
++    }
++
++    const liveNames = [...this.nodes_.keys()];
++    const logNames = [...replayed.nodes_.keys()];
++    for (const name of liveNames) {
++      if (!replayed.nodes_.has(name)) unlogged(name, `"${name}" exists, but the log never created it`);
++    }
++    for (const name of logNames) {
++      if (!this.nodes_.has(name)) unlogged(name, `the log created "${name}", but the tree does not hold it`);
++    }
++    if (liveNames.length === logNames.length && liveNames.some((n, i) => n !== logNames[i])) {
++      unlogged(null, "the tree holds its nodes in another order than the log created them");
++    }
++
++    for (const [name, live] of this.nodes_) {
++      const log = replayed.nodes_.get(name);
++      if (!log) continue;
++      const field = (what: string, is: unknown, says: unknown): void => {
++        unlogged(name, `${what} of "${name}" is ${String(is)}, but the log says ${String(says)}`);
++      };
++      const l = live.mandate;
++      const r = log.mandate;
++      if (live.name !== name) field("the name", `"${live.name}"`, `"${name}"`);
++      if (live.parent !== log.parent) field("the parent", live.parent, log.parent);
++      if (live.identityStatus !== log.identityStatus) {
++        field("the identity status", live.identityStatus, log.identityStatus);
++      }
++      if (l.budget !== r.budget) field("the budget", l.budget, r.budget);
++      if (l.spentDirect !== r.spentDirect) field("spentDirect", l.spentDirect, r.spentDirect);
++      if (l.revoked !== r.revoked) field("revoked", l.revoked, r.revoked);
++      if (l.expiry !== r.expiry) field("the expiry", l.expiry, r.expiry);
++      if (!sameList(l.allowedMerchants, r.allowedMerchants)) {
++        field("the merchants", showList(l.allowedMerchants), showList(r.allowedMerchants));
++      }
++      if (!sameList(l.allowedPurposes, r.allowedPurposes)) {
++        field("the purposes", showList(l.allowedPurposes), showList(r.allowedPurposes));
++      }
++    }
++
++    // The children index (what reserved() and available() sum) against the log's.
++    const parents = new Set([...this.childrenIndex_.keys(), ...replayed.childrenIndex_.keys()]);
++    for (const parent of parents) {
++      const bucket = this.childrenIndex_.get(parent) ?? [];
++      const is = bucket.map((n) => n.name);
++      const says = (replayed.childrenIndex_.get(parent) ?? []).map((n) => n.name);
++      const stray = bucket.some((n) => this.nodes_.get(n.name) !== n);
++      if (stray || !sameList(is, says)) {
++        const of = parent === null ? "the root level" : `"${parent}"`;
++        unlogged(
++          parent,
++          `the children of ${of} are ${showList(is)}${stray ? " (not all the tree's own nodes)" : ""}, but the log says ${showList(says)}`,
++        );
++      }
++    }
++    return out;
++  }
++
+   /**
+    * Append an event to the log, assigning the next sequence number. Used
+    * internally and by the payment pipeline; orchestrators may also use it to
+-   * record custom events into the same ordered stream.
++   * record custom events into the same ordered stream. The event is frozen
++   * (its `grant` copied and frozen too): the log can only be appended to.
+    */
+   recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent {
+     const full: AllowanceEvent = { seq: this.seq_++, ...event };
++    if (event.grant !== undefined) full.grant = freezeGrant(event.grant);
++    Object.freeze(full);
+     this.events_.push(full);
+     return full;
+   }
+diff --git a/packages/core/src/types.ts b/packages/core/src/types.ts
+index 207ca3d..1fd4ff7 100644
+--- a/packages/core/src/types.ts
++++ b/packages/core/src/types.ts
+@@ -124,6 +124,23 @@ export type EventResult =
+   | "REVOKED"
+   | "ATTENUATION_REJECTED";
+ 
++/**
++ * What a FUND / OK or DELEGATE / OK event records about the node it created,
++ * beyond its budget (the event's `amount`): everything replay needs to rebuild
++ * the node exactly. Allowlists are copies taken when the event is recorded, so
++ * a later write to the caller's array (or the node's) does not rewrite history.
++ */
++export interface EventGrant {
++  /** The node's parent (null for the root). */
++  parent: string | null;
++  identityStatus: IdentityStatus;
++  allowedMerchants?: readonly string[];
++  allowedPurposes?: readonly string[];
++  expiry: number;
++  /** FUND only: the principal who funded the root. */
++  principal?: Principal;
++}
++
+ /** An event as held in memory (amounts as bigint). */
+ export interface AllowanceEvent {
+   seq: number;
+@@ -133,6 +150,18 @@ export interface AllowanceEvent {
+   result: EventResult;
+   amount: bigint | null;
+   merchant: string | null;
++  /**
++   * FUND / OK and DELEGATE / OK: the node as created (see `EventGrant`). The
++   * tree's own API always sets it; replay refuses a grant event without it.
++   */
++  grant?: EventGrant;
++  /**
++   * RESIZE / OK: the budget the node held just before the resize (`amount` is
++   * the budget after). Replay checks that the log left the node at exactly
++   * this budget, so a write that bypassed the API is caught even when a later
++   * resize overwrites it. The tree's own API always sets it.
++   */
++  before?: bigint;
+ }
+ 
+ /* ------------------------------------------------------------------ */
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index 43f09f6..f99cef7 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -38,10 +38,14 @@
+  * about to mark is checked against the tree as it then stands
+  * (`tradeViolations`): no agent's gross notional exceeds its available
+  * authority × leverage, a closed agent trades nothing, and nothing off its
+- * allowlist is held. A violation throws `BookInvariantError`: no tick trades
+- * on a tree that failed the check, no order is marked that exceeds its
+- * reservation, and a break made during a tick is caught before the next one
+- * starts.
++ * allowlist is held. At all three points the tree is also replayed from its
++ * own event log (`logViolations`): its budgets, spend, revocations, scopes and
++ * children must be exactly what the logged operations built, so a write that
++ * bypassed the API is caught at the next check even when it breaks no
++ * invariant. A violation throws `BookInvariantError`: no tick trades on a
++ * tree that failed the check, no order is marked that exceeds its reservation
++ * or rests on an unlogged write, and a break made during a tick is caught
++ * before the next one starts.
+  *
+  * Money and authority are kept separate on purpose: PnL accrues to the fund's
+  * NAV ledger here, while the tree holds how much each agent is *allowed* to run.
+@@ -394,6 +398,24 @@ export function bookViolations(
+   return out;
+ }
+ 
++/**
++ * The tree against its own history: every way the live tree differs from what
++ * replaying its event log gives (`DelegationTree.verifyAgainstLog`), as a list
++ * of violations (empty when every change to the tree was logged). `runBook`
++ * checks it at all three points of every tick: at its start, at the trade
++ * (so an order is never sized on authority the log never granted, the one
++ * thing `tradeViolations`, which reads `tree.available()`, cannot tell) and at
++ * its end. `bookViolations` checks that the tree is sound; this checks that
++ * it is the tree the logged operations built. A write that bypasses the API
++ * breaks it even when it keeps every invariant (a budget moved between two
++ * agents of one pod), and even when a later resize or close overwrote it.
++ *
++ * Incremental: each call replays only the events logged since the last.
++ */
++export function logViolations(tree: DelegationTree): string[] {
++  return tree.verifyAgainstLog().map((d) => `${d.kind} ${d.node ?? "(tree)"}: ${d.message}`);
++}
++
+ /**
+  * Relative slack on the notional bound in `tradeViolations`: the gate leaves
+  * Σ|w| unclipped up to 1 + 1e-9, and the sums are floating point. On $20M of
+@@ -611,7 +633,7 @@ export async function runBook(
+   const size = (gated: readonly { weights: Weights }[], now: number): SizedOrder[] =>
+     agents.map((a, i) => sizeOrder(tree, a.name, gated[i]!.weights, { leverage: policy.leverage, now }));
+   const audit = (t: number, at: "start" | "end") => {
+-    const violations = bookViolations(tree, root, agents);
++    const violations = [...bookViolations(tree, root, agents), ...logViolations(tree)];
+     if (violations.length > 0) throw new BookInvariantError(t, at, violations);
+   };
+   const auditTrade = (t: number, orders: readonly SizedOrder[], now: number) => {
+@@ -620,7 +642,7 @@ export async function runBook(
+         `ORDERS_MISMATCH: ${orders.length} orders for ${agents.length} agents, or not one per agent in roster order`,
+       ]);
+     }
+-    const violations = tradeViolations(tree, orders, { leverage: policy.leverage, now });
++    const violations = [...tradeViolations(tree, orders, { leverage: policy.leverage, now }), ...logViolations(tree)];
+     if (violations.length > 0) throw new BookInvariantError(t, "trade", violations);
+   };
+ 
+diff --git a/packages/swarm/src/reserve.test.ts b/packages/swarm/src/reserve.test.ts
+index da96fd0..4c021c7 100644
+--- a/packages/swarm/src/reserve.test.ts
++++ b/packages/swarm/src/reserve.test.ts
+@@ -500,3 +500,71 @@ test("the trade audit reads the tree as it stands at the trade: a cut made after
+   );
+   assert.equal(at, 40);
+ });
++
++/* ------------------------------------------------------------------ */
++/* The tree against its own history (replay)                          */
++/* ------------------------------------------------------------------ */
++
++const HERD_A = `herd-a.macro.${FUND}`;
++
++test("a direct write that keeps every invariant (budget moved between two agents of one pod) stops the book at the next audit", async () => {
++  for (const [, policy] of policies) {
++    let wrote = -1;
++    await assert.rejects(
++      runBook(market, spec(), policy, {
++        onTick: async (t, tree) => {
++          await outside(t, tree);
++          if (t !== 40) return;
++          // Bypass the API: take a slice of herd-a's unspent budget and hand it to plain.
++          const slice = tree.available(HERD_A) / 4n;
++          assert.ok(slice > 0n);
++          tree.requireNode(HERD_A).mandate.budget -= slice;
++          tree.requireNode(PLAIN).mandate.budget += slice;
++          // Everything the core audit reads is still sound: the pod hands down
++          // what it did, nobody is over-committed, the root holds the AUM.
++          assert.deepEqual(tree.audit(), []);
++          wrote = t;
++        },
++      }),
++      (e: unknown) =>
++        e instanceof BookInvariantError &&
++        e.t === 40 &&
++        e.at === "start" &&
++        e.violations.length === 2 &&
++        e.violations.some((v) => v.startsWith(`UNLOGGED_WRITE ${PLAIN}: the budget`)) &&
++        e.violations.some((v) => v.startsWith(`UNLOGGED_WRITE ${HERD_A}: the budget`)),
++    );
++    assert.equal(wrote, 40);
++  }
++});
++
++test("the trade check replays the log too: a budget written directly and then put back through resize() stops the order", async () => {
++  const restored = await tampered(defaultCenterBookPolicy(), (t, tree) => {
++    if (t !== 40) return false;
++    const node = tree.requireNode(PLAIN);
++    const budget = node.mandate.budget;
++    node.mandate.budget = budget * 2n; // the review's write…
++    tree.resize(PLAIN, budget); // …undone through the API: the tree's state is what it was
++    return true;
++  });
++  assert.equal(restored.at, 40);
++  assert.ok(restored.error instanceof BookInvariantError, String(restored.error));
++  assert.equal(restored.error.t, 40);
++  assert.equal(restored.error.at, "trade");
++  assert.equal(restored.error.violations.length, 1);
++  assert.match(restored.error.violations[0]!, new RegExp(`^UNLOGGED_WRITE ${PLAIN.replaceAll(".", "\\.")}: seq \\d+ \\(RESIZE / OK`));
++  assert.match(restored.error.violations[0]!, /resized from a budget of \d+, but the log had left it at \d+/);
++});
++
++test("a whole book (payments, an outside sub-mandate, reallocations, stop-out closes) replays exactly from its event log", async () => {
++  for (const [, policy] of policies) {
++    const book = await runBook(market, spec(), policy, { onTick: outside });
++    assert.ok(book.decisions.some((d) => d.kind === "STOP_OUT"), "a close is in the log");
++    const types = new Set(book.tree.events.map((e) => `${e.type}/${e.result}`));
++    for (const k of ["FUND/OK", "DELEGATE/OK", "RESIZE/OK", "PAYMENT/SETTLED", "REVOKE/REVOKED"]) assert.ok(types.has(k), k);
++    assert.deepEqual(book.tree.verifyAgainstLog({ fromScratch: true }), []);
++    const rebuilt = DelegationTree.replay(book.tree.events);
++    assert.deepEqual(rebuilt.listNodes(), book.tree.listNodes());
++    assert.deepEqual(rebuilt.principal, book.tree.principal);
++  }
++});

@@ -24,6 +24,11 @@
  *                           size, so a name holds min(own size, ceiling): the cap never
  *                           compounds with a ladder cut or an earlier cap, never weakens
  *                           the name's own ladder, and never revokes)
+ *   - operator record     = IncidentSink           (optional: every stop-out is reported, once,
+ *                           as a "stop-out" incident against the agent's operator, with
+ *                           the agent, the tick and the authority the close freed; a
+ *                           loss, not misconduct: nothing is slashed. The book defines
+ *                           the port; @allowance/adapters' IncidentLedger implements it)
  *   - trading size        = available × leverage   (available = the budget − what the node
  *                           spent itself − what it handed down; sized by `sizeOrder` in the
  *                           gate, never from a number the book keeps)
@@ -38,10 +43,14 @@
  * about to mark is checked against the tree as it then stands
  * (`tradeViolations`): no agent's gross notional exceeds its available
  * authority × leverage, a closed agent trades nothing, and nothing off its
- * allowlist is held. A violation throws `BookInvariantError`: no tick trades
- * on a tree that failed the check, no order is marked that exceeds its
- * reservation, and a break made during a tick is caught before the next one
- * starts.
+ * allowlist is held. At all three points the tree is also replayed from its
+ * own event log (`logViolations`): its budgets, spend, revocations, scopes and
+ * children must be exactly what the logged operations built, so a write that
+ * bypassed the API is caught at the next check even when it breaks no
+ * invariant. A violation throws `BookInvariantError`: no tick trades on a
+ * tree that failed the check, no order is marked that exceeds its reservation
+ * or rests on an unlogged write, and a break made during a tick is caught
+ * before the next one starts.
  *
  * Money and authority are kept separate on purpose: PnL accrues to the fund's
  * NAV ledger here, while the tree holds how much each agent is *allowed* to run.
@@ -65,7 +74,7 @@ import {
   type SizingEvent,
 } from "./allocator";
 import { orderNotional, orderPnl, preTradeCheck, sizeOrder, type GateViolation, type SizedOrder } from "./gate";
-import { cosineSimilarity } from "./stats";
+import { cosineSimilarity, currentDrawdown } from "./stats";
 import { SIM_START, type Market } from "./market";
 import type { Observation, Strategy, Weights } from "./strategies";
 import type { TrendThesis } from "./tigercub";
@@ -395,6 +404,24 @@ export function bookViolations(
 }
 
 /**
+ * The tree against its own history: every way the live tree differs from what
+ * replaying its event log gives (`DelegationTree.verifyAgainstLog`), as a list
+ * of violations (empty when every change to the tree was logged). `runBook`
+ * checks it at all three points of every tick: at its start, at the trade
+ * (so an order is never sized on authority the log never granted, the one
+ * thing `tradeViolations`, which reads `tree.available()`, cannot tell) and at
+ * its end. `bookViolations` checks that the tree is sound; this checks that
+ * it is the tree the logged operations built. A write that bypasses the API
+ * breaks it even when it keeps every invariant (a budget moved between two
+ * agents of one pod), and even when a later resize or close overwrote it.
+ *
+ * Incremental: each call replays only the events logged since the last.
+ */
+export function logViolations(tree: DelegationTree): string[] {
+  return tree.verifyAgainstLog().map((d) => `${d.kind} ${d.node ?? "(tree)"}: ${d.message}`);
+}
+
+/**
  * Relative slack on the notional bound in `tradeViolations`: the gate leaves
  * Σ|w| unclipped up to 1 + 1e-9, and the sums are floating point. On $20M of
  * notional that is 20 cents; nothing larger passes.
@@ -459,7 +486,68 @@ export function tradeViolations(
 /* Run                                                                */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Operator record (port)                                             */
+/* ------------------------------------------------------------------ */
+
+/** The incident kind a stop-out is recorded as: a loss, not misconduct. */
+export const STOP_OUT_INCIDENT_KIND = "stop-out" as const;
+
+/**
+ * A stop-out, as reported to the operator record. One per STOP_OUT decision,
+ * in the same tick, after the close. It says what happened to capital (a
+ * drawdown stop, and what the close took back); it is NOT an accusation and
+ * carries no penalty of its own: whoever keeps the record decides what a
+ * history of stop-outs means for a NEW grant (see the adapters' screening).
+ */
+export interface StopOutIncident {
+  kind: typeof STOP_OUT_INCIDENT_KIND;
+  /**
+   * The counterparty key: `AgentSpec.operator` (in production a World ID
+   * nullifier). Absent when the spec names no operator; a record that keys by
+   * operator must then decide how to treat it (the adapters' sink refuses to
+   * guess).
+   */
+  operator?: string;
+  /** Full node name of the stopped agent. */
+  agent: string;
+  /** The agent's label (`AgentSpec.label`). */
+  label: string;
+  /** The tick at whose close the agent was stopped out. */
+  tick: number;
+  /** Unix seconds of that tick (`tickToUnix`). */
+  at: number;
+  /** Authority the close took back (the agent's and every sub-mandate's unspent budget), whole USDC. */
+  freed: number;
+  /** The same, in the tree's units (micro-USDC): exactly what `tree.close` returned. */
+  freedUnits: bigint;
+  /** The agent's drawdown from its own high-water mark when it was stopped. */
+  drawdown: number;
+  /** The stop rung in force (risk-scaled in the center book). */
+  ddStop: number;
+  /** The STOP_OUT decision's detail. */
+  reason: string;
+}
+
+/**
+ * Where the book reports stop-outs: the port an operator record implements
+ * (e.g. the adapters' `IncidentLedger`, through `StopOutIncidentSink`). The
+ * book awaits every `record()` before it goes on; a sink that throws aborts
+ * the run (an operator record that silently drops incidents would be worse).
+ * The sink is handed a fresh object per stop-out, never the tree.
+ */
+export interface IncidentSink {
+  record(incident: StopOutIncident): void | Promise<void>;
+}
+
 export interface RunBookOptions {
+  /**
+   * The operator record. When set, every stop-out is reported to it exactly
+   * once (see `StopOutIncident`). It changes nothing the book does: the book
+   * never reads it back, so a run with a sink trades exactly as the run
+   * without one.
+   */
+  incidents?: IncidentSink;
   /**
    * Called at the start of every tick, before the allocator acts, with the
    * live tree: the seam through which agents' sub-mandates act outside the
@@ -611,7 +699,7 @@ export async function runBook(
   const size = (gated: readonly { weights: Weights }[], now: number): SizedOrder[] =>
     agents.map((a, i) => sizeOrder(tree, a.name, gated[i]!.weights, { leverage: policy.leverage, now }));
   const audit = (t: number, at: "start" | "end") => {
-    const violations = bookViolations(tree, root, agents);
+    const violations = [...bookViolations(tree, root, agents), ...logViolations(tree)];
     if (violations.length > 0) throw new BookInvariantError(t, at, violations);
   };
   const auditTrade = (t: number, orders: readonly SizedOrder[], now: number) => {
@@ -620,7 +708,7 @@ export async function runBook(
         `ORDERS_MISMATCH: ${orders.length} orders for ${agents.length} agents, or not one per agent in roster order`,
       ]);
     }
-    const violations = tradeViolations(tree, orders, { leverage: policy.leverage, now });
+    const violations = [...tradeViolations(tree, orders, { leverage: policy.leverage, now }), ...logViolations(tree)];
     if (violations.length > 0) throw new BookInvariantError(t, "trade", violations);
   };
 
@@ -821,10 +909,11 @@ export async function runBook(
         // sub-mandate it handed out (each shrinks to what it spent, then the
         // subtree is revoked). The freed authority is available to the pod.
         const subs = tree.subtree(a.name).length - 1;
-        const freed = toUsdc(tree.close(a.name));
+        const freedUnits = tree.close(a.name);
+        const freed = toUsdc(freedUnits);
         holds.delete(a.name);
         stoppedNow.push(a.name);
-        decisions.push({
+        const stop: Decision = {
           t,
           kind: "STOP_OUT",
           node: a.name,
@@ -833,7 +922,24 @@ export async function runBook(
             (subs > 0 ? ` with its ${subs} sub-mandate${subs === 1 ? "" : "s"}` : "") +
             ", " +
             (freed > 0 ? `${freed.toFixed(0)} USDC handed back to the pod` : "no capital was at risk (already allocated zero)"),
-        });
+        };
+        decisions.push(stop);
+        // The operator record: one incident per stop-out, after the close.
+        if (options.incidents) {
+          await options.incidents.record({
+            kind: STOP_OUT_INCIDENT_KIND,
+            ...(a.operator === undefined ? {} : { operator: a.operator }),
+            agent: a.name,
+            label: a.label,
+            tick: t,
+            at: now,
+            freed,
+            freedUnits,
+            drawdown: currentDrawdown(a.unitReturns),
+            ddStop: rungs.ddStop,
+            reason: stop.detail,
+          });
+        }
       } else if (next === "cut" && center) {
         const factor = center.cutFactor ?? 1;
         const held = holds.get(a.name);

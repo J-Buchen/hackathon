@@ -113,7 +113,7 @@ const neutral = (c) => ["allocator", "tiger"].every((t) => c[t].mean > -0.0005 &
 
 const report = { loop: L, head: HEAD, blocks: { A, B }, riskGuard: RISK, candidates: [], confirmations: [], merged: null };
 // Utility, Sharpe and max drawdown of each book, not just the paired uplift.
-const books = (s) => Object.fromEntries(["allocator", "tiger"].map((t) => [t, { utility: s[t].utility, sharpe: s[t].sharpe, maxDD: s[t].maxDD, baselineUtility: s[t].baseline, baselineMaxDD: s[t].baselineMaxDD }]));
+const books = (s) => Object.fromEntries(["allocator", "tiger"].map((t) => [t, { utility: s[t].utility, sharpe: s[t].sharpe, maxDD: s[t].maxDD, maxDDAtBaselineVol: s[t].maxDDAtBaselineVol ?? null, baselineUtility: s[t].baseline, baselineMaxDD: s[t].baselineMaxDD }]));
 const live = [];
 for (const [k, p] of proposals.entries()) {
   const entry = { k, angle: p.angle, track: p.track, hypothesis: p.hypothesis, reviewOk: !!p.review?.ok, reviewProblems: p.review?.problems ?? [] };

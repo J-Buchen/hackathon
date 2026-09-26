@@ -500,3 +500,71 @@ test("the trade audit reads the tree as it stands at the trade: a cut made after
   );
   assert.equal(at, 40);
 });
+
+/* ------------------------------------------------------------------ */
+/* The tree against its own history (replay)                          */
+/* ------------------------------------------------------------------ */
+
+const HERD_A = `herd-a.macro.${FUND}`;
+
+test("a direct write that keeps every invariant (budget moved between two agents of one pod) stops the book at the next audit", async () => {
+  for (const [, policy] of policies) {
+    let wrote = -1;
+    await assert.rejects(
+      runBook(market, spec(), policy, {
+        onTick: async (t, tree) => {
+          await outside(t, tree);
+          if (t !== 40) return;
+          // Bypass the API: take a slice of herd-a's unspent budget and hand it to plain.
+          const slice = tree.available(HERD_A) / 4n;
+          assert.ok(slice > 0n);
+          tree.requireNode(HERD_A).mandate.budget -= slice;
+          tree.requireNode(PLAIN).mandate.budget += slice;
+          // Everything the core audit reads is still sound: the pod hands down
+          // what it did, nobody is over-committed, the root holds the AUM.
+          assert.deepEqual(tree.audit(), []);
+          wrote = t;
+        },
+      }),
+      (e: unknown) =>
+        e instanceof BookInvariantError &&
+        e.t === 40 &&
+        e.at === "start" &&
+        e.violations.length === 2 &&
+        e.violations.some((v) => v.startsWith(`UNLOGGED_WRITE ${PLAIN}: the budget`)) &&
+        e.violations.some((v) => v.startsWith(`UNLOGGED_WRITE ${HERD_A}: the budget`)),
+    );
+    assert.equal(wrote, 40);
+  }
+});
+
+test("the trade check replays the log too: a budget written directly and then put back through resize() stops the order", async () => {
+  const restored = await tampered(defaultCenterBookPolicy(), (t, tree) => {
+    if (t !== 40) return false;
+    const node = tree.requireNode(PLAIN);
+    const budget = node.mandate.budget;
+    node.mandate.budget = budget * 2n; // the review's write…
+    tree.resize(PLAIN, budget); // …undone through the API: the tree's state is what it was
+    return true;
+  });
+  assert.equal(restored.at, 40);
+  assert.ok(restored.error instanceof BookInvariantError, String(restored.error));
+  assert.equal(restored.error.t, 40);
+  assert.equal(restored.error.at, "trade");
+  assert.equal(restored.error.violations.length, 1);
+  assert.match(restored.error.violations[0]!, new RegExp(`^UNLOGGED_WRITE ${PLAIN.replaceAll(".", "\\.")}: seq \\d+ \\(RESIZE / OK`));
+  assert.match(restored.error.violations[0]!, /resized from a budget of \d+, but the log had left it at \d+/);
+});
+
+test("a whole book (payments, an outside sub-mandate, reallocations, stop-out closes) replays exactly from its event log", async () => {
+  for (const [, policy] of policies) {
+    const book = await runBook(market, spec(), policy, { onTick: outside });
+    assert.ok(book.decisions.some((d) => d.kind === "STOP_OUT"), "a close is in the log");
+    const types = new Set(book.tree.events.map((e) => `${e.type}/${e.result}`));
+    for (const k of ["FUND/OK", "DELEGATE/OK", "RESIZE/OK", "PAYMENT/SETTLED", "REVOKE/REVOKED"]) assert.ok(types.has(k), k);
+    assert.deepEqual(book.tree.verifyAgainstLog({ fromScratch: true }), []);
+    const rebuilt = DelegationTree.replay(book.tree.events);
+    assert.deepEqual(rebuilt.listNodes(), book.tree.listNodes());
+    assert.deepEqual(rebuilt.principal, book.tree.principal);
+  }
+});

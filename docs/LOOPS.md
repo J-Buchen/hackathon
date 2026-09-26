@@ -348,3 +348,41 @@ volatility it is still lower. The Tiger overlay improved but still loses money f
 investor, because in the arena its single name has no edge. Full numbers:
 [`docs/loops/cumulative.json`](loops/cumulative.json).
 
+
+## Loop 6
+
+**Merged: every stop-out goes on the operator's record (G), and the mandate tree is audited
+against its own event log (R, C).** Both structural; no utility is claimed. On both sealed blocks
+(A: seeds 16000–16199, B: 16500–16699) every paired change is exactly zero: utility, max drawdown,
+Sharpe, and the Tiger overlay. On block B the center book returns a certainty equivalent of 13.71%
+vs 8.20% for per-agent guardrails, max drawdown 7.32% vs 6.95% (still above the guardrails', 6.58% at their volatility); the
+Tiger overlay −7.35% vs −21.89% for buy-and-hold, max drawdown 24.6% vs 41.9%.
+
+- **Incident.** When the book stops an agent out, it now reports one `stop-out` incident to an
+  optional sink (a small port in `packages/swarm`; the adapters' `IncidentLedger` implements it).
+  Each incident records the agent's operator, tick, drawdown, stop rung and the exact amount
+  `close` freed. A stop-out is a loss, not misconduct: it is never sent to AgentHire's dispute
+  route, never a slash, and has its own limit (`maxOperatorStopOuts`, default 2), separate from
+  the misconduct limit (default 0, unchanged). The same rule screens new AgentHire hires and new
+  grants in a fund's tree (`OperatorGrantScreen`). A refused grant creates no node and reserves
+  nothing. The arena passes no sink, so it is bit-identical.
+- **Replay.** `DelegationTree.replay(events)` rebuilds a tree from its log, and
+  `verifyAgainstLog()` lists every way the live tree differs. The book runs this check at its
+  start, trade and end audits every tick. A direct write that bypasses the API (for example,
+  moving budget between two agents of one pod, which keeps every invariant) is caught at the next
+  audit, even when a later resize overwrites it: each RESIZE now records the budget it started
+  from. Property tests cover random operation sequences.
+
+| candidate | review | sealed block A (vs current code) | outcome |
+|---|---|---|---|
+| stop-outs on the operator's record (structure) | passed | 0.00 pp, max DD 0.00 pp | winner on A; confirmed with replay on B (0.00 pp); **merged** |
+| replay audit of the mandate tree (structure) | passed | 0.00 pp, max DD 0.00 pp | winner on A; confirmed with incident on B; **merged** |
+| wildcard | — | no diff | nothing to judge |
+
+**Limits, from the reviews.** The log is not signed. `recordEvent` is public, so a direct write
+paired with a forged matching event passes the check (a test documents this). Replay holds in
+memory only: snapshot JSON (`serializeEvent`) does not carry the new `grant` and prior-budget
+fields, so a persisted snapshot cannot be replayed. The audit runs three times a tick and makes the
+arena about 25% slower.
+
+Full numbers: [`docs/loops/loop-6.json`](loops/loop-6.json); diffs: [`docs/loops/loop-6/`](loops/loop-6/).

@@ -124,6 +124,23 @@ export type EventResult =
   | "REVOKED"
   | "ATTENUATION_REJECTED";
 
+/**
+ * What a FUND / OK or DELEGATE / OK event records about the node it created,
+ * beyond its budget (the event's `amount`): everything replay needs to rebuild
+ * the node exactly. Allowlists are copies taken when the event is recorded, so
+ * a later write to the caller's array (or the node's) does not rewrite history.
+ */
+export interface EventGrant {
+  /** The node's parent (null for the root). */
+  parent: string | null;
+  identityStatus: IdentityStatus;
+  allowedMerchants?: readonly string[];
+  allowedPurposes?: readonly string[];
+  expiry: number;
+  /** FUND only: the principal who funded the root. */
+  principal?: Principal;
+}
+
 /** An event as held in memory (amounts as bigint). */
 export interface AllowanceEvent {
   seq: number;
@@ -133,6 +150,18 @@ export interface AllowanceEvent {
   result: EventResult;
   amount: bigint | null;
   merchant: string | null;
+  /**
+   * FUND / OK and DELEGATE / OK: the node as created (see `EventGrant`). The
+   * tree's own API always sets it; replay refuses a grant event without it.
+   */
+  grant?: EventGrant;
+  /**
+   * RESIZE / OK: the budget the node held just before the resize (`amount` is
+   * the budget after). Replay checks that the log left the node at exactly
+   * this budget, so a write that bypassed the API is caught even when a later
+   * resize overwrites it. The tree's own API always sets it.
+   */
+  before?: bigint;
 }
 
 /* ------------------------------------------------------------------ */

@@ -19,6 +19,8 @@
  *                  (x402/EIP-3009 on Mock USDC, reputation + operator incidents),
  *                  plus SerializedPayer (one payment at a time per root mandate)
  *   agenthire-audit.ts  AgentHire A2A    -> shadow audit (replay sub-agent hires through pay())
+ *   operator-record.ts  fund stop-outs   -> IncidentLedger (the book's IncidentSink port), and the
+ *                  operator-record screen for NEW grants and hires
  */
 
 import type { PaymentAdapters } from "@allowance/core";
@@ -37,6 +39,7 @@ export * from "./curvegrid";
 export * from "./sui";
 export * from "./agenthire";
 export * from "./agenthire-audit";
+export * from "./operator-record";
 // Both AgentHire modules define these two names. The package-level ones are
 // agenthire.ts's: its `usdcToMicro` throws on a negative or non-finite amount,
 // which is what payment code wants. The audit's lenient variant (clamps

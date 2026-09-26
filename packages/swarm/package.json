@@ -10,7 +10,7 @@
   "types": "./src/index.ts",
   "scripts": {
     "typecheck": "tsc -b",
-    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/operator-sizing.test.ts src/example.test.ts src/reserve.test.ts"
+    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/operator-sizing.test.ts src/example.test.ts src/reserve.test.ts src/incidents.test.ts"
   },
   "dependencies": {
     "@allowance/core": "*"
