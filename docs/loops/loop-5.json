@@ -1,0 +1,707 @@
+{
+ "loop": 5,
+ "title": "An agent's own ladder cut is never weakened by its operator's cap (G fix)",
+ "note": "Structural, no utility claimed: the operator cap is a ceiling kept separate from each agent's own size, and the agent holds the smaller of the two, for any number of agents per operator. The Tiger print-timing change won block A (+1.02 pp) but failed block B (+0.86 pp [-0.04, +1.76]); alpha scoring missed on block A (+0.23 pp [-0.00, +0.46]). Two researchers returned null results.",
+ "riskSummary": {
+  "block": "B",
+  "seeds": "15500-15699",
+  "centerMaxDDBefore": 0.07291844301673751,
+  "centerMaxDDAfter": 0.07291804135139957,
+  "guardrailsMaxDD": 0.06917008575817098,
+  "centerMaxDDAtGuardrailsVolAfter": 0.06261507303497908,
+  "pairedChange": {
+   "mean": -4.016653379379509e-7,
+   "lo": -0.000009024847429648302,
+   "hi": 0.0000082215167537724
+  }
+ },
+ "rejections": [
+  {
+   "title": "De-risk the Tiger overlay into dated prints (tiger track)",
+   "reason": "won block A (+1.02 pp [+0.17, +1.87]) but failed block B (+0.86 pp [-0.04, +1.76]); its review had flagged a Sharpe cost of about 0.03, at the risk guard's limit"
+  },
+  {
+   "title": "Score agents on alpha, net of the market (allocator track)",
+   "reason": "block A +0.23 pp [-0.00, +0.46]: the lower bound missed zero, so no confirmed gain"
+  },
+  {
+   "title": "Risk-scaled Tiger stop-loss",
+   "reason": "null result, no diff: the overlay is already vol-targeted, and no variant beat uniform deleveraging"
+  },
+  {
+   "title": "Residual (crowd-neutral) scoring",
+   "reason": "null result, no diff: -0.02 pp on its check block"
+  }
+ ],
+ "head": "1d672c17276f9d4ee10d0e31fe646f6050e19cab",
+ "blocks": {
+  "A": {
+   "from": 15000,
+   "count": 200
+  },
+  "B": {
+   "from": 15500,
+   "count": 200
+  }
+ },
+ "riskGuard": {
+  "maxDDUp": 0.005,
+  "sharpeDown": 0.03
+ },
+ "candidates": [
+  {
+   "k": 0,
+   "angle": "tigertime: catalyst timing on the corrected arena (TIGER track). The overlay de-risks into each public print and re-risks after it: half the long, and so half the hedge, on the close before a print that was announced at least announceLead days ahead; normal size again at the print's close.",
+   "track": "tiger",
+   "hypothesis": "A premise in the brief needs correcting. RECOMMENDED_TIGER at 1d672c1 does NOT lean in ahead of prints: it inherits preEventDays 0, so preEventMult is inert and the book carries full size through every print.\n\nEconomics. The arena's prints are zero-mean gaps (CatalystEvent mean 0, vol 3-12%). The primary is the name that was most volatile on days 0-59, so its prints are large: the RMS print-day return is about 9%, against 2.8% on a normal day, and the book carries about 0.6 of its long into a print. A gamma=3 investor's cost of carrying a gap grows with the SQUARE of the size held through it. The round trip to shed it (20 bps on the long plus 5 bps x beta on the hedge, out and back) grows only LINEARLY. Halving therefore removes 3/4 of the gap variance for half the round trip; going flat pays the other half of the cost for the last 1/4. Leaning in is the same trade with the sign flipped, so it pays only if the book can sign the print. The rule is point-in-time: it reads only eventDistances(announceLead). The hedge is sized off the long, so the book stays beta-neutral through the gap.\n\nEXPECTED effect over all research seeds 1-9999 (9,999 worlds, paired against the current code):\n- Half into the print (this proposal): tiger CE +0.43 pp [90% +0.31, +0.56] (t=5.6); maxDD -1.08 pp (t=-41); tiger Sharpe -0.030; mean exposure unchanged (+0.001). It is NOT deleveraging.\n- Flat into the print: +0.13 pp [-0.13, +0.39], maxDD -1.78 pp. The round trips (+0.82% of NAV per year) eat the gain.\n- Lean in 1.5x on the eve: -0.81 pp [-0.90, -0.72], maxDD +0.82 pp. Lean in 1.5x for 5 days: -1.28 pp on 3001-4000 and -0.87 pp on dev, maxDD +1.0..1.2 pp.\n- Cut sized by the gamma/cost optimum w* = 2c/(gamma*sigmaJ^2): +0.34 pp with sigmaJ estimated from the name's past prints (point-in-time), and +0.50 pp even with the latent sigmaJ (an oracle bound, research only). Sizing each name's cut is worth at most ~0.1 pp over a flat half.\n- 'Re-risk after' done by excluding print days from the trailing vol: -0.49 pp, maxDD +0.72 pp. It sits exactly on the uniform-deleveraging line, so it is exposure, not timing.\n- Break-even: an expected print return of about +0.4% (half-minus-off CE is +0.07 pp at mu=+0.35% and -0.08 pp at mu=+0.5%) would make carrying full size worth it again.\n\nHONEST POWER CAVEAT: each world's CE swings with the signs of its ~3 realized prints, so the per-world SD of the paired difference is about 8 pp. In 49 disjoint 200-world blocks of research seeds:\n- the CE gain was significant (90%) in 9 of 49 blocks, positive in 39, significantly negative in 0;\n- maxDD fell significantly in 49 of 49.\nExpect a sealed 200-world block to confirm the utility gain only about 1 time in 5. The robust, block-level effect is the drawdown (about -1.0..-1.4 pp).\n\nTiger Sharpe falls about 0.03 on average. Two causes: the round-trip cost (without costs the Sharpe change is -0.009 while CE rises +0.80 pp), and the overlay's negative mean excess return, where lower variance makes a negative Sharpe more negative.\n\nSimulator-harvest check: with prints off, the rule is inert (no gain, no loss). It uses only the documented print schedule, not a generator quirk.",
+   "reviewOk": true,
+   "reviewProblems": [
+    "RISK GUARD (Sharpe) is right at the limit and will fail on about half of sealed blocks. Over all 9,999 research seeds, paired against 1d672c1, the tiger Sharpe change is -0.0302 [90% -0.0348, -0.0255]. That is already past the 0.03 limit on average. In 49 disjoint 200-world research blocks, the Sharpe fall is more than 0.03 in 24 of them (min -0.081, median -0.0297, max +0.022). The CE 90% lower bound is above 0 AND the guard holds in only 9 of 49 blocks (about 18%), so block A is more likely to be lost to the guard than won. On the standard research block 1-200 the guard holds: CE +0.96 pp [+0.05, +1.88], maxDD -1.24 pp, Sharpe -0.002. The maxDD half of the guard never binds: maxDD falls significantly in 49 of 49 blocks and rises in none. About two-thirds of the Sharpe cost is round-trip cost. With costBps and hedgeCostBps at 0, half vs off gives Sharpe -0.009 and CE +0.815 pp.",
+    "The researcher's simulator-harvest check proves nothing. 'With prints off the rule is inert' holds by construction: with no event schedule, a timing rule never fires. The useful check keeps the schedule and changes the gap. With the generator's print vol halved (1.5-6% instead of 3-12%, same seeds, rule on vs off), the rule LOSES -0.20 pp [-0.27, -0.12]. With gaps set to 0 but the schedule kept, it loses -0.31 pp [-0.36, -0.25] (pure round-trip cost). Its sign therefore depends on the arena's hard-coded print-size range and on the hard-coded mean 0. The break-even is confirmed: print mean +0.4% gives -0.01 pp [-0.13, +0.12], and +0.2% gives +0.23 pp. I do not judge this a loop-4-style harvest. The rule reads only a public schedule, there is no deterministic return pattern to exploit, and the argument that gap variance costs quadratically while the round trip costs linearly holds in general. The arena's Tiger primary is also by design the most volatile name, like the Luckin case. Still, the flat 0.5 cut is tuned to the generator's print sizes. The researcher's print-vol-sized cut (+0.34 pp claimed) would hold up better for names with small prints.",
+    "The new RECOMMENDED_TIGER doc comment reports the drawdown and utility effects but not the Sharpe cost (about -0.03, which sits on the risk-guard limit), nor that the rule loses money when prints are small relative to the round-trip cost. Minor doc gap.",
+    "Knock-on change, not a failure: services/orchestrator/src/agenthire-demo.ts runs RECOMMENDED_TIGER on arena seed 3. The PM path now stops out at day 86 (dd 20.1%) instead of day 84 (21.2%). The demo's 'the ladder stopped the PM out' check still holds, but the committed apps/web/public agenthire snapshot or receipts would differ if regenerated."
+   ],
+   "diffFile": "docs/loops/loop-5/candidate-0.diff",
+   "blockA": {
+    "allocator": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tiger": {
+     "mean": 0.010181739562742171,
+     "lo": 0.0016710260220853153,
+     "hi": 0.018692453103399027,
+     "wins": 0.555
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "allocatorSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerMaxDD": {
+      "mean": -0.009250414756277789,
+      "lo": -0.011855922242011166,
+      "hi": -0.006644907270544412,
+      "wins": 0.39
+     },
+     "tigerSharpe": {
+      "mean": -0.006345015207722925,
+      "lo": -0.036145239103511834,
+      "hi": 0.02345520868806598,
+      "wins": 0.425
+     }
+    }
+   },
+   "booksA": {
+    "allocator": {
+     "utility": 0.11952609649657715,
+     "sharpe": 1.1904720180231199,
+     "maxDD": 0.07875925076856233,
+     "baselineUtility": 0.07084566783548855,
+     "baselineMaxDD": 0.06956400590948535
+    },
+    "tiger": {
+     "utility": -0.05955707306301217,
+     "sharpe": -0.2785920816581241,
+     "maxDD": 0.23418516456135963,
+     "baselineUtility": -0.2171516247292216,
+     "baselineMaxDD": 0.40498554868840486
+    }
+   },
+   "status": "winner-A",
+   "reviewSummary": "I found none of the listed rejection grounds, so ok=true. The real risk is the Sharpe half of the risk guard, which this change breaches on average. Tested in scratch worktrees /tmp/loop-review-5-tigertime/wt (diff applied) and /tmp/loop-review-5-tigertime/base (1d672c1).\n\nIntegrity checks:\n- **Applies and builds.** `git apply --check` is clean against 1d672c1. The typecheck passes. `npm test` passes 276/276, lab 66/66, web 59/59.\n- **No arena or judge edits, no weakened tests.** The diff only changes `RECOMMENDED_TIGER` (preEventDays 1, preEventMult 0.5), fixes the doc comment (removes a duplicated hedge line) and adds 4 tests.\n- **The premise is correct.** At 1d672c1, `RECOMMENDED_TIGER` inherits preEventDays 0, so the pre-event multiplier does nothing.\n- **Point-in-time.** The rule reads only `until[t]` from `eventDistances(n, events, announceLead)`. I checked the timing in real arena worlds. `generateMarket` adds the print jump to tick e.tick, which is panel return day e.tick+1 = event t. Only the weight held into that day is halved, decided at close t-1. Size comes back at the print's close, and the hedge is halved with the long.\n- **The tests guard against look-ahead.** I injected a look-ahead mutation (halve only when r[t+1] < 0). Five tests caught it, including the new eve test, the public-print test and the NO LOOK-AHEAD test (forks at 291, 292, 460).\n- **No hard-coded seed values; not a structure claim.**\n\nHeadline numbers reproduce exactly over research seeds 1-9999, paired against the base:\n\n| | CE (pp) | maxDD (pp) | Sharpe |\n|---|---|---|---|\n| Half into the print (this diff) | +0.432 [+0.306, +0.558], t=5.63 | -1.075 | -0.0302 |\n| Flat into the print | +0.13 [-0.13, +0.39] | -1.78 | not checked |\n| Half, no trading costs | +0.815 | not checked | -0.009 |\n\nThe robustness check at 200-world blocks also reproduces: CE is significant in 9 of 49 blocks, positive in 39, significantly negative in 0, and maxDD falls significantly in all 49. Mean exposure is 0.601 vs 0.599 (seeds 1-500), so this is not deleveraging. Print-day RMS return is 9.7% against 2.8% on other days.\n\nRisk guard:\n- **Block 1-200: holds.** CE +0.96 pp [+0.05, +1.88], maxDD -1.24 pp, Sharpe -0.002.\n- **Across all research seeds: Sharpe fails.** The mean Sharpe fall is 0.0302, just past the 0.03 limit. It exceeds 0.03 in 24 of 49 blocks. The CE lower bound is above 0 AND the guard holds in only 9 of 49 blocks, about 18%. Expect the sealed judge to throw this out on the Sharpe guard about half the time.\n\nRobustness beyond the researcher's check:\n- **Their 'inert with prints off' test is empty.** With no event schedule the rule can never fire.\n- **Keeping the schedule but shrinking the prints flips the sign.** With print vol halved the rule loses -0.20 pp [-0.27, -0.12]. With the gaps set to 0 it loses -0.31 pp (pure round-trip cost).\n- **Break-even confirmed.** A print mean of +0.4% gives -0.01 pp; +0.2% gives +0.23 pp.\n- **My judgement: not a harvest.** The rule uses a public schedule and the economics (gap cost grows with the square of size, round-trip cost linearly) hold in general. But the flat 0.5 cut is tuned to the generator's 3-12% print sizes. A cut sized by the name's print volatility would hold up better for names with small prints.\n\nOne knock-on effect: `services/orchestrator/src/agenthire-demo.ts` (seed 3) still stops the PM out, now at day 86 instead of 84. A regenerated snapshot under `apps/web/public` would differ; no test depends on it.\n\nScripts: `/tmp/loop-review-5-tigertime/tiger-eval.mts`, `exp.mts`, `pair.mjs`, `blocks.mjs`, `align.mts`, `demo-ladder.mts`.",
+   "research": {
+    "checkBefore": "Check block, seeds 6500-6649 (150 worlds), code at 1d672c1:\n- allocator: utility 13.56% vs baseline 5.96%... correction: vs guardrails 7.34%; uplift +6.22% [4.86, 7.57]; Sharpe 1.35 vs 0.89; maxDD 7.18% vs 6.79% (6.23% at the guardrails' vol).\n- tiger: utility -7.69% vs buy-and-hold -22.13%; uplift +14.44% [11.50, 17.38]; wins 79%; Sharpe -0.27 vs -0.15; maxDD 24.39% vs 39.62%.",
+    "checkAfter": "Check block, seeds 6500-6649 (150 worlds), after the change:\n- allocator: bit-identical, 150 of 150 worlds unchanged. Utility 13.56%, maxDD 7.18%, Sharpe 1.345. Paired changes are 0.00 on utility, maxDD and Sharpe, so the center-book risk guard holds.\n- tiger: utility -5.87% vs buy-and-hold -22.13%; uplift +16.26% [12.98, 19.54]; wins 81%; Sharpe -0.23; maxDD 22.99%.\n- Paired tiger vs the current code:\n  - CE +1.82 pp [90% +0.78, +2.86], wins 59%\n  - maxDD -1.40 pp [-1.72, -1.07]\n  - Sharpe +0.040 [+0.005, +0.075]\n- This block's prints fell unluckily for the untimed book. The large-sample expected gain is about +0.4 pp.",
+    "devBefore": "Dev block, seeds 2001-2200 (200 worlds), code at 1d672c1:\n- allocator: utility 12.13% vs guardrails 5.96%; uplift +6.17% [5.04, 7.31]; wins 72%; Sharpe 1.24 vs 0.79; maxDD 7.24% vs 6.97% (6.54% at the guardrails' vol).\n- tiger: utility -4.16% vs buy-and-hold -19.03%; uplift +14.87% [12.23, 17.51]; wins 81%; Sharpe -0.19 vs -0.12; maxDD 23.06% vs 38.47%.",
+    "devAfter": "Dev block, seeds 2001-2200 (200 worlds), after the change:\n- allocator: bit-identical, 200 of 200 worlds unchanged (utility 12.13%, maxDD 7.24%, Sharpe 1.244). The risk guard holds.\n- tiger: utility -4.42% vs buy-and-hold -19.03%; uplift +14.61% [11.66, 17.55]; Sharpe -0.24; maxDD 22.03%.\n- Paired tiger vs the current code:\n  - CE -0.26 pp [90% -1.28, +0.76], not significant, wins 48%\n  - maxDD -1.03 pp [-1.36, -0.69]\n  - Sharpe -0.042 [-0.076, -0.008]",
+    "variantsTried": 9
+   }
+  },
+  {
+   "k": 1,
+   "angle": "operatorlift: (G) structure. This is the second attempt at loop 4's rejected fix. The operator cap is now a ceiling kept separate from each name's own size, and the name holds the smaller of the two.",
+   "track": "structure",
+   "hypothesis": "Invariant, designed first: for every live name at every tick, min(L, cutFactor x fullSize) <= budget <= L. Here L is what the name holds under its own rules alone: the allocator's target under the rebalance band, its own ladder cuts, and crowding cuts. Where no crowding limit binds, L equals the name's budget in the same book with every operator label removed.\n\nWhy the earlier designs failed: loops 3 and 4 kept a single number (capital) and decided each cut on that number. Once a cap is lifted, that number no longer remembers what the name's own rules would give it, so a later ladder cut or re-cap compounds to cutFactor^2. Loop 3 also had the opposite fault: a name the ladder had already cut was not cut again (it was already at the ceiling), which left it above what its own ladder allows.\n\nThe design keeps two numbers per held name (OperatorSizing, in allocator.ts):\n- own: moved only by the name's own rules. Reallocation moves it to its own target under the band; a ladder cut multiplies it by cutFactor; a crowding cut sets it to the absolute level the crowding check chose; a stop sets it to 0.\n- ceiling: cutFactor x fullSize, set by the cap and by any re-cap. It is refreshed at each reallocation while the cap is in force. After a lift it stays until the next reallocation re-sizes the name. Loop 3 also never grew a lifted name before then, so this changes no capital path.\n\nThe budget written to the tree is exactly min(own, ceiling). Operator events (cap, re-cap, lift) never touch own, so the band holds by construction for any number of names per operator and any order of events. Names that no ceiling holds follow the old code path exactly. I made no return claim: utility, max drawdown and Sharpe are unchanged to within about 0.001 pp.",
+   "reviewOk": true,
+   "reviewProblems": [
+    "Non-blocking: the proof is only against the unlabelled book where no crowding limit binds. With crowding on, a held name's crowding cut is solved on its capped holding and lands on its own size. The arena test (arena-operator-sizing.test.ts) therefore checks the band against the book's own `ownSize` record, not against the blind book, so that part is partly self-referential. The README/CENTER-BOOK text says this, so it is not a hidden gap.",
+    "Non-blocking: the budget can sit up to CEILING_SLACK (1e-9 relative, about 1 micro-USDC) above the own size. My stress run with rebalanceBand 0 and 0.5 on seed 23, name o0n2 at t=39, gave a budget of 111366.898822 against an own size of 111366.898821. The cause is that `cutTo` does not write within the slack after a cap rounded the budget up. The docs' 'to the micro-USDC' caveat covers this.",
+    "Non-blocking: capped names are now re-sized at every reallocation with no rebalance band on top (the budget follows cutFactor x fullTarget exactly), so there are more REALLOCATE writes and decisions for capped names than at 1d672c1. This is intentional, so that the cap binds at the new full size, but it is extra churn.",
+    "Non-blocking, stale docs and dead code: the nextCounterpartyCaps docstring still says the cap and ladder 'compound neither in size (see `cutToCeiling`)', but the book no longer uses cutToCeiling. `allocate`'s counterpartyMultiplier path is also no longer used by the book; it is documented and still unit-tested (allocator test 212).",
+    "Non-blocking: the claim that performance is 'unchanged to within about 0.001 pp' is slightly understated. Allocator utility moved -0.0032 pp on seeds 1-200 and -0.0022 pp on seeds 3001-3200. It is still negligible, and Tiger is bit-identical."
+   ],
+   "diffFile": "docs/loops/loop-5/candidate-1.diff",
+   "blockA": {
+    "allocator": {
+     "mean": -0.0000016791567270968421,
+     "lo": -0.000037905006083813795,
+     "hi": 0.000034546692629620105,
+     "wins": 0.035
+    },
+    "tiger": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": -0.000010588726003445959,
+      "lo": -0.00003128074650205697,
+      "hi": 0.000010103294495165053,
+      "wins": 0.055
+     },
+     "allocatorSharpe": {
+      "mean": -0.000008087044313527768,
+      "lo": -0.00039768261176696717,
+      "hi": 0.0003815085231399116,
+      "wins": 0.04
+     },
+     "tigerMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     }
+    }
+   },
+   "booksA": {
+    "allocator": {
+     "utility": 0.1195244173398501,
+     "sharpe": 1.1904639309788063,
+     "maxDD": 0.07874866204255888,
+     "baselineUtility": 0.07084566783548855,
+     "baselineMaxDD": 0.06956400590948535
+    },
+    "tiger": {
+     "utility": -0.06973881262575428,
+     "sharpe": -0.2722470664504012,
+     "maxDD": 0.2434355793176375,
+     "baselineUtility": -0.2171516247292216,
+     "baselineMaxDD": 0.40498554868840486
+    }
+   },
+   "status": "winner-A",
+   "reviewSummary": "I recommend accepting this diff. It applies cleanly to 1d672c1, and its tests prove the guarantee it claims.\n\n**Setup.** The staged diff in .claude/worktrees/wf_77c9e3c4-660-4 has the same blob hashes as the proposed diff. I saved it as /tmp/loop-review-5-operatorlift/patch.diff and applied it to a scratch worktree at /tmp/loop-review-5-operatorlift/wt; `git apply --check` passed. A second, untouched worktree at /tmp/loop-review-5-operatorlift/base is the baseline.\n\n**Tests and typecheck.** Typecheck (`tsc -b`) passes. `npm test` passes all 278 tests, 0 failing. That is 6 new tests: 5 in packages/swarm/src/operator-sizing.test.ts and 1 in packages/lab/src/arena-operator-sizing.test.ts.\n\n**Rule checks.**\n- No existing test file is modified; the three package.json files only add the two new test files.\n- The arena and judge files are untouched: arena.ts, arena-cli.ts, loop-judge.mjs and worktree-setup.sh.\n- The mechanism reads no future information. `holds` and `nextSizing` only use the current tree budget, the current allocator target or full size, the ladder state and the operator caps at the decision tick.\n- No seed-specific values are in the mechanism. Seeds appear only in test fixtures (research seeds 1–40, plus the scripted market's seed).\n- Agents are not identified by strategy class.\n\n**Is the base bug real?** Yes. I ran the proposal's scripted roster on unpatched 1d672c1:\n- **Loop 3 compounding:** name y (lifted, then cut by its own ladder) ends at 250k with labels, against 500k without.\n- **Cap weakening the ladder:** name w (cut, restored, capped, cut again) ends at 500k, against 250k without.\n\nWith the patch, x, y and w all match the unlabelled book (500k, 500k and 250k).\n\n**Adversarial stress test.** I copied the proposal's book harness into a scratch file (since deleted) and ran crowding-free random books, each with and without operator labels:\n- Seeds 41–240 on the default policy.\n- 60–80 seeds each for these variants: cutFactor 0.3 and 0.7; rebalanceBand 0 and 0.5; rebalanceEvery 1; rebalanceEvery 20 over 300 ticks; 5 operators with more frequent jumps; warmup 5.\n\nThat is about 580k live ticks, with hundreds of re-caps and hundreds of ladder cuts on capped names. Results:\n- Full sizes match between the two books everywhere.\n- The labels move no ladder.\n- The book's own size equals the unlabelled budget everywhere.\n- `min(own, cutFactor x full) <= budget <= own` holds everywhere, except one 1-micro-USDC rounding case (listed under problems).\n\n**Test quality.** The property test's reference model largely mirrors `nextSizing`, so on its own it proves little. The book-level comparisons with and without labels (the scripted book plus 40 random books) are independent, and they fail on the base behaviour.\n\n**Risk guard, 200 worlds per block, patch minus base (research seeds only):**\n\n| Block | Utility | Sharpe | maxDD | Base maxDD | Base Sharpe |\n|---|---|---|---|---|---|\n| Seeds 1–200 | -0.0032 pp | -0.00028 | +0.0003 pp | 7.122% | 1.2948 |\n| Seeds 3001–3200 | -0.0022 pp | -0.00017 | +0.0009 pp | 7.488% | 1.1560 |\n\nBoth blocks are far inside the limits (maxDD rise of at most 0.5 pp, Sharpe fall of at most 0.03). Tiger's metrics are identical to the base.\n\nThe remaining problems are all non-blocking:\n- The guarantee is only proved against the unlabelled book where no crowding limit binds; the docs say so.\n- The budget can sit up to about 1 micro-USDC above the own size, from rounding.\n- Capped names are now re-sized at every reallocation, with no rebalance band.\n- One docstring still refers to `cutToCeiling`, which the book no longer uses.\n- The researcher's \"about 0.001 pp\" understates the actual -0.002 to -0.003 pp utility change.\n\nThe main files are packages/swarm/src/book.ts and packages/swarm/src/allocator.ts. The run outputs are in /tmp/loop-review-5-operatorlift/: base-1.json, wt-1.json, base-3001.json, wt-3001.json and test.log.",
+   "research": {
+    "checkBefore": "Check block, seeds 6500–6649, 1d672c1: allocator utility 13.56% vs baseline 7.34% | uplift 6.22% [90% 4.86%, 7.57%] | wins 69% | Sharpe 1.35 vs 0.89 | maxDD 7.18% vs 6.79% (6.23% at the baseline's vol). Tiger utility -7.69% vs -22.13% | uplift 14.44% [11.50%, 17.38%] | wins 79% | Sharpe -0.27 vs -0.15 | maxDD 24.39% vs 39.62%. Exact means: center-book utility 0.135615, maxDD 0.071799, Sharpe 1.345362.",
+    "checkAfter": "Check block, seeds 6500–6649, with this change: every summary line is identical at printed precision. Allocator utility 13.56% vs 7.34% | uplift 6.22% [4.86%, 7.57%] | wins 69% | Sharpe 1.35 vs 0.89 | maxDD 7.18% vs 6.79% (6.23% at the baseline's vol). Tiger -7.69% vs -22.13%, maxDD 24.39% vs 39.62%, identical in every world.\n\nPaired, change minus base:\n- Center-book utility: -0.0009 pp [90% -0.0023, +0.0005]; 12 of 150 worlds change.\n- Max drawdown: +0.00004 pp [-0.0004, +0.0005] (7.1799% → 7.1800%).\n- Sharpe: -0.00008 [-0.0002, +0.00004] (1.345362 → 1.345283).\n\nThe risk guard holds by a wide margin (limits: maxDD at most +0.5 pp, Sharpe at most -0.03).",
+    "devBefore": "Dev block, seeds 2001–2200, 1d672c1: allocator utility 12.13% vs baseline 5.96% | uplift 6.17% [90% 5.04%, 7.31%] | wins 72% | Sharpe 1.24 vs 0.79 | maxDD 7.24% vs 6.97% (6.54% at the baseline's vol). Tiger utility -4.16% vs -19.03% | uplift 14.87% [12.23%, 17.51%] | wins 81% | Sharpe -0.19 vs -0.12 | maxDD 23.06% vs 38.47%. Exact means: center-book utility 0.121344, maxDD 0.072447, Sharpe 1.243589.",
+    "devAfter": "Dev block, seeds 2001–2200, with this change: every summary line is identical at printed precision (allocator 12.13% vs 5.96%, uplift 6.17% [5.04%, 7.31%], Sharpe 1.24, maxDD 7.24%; tiger unchanged in every world).\n\nPaired, change minus base:\n- Center-book utility: +0.0002 pp [90% -0.0015, +0.0019]; 24 of 200 worlds change.\n- Max drawdown: -0.0001 pp [-0.0008, +0.0006]; 9 worlds change.\n- Sharpe: +0.00002 [-0.0001, +0.00015].",
+    "variantsTried": 1
+   }
+  },
+  {
+   "k": 2,
+   "angle": "Wildcard (A): score each agent's record on ALPHA, not on its raw return. Before the allocator ranks records, it takes out the part the market explains. This is the appraisal ratio of Jensen and Treynor-Black, and it is how pod shops pay PMs: on idiosyncratic (factor-neutral) P&L. It is one economically motivated, point-in-time change to how (A) resizes reservations. It does not deploy more capital and does not loosen any limit.",
+   "track": "allocator",
+   "hypothesis": "The allocator ranks agents by shrunk Sharpe over the last year of record. A raw record mixes two things: the agent's alpha, and its beta times whatever the market did in that window. The market's run over the window is not the agent's skill; an index fund would have earned it too. So in a year when the market trended, raw Sharpe pays capital to agents that happened to be positioned with the market, trend followers above all. Stripping the market's part (a single-index OLS on the equal-weighted return of the fund's universe, over the same window) should rank agents on evidence of skill. Capital should move from zero-edge agents that rode the market to agents with idiosyncratic edge. At the same capital at work, that should give a higher Sharpe, higher utility and a lower drawdown. The gain should be largest in worlds where the market trended most.\n\nEvidence, all on research seeds and measured, not designed from the generator. I read only market.ts's header doc comment and its interfaces, not its dynamics.\n(1) Diagnostic before any code (seeds 2001–2200): in the cross-section, the alpha score predicts agents' 20-tick forward returns better than raw Sharpe. The mean correlation is 0.0715 vs 0.0645, with a paired difference of +0.0070 ± 0.0023. A score-weighted portfolio earns +1.2 pp/yr more per unit.\n(2) Where the capital moves (style tags used only for diagnosis, never by the allocator): trend agents' mean capital share falls from 4.02% to 3.59%. Their share of the worst drawdown's loss falls from 16.2% to 13.3%. Mean-reversion agents gain share, and skilled agents are unchanged.\n(3) The mechanism check holds. Pooled over 750 research worlds, split into terciles by how much the market trended in the world (|annualized Sharpe of the equal-weighted index|): utility +0.15 / +0.16 / +0.34 pp and maxDD −0.02 / −0.13 / −0.15 pp from calm to trending. Crowd vs no-crowd worlds gain about the same (pooled ≈ +0.22 vs +0.21 pp), so this is not a harvest of the crowd, crash or aftershock.\n(4) Fund-level alternatives I tried offline first were null (see notes).\n\nPoint-in-time: the market return of tick t is pushed with the agents' records at the end of tick t. A reallocation at tick t therefore regresses records through t−1 on the market through t−1. allocate refuses a market series whose length is not exactly the records' length.",
+   "reviewOk": true,
+   "reviewProblems": [
+    "NON-BLOCKING: on the docs' own 20-seed example the center book's mean Sharpe falls from 0.50 to 0.43. I confirmed it with `npm run demo:swarm` in the candidate worktree, and every changed number in README and CENTER-BOOK matches that output. The drop is disclosed honestly. Over example seeds 1–200 I reproduced the researcher's paired figures: Sharpe −0.016 ± 0.037 and maxDD −0.15 ± 0.10 pp. So the 20-seed drop is noise, but the README headline now says 'lower mean Sharpe' where it used to say 'same'.",
+    "NON-BLOCKING: claim (3) only partly replicates. The researcher said the utility gain is largest in trending worlds (+0.15 / +0.16 / +0.34 pp). On my 1,200 worlds, split into terciles by the equal-weighted index's |annualized Sharpe|, the utility gain is +0.26 ± 0.15, +0.15 ± 0.18 and +0.22 ± 0.21 pp, with no trend gradient. The drawdown gradient does replicate: maxDD −0.04, −0.12 and −0.21 pp from calm to trending. Crowd and no-crowd worlds gain about the same (+0.19 vs +0.26 pp), so this is not a crowd harvest.",
+    "NON-BLOCKING design note: the benchmark is the equal-weighted return of market.instruments, which contains the stocks the agents trade. With the arena's 6–10 stocks, a picker's edge in one name is partly in the index (weight 1/n), so the regression can attribute a sliver of real alpha to 'the market'. The data still favours the change.",
+    "NON-BLOCKING: apps/web/public/swarm-snapshot.json is not regenerated, so the dashboard snapshot still reflects pre-change numbers. This is cosmetic, and the judge excludes that path."
+   ],
+   "diffFile": "docs/loops/loop-5/candidate-2.diff",
+   "blockA": {
+    "allocator": {
+     "mean": 0.002305541893269879,
+     "lo": -0.000017088714162171847,
+     "hi": 0.004628172500701929,
+     "wins": 0.575
+    },
+    "tiger": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": -0.0011285341727722614,
+      "lo": -0.002371933704483819,
+      "hi": 0.00011486535893929649,
+      "wins": 0.405
+     },
+     "allocatorSharpe": {
+      "mean": 0.02387145723020012,
+      "lo": -0.0010904859036542924,
+      "hi": 0.048833400364054536,
+      "wins": 0.565
+     },
+     "tigerMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     }
+    }
+   },
+   "booksA": {
+    "allocator": {
+     "utility": 0.12183163838984701,
+     "sharpe": 1.2143434752533206,
+     "maxDD": 0.07763071659579004,
+     "baselineUtility": 0.07084566783548855,
+     "baselineMaxDD": 0.06956400590948535
+    },
+    "tiger": {
+     "utility": -0.06973881262575428,
+     "sharpe": -0.2722470664504012,
+     "maxDD": 0.2434355793176375,
+     "baselineUtility": -0.2171516247292216,
+     "baselineMaxDD": 0.40498554868840486
+    }
+   },
+   "status": "no-uplift-A",
+   "reviewSummary": "ACCEPT. None of the rejection criteria is triggered, and the risk guard passes on every research block I ran.\n\nApplicability: the diff's blob hashes match the staged tree in researcher worktree .claude/worktrees/wf_77c9e3c4-660-5. `git apply --check` is clean on 1d672c1, in scratch worktree /tmp/loop-review-5-wildcard/wt (base at /tmp/loop-review-5-wildcard/base).\n\nTests: `tsc -b` is clean. `npm test` passes 283/283, including the new packages/swarm/src/attribution.test.ts, and apps/web passes 59/59. No test is deleted or weakened; the only test changes are the new file and adding it to both test scripts.\n\nScope: files touched are README.md, docs/CENTER-BOOK.md, package.json, packages/swarm/package.json, and packages/swarm/src/{allocator,book,stats}.ts plus the new test. No arena or judge files (arena.ts, arena-cli.ts, loop-judge.mjs, worktree-setup.sh) are touched.\n\nPoint-in-time:\n- book.ts pushes `equalWeightReturn(tick.returns, market.instruments)` after the tick-t trades are marked, alongside unitReturns and history, so a reallocation at tick t reads the market through t−1 only.\n- `allocate` throws RangeError unless the market series is exactly as long as every live record, so a one-tick-ahead series cannot slip through.\n- My own check on arena worlds: seeds 6003, 6077, 7311, 8420, 9650 and 4512, cut points k = 45, 90, 150 and 210, with every instrument's return rewritten from tick k on (in place, so SkilledPicker's drift lookups see it too). All orders through tick k and all pre-close decisions stayed identical in 24/24 cases, while later REALLOCATEs changed in 24/24.\n\nOther criteria:\n- No whole-sample statistics, latent drift, or strategy-class identification: scoring uses only realized unitReturns regressed on the trailing market window (OLS residual; intercept kept, so this is the appraisal ratio).\n- No seed-specific constants in the mechanism.\n- The tests check what they claim: a closed-form square-wave case gives the pure-beta record zero capital, adding market exposure leaves the score unchanged exactly, the market before the window is ignored, and a book-level check shows orders do not change when the future is rewritten.\n\nRISK GUARD (arena research seeds, 200 worlds per block, default policy, candidate minus 1d672c1, paired, 90% intervals):\n\n| block | mean maxDD | mean Sharpe | utility |\n|---|---|---|---|\n| 6001–6200 | 7.15% → 7.04% (−0.11 pp) | 1.196 → 1.224 (+0.028) | +0.27 pp [0.04, 0.51] |\n| 7301–7500 | 7.23% → 7.13% (−0.11 pp) | 1.212 → 1.216 (+0.004) | −0.07 pp [−0.38, 0.23] |\n| 3301–3500 | −0.07 pp | +0.019 | +0.14 pp |\n| 4501–4700 | −0.15 pp | +0.044 | +0.44 pp |\n| 8401–8600 | −0.16 pp | +0.036 | +0.36 pp |\n| 9601–9800 | −0.14 pp | +0.020 | +0.13 pp |\n\nPooled over 1,200 worlds: utility +0.21 pp [0.10, 0.32], maxDD −0.12 pp [−0.17, −0.07], Sharpe +0.025 [0.014, 0.036]. Mean maxDD never rises (limit +0.5 pp) and Sharpe never falls (limit −0.03) in any block. The Tiger track is bit-identical.\n\nReusable scratch: paired stats script /tmp/loop-review-5-wildcard/paired.cjs; per-block results /tmp/loop-review-5-wildcard/{base,wt}-<block>.json.",
+   "research": {
+    "checkBefore": "Check block, seeds 6500–6649 (150 worlds), at 1d672c1. Allocator: utility 13.56% vs baseline 7.34%, uplift 6.22% [90% 4.86%, 7.57%], wins 69%, Sharpe 1.35 vs 0.89, maxDD 7.18% vs 6.79% (6.23% at the baseline's vol). Tiger: -7.69% vs -22.13%, uplift 14.44% [11.50%, 17.38%], Sharpe -0.27 vs -0.15, maxDD 24.39% vs 39.62%.",
+    "checkAfter": "Check block, seeds 6500–6649, with the change. Allocator: utility 13.96% vs baseline 7.34%, uplift 6.61% [90% 5.22%, 8.01%], wins 69%, Sharpe 1.38 vs 0.89, maxDD 7.00% vs 6.79% (6.15% at the baseline's vol). Tiger unchanged: -7.69% vs -22.13%, maxDD 24.39%, Sharpe -0.27.\n\nPaired, candidate minus 1d672c1 (n=150):\n- utility +0.396 pp [90% +0.104, +0.687], better in 57% of worlds;\n- center maxDD -0.176 pp [-0.323, -0.030];\n- center Sharpe +0.037 [+0.006, +0.068];\n- tiger: 0.000 on every metric.\n\nRisk guard held: maxDD is down, not up (limit +0.5 pp), and Sharpe is up, not down (limit -0.03).",
+    "devBefore": "Dev block, seeds 2001–2200 (200 worlds), at 1d672c1. Allocator: utility 12.13% vs baseline 5.96%, uplift 6.17% [90% 5.04%, 7.31%], wins 72%, Sharpe 1.24 vs 0.79, maxDD 7.24% vs 6.97% (6.54% at the baseline's vol). Tiger: -4.16% vs -19.03%, uplift 14.87% [12.23%, 17.51%], Sharpe -0.19 vs -0.12, maxDD 23.06% vs 38.47%.",
+    "devAfter": "Dev block, seeds 2001–2200, with the change. Allocator: utility 12.44% vs baseline 5.96%, uplift 6.48% [90% 5.34%, 7.62%], wins 73%, Sharpe 1.27 vs 0.79, maxDD 7.09% vs 6.97% (6.45% at the baseline's vol). Tiger unchanged: -4.16% vs -19.03%, maxDD 23.06%, Sharpe -0.19.\n\nPaired, candidate minus 1d672c1 (n=200):\n- utility +0.309 pp [90% +0.082, +0.536], better in 59% of worlds;\n- center maxDD -0.158 pp [-0.287, -0.028];\n- center Sharpe +0.025 [0.000, +0.050];\n- tiger: 0.000 on every metric.\n\nRisk guard held: maxDD is down and Sharpe is up.",
+    "variantsTried": 5
+   }
+  }
+ ],
+ "confirmations": [
+  {
+   "label": "combined",
+   "kept": [
+    0,
+    1
+   ],
+   "dropped": [],
+   "ok": false,
+   "allocator": {
+    "mean": -0.00001436584368266991,
+    "lo": -0.00003654959284943839,
+    "hi": 0.000007817905484098571,
+    "wins": 0.02
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": -4.016653379379509e-7,
+     "lo": -0.000009024847429648302,
+     "hi": 0.0000082215167537724,
+     "wins": 0.025
+    },
+    "allocatorSharpe": {
+     "mean": -0.00012222231376103705,
+     "lo": -0.0002894637370935272,
+     "hi": 0.00004501910957145313,
+     "wins": 0.015
+    },
+    "tigerMaxDD": {
+     "mean": -0.011706656826358363,
+     "lo": -0.015549559959725508,
+     "hi": -0.007863753692991218,
+     "wins": 0.355
+    },
+    "tigerSharpe": {
+     "mean": -0.011271987260566399,
+     "lo": -0.0424931187088279,
+     "hi": 0.019949144187695105,
+     "wins": 0.45
+    }
+   }
+  },
+  {
+   "label": "best",
+   "kept": [
+    0
+   ],
+   "dropped": [],
+   "ok": false,
+   "allocator": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "allocatorSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerMaxDD": {
+     "mean": -0.011706656826358363,
+     "lo": -0.015549559959725508,
+     "hi": -0.007863753692991218,
+     "wins": 0.355
+    },
+    "tigerSharpe": {
+     "mean": -0.011271987260566399,
+     "lo": -0.0424931187088279,
+     "hi": 0.019949144187695105,
+     "wins": 0.45
+    }
+   }
+  }
+ ],
+ "merged": {
+  "kept": [
+   1
+  ],
+  "diffFile": "docs/loops/loop-5/merge.diff",
+  "note": "the operator fix, confirmed neutral alone on block B"
+ },
+ "baselineA": {
+  "sha": "1d672c17276f9d4ee10d0e31fe646f6050e19cab",
+  "dirty": false,
+  "allocator": {
+   "worlds": 200,
+   "utility": 0.11952609649657715,
+   "baseline": 0.07084566783548855,
+   "uplift": 0.048680428661088467,
+   "upliftLo": 0.03547722069588619,
+   "upliftHi": 0.06188363662629074,
+   "winRate": 0.63,
+   "sharpe": 1.1904720180231199,
+   "baselineSharpe": 0.8348492227483972,
+   "maxDD": 0.07875925076856233,
+   "baselineMaxDD": 0.06956400590948535,
+   "maxDDAtBaselineVol": 0.07048246513376262
+  },
+  "tiger": {
+   "worlds": 200,
+   "utility": -0.06973881262575428,
+   "baseline": -0.2171516247292216,
+   "uplift": 0.14741281210346727,
+   "upliftLo": 0.11395290954453434,
+   "upliftHi": 0.18087271466240018,
+   "winRate": 0.795,
+   "sharpe": -0.2722470664504012,
+   "baselineSharpe": -0.16640197238093649,
+   "maxDD": 0.2434355793176375,
+   "baselineMaxDD": 0.40498554868840486
+  },
+  "books": {
+   "allocator": {
+    "utility": 0.11952609649657715,
+    "sharpe": 1.1904720180231199,
+    "maxDD": 0.07875925076856233,
+    "baselineUtility": 0.07084566783548855,
+    "baselineMaxDD": 0.06956400590948535
+   },
+   "tiger": {
+    "utility": -0.06973881262575428,
+    "sharpe": -0.2722470664504012,
+    "maxDD": 0.2434355793176375,
+    "baselineUtility": -0.2171516247292216,
+    "baselineMaxDD": 0.40498554868840486
+   }
+  }
+ },
+ "confirmation": {
+  "ok": true,
+  "kept": [
+   1
+  ],
+  "dropped": [],
+  "blockB": {
+   "allocator": {
+    "mean": -0.00001436584368266991,
+    "lo": -0.00003654959284943839,
+    "hi": 0.000007817905484098571,
+    "wins": 0.02
+   },
+   "tiger": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": -4.016653379379509e-7,
+     "lo": -0.000009024847429648302,
+     "hi": 0.0000082215167537724,
+     "wins": 0.025
+    },
+    "allocatorSharpe": {
+     "mean": -0.00012222231376103705,
+     "lo": -0.0002894637370935272,
+     "hi": 0.00004501910957145313,
+     "wins": 0.015
+    },
+    "tigerMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    }
+   }
+  },
+  "booksB": {
+   "allocator": {
+    "utility": 0.12406209131339882,
+    "sharpe": 1.2532419555997591,
+    "maxDD": 0.07291804135139957,
+    "baselineUtility": 0.05849492736907525,
+    "baselineMaxDD": 0.06917008575817098
+   },
+   "tiger": {
+    "utility": -0.06905946876041699,
+    "sharpe": -0.21094168525994292,
+    "maxDD": 0.24063887926775437,
+    "baselineUtility": -0.2161077430595069,
+    "baselineMaxDD": 0.39704852226387916
+   }
+  },
+  "baselineB": {
+   "sha": "1d672c17276f9d4ee10d0e31fe646f6050e19cab",
+   "books": {
+    "allocator": {
+     "utility": 0.12407645715708149,
+     "maxDD": 0.07291844301673751
+    }
+   }
+  },
+  "driverAttempts": [
+   {
+    "label": "combined",
+    "kept": [
+     0,
+     1
+    ],
+    "dropped": [],
+    "ok": false,
+    "allocator": {
+     "mean": -0.00001436584368266991,
+     "lo": -0.00003654959284943839,
+     "hi": 0.000007817905484098571,
+     "wins": 0.02
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": -4.016653379379509e-7,
+      "lo": -0.000009024847429648302,
+      "hi": 0.0000082215167537724,
+      "wins": 0.025
+     },
+     "allocatorSharpe": {
+      "mean": -0.00012222231376103705,
+      "lo": -0.0002894637370935272,
+      "hi": 0.00004501910957145313,
+      "wins": 0.015
+     },
+     "tigerMaxDD": {
+      "mean": -0.011706656826358363,
+      "lo": -0.015549559959725508,
+      "hi": -0.007863753692991218,
+      "wins": 0.355
+     },
+     "tigerSharpe": {
+      "mean": -0.011271987260566399,
+      "lo": -0.0424931187088279,
+      "hi": 0.019949144187695105,
+      "wins": 0.45
+     }
+    }
+   },
+   {
+    "label": "best",
+    "kept": [
+     0
+    ],
+    "dropped": [],
+    "ok": false,
+    "allocator": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "allocatorSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerMaxDD": {
+      "mean": -0.011706656826358363,
+      "lo": -0.015549559959725508,
+      "hi": -0.007863753692991218,
+      "wins": 0.355
+     },
+     "tigerSharpe": {
+      "mean": -0.011271987260566399,
+      "lo": -0.0424931187088279,
+      "hi": 0.019949144187695105,
+      "wins": 0.45
+     }
+    }
+   }
+  ]
+ },
+ "compositions": [
+  {
+   "members": [
+    1,
+    2
+   ],
+   "note": "operatorlift + alpha scoring composed by the orchestrator (conflicts: package.json test lists, the REALLOCATE detail text)"
+  },
+  {
+   "members": [
+    0,
+    1,
+    2
+   ],
+   "note": "tigertime applied plainly, then the operatorlift + alpha composition"
+  }
+ ],
+ "nullResults": [
+  {
+   "angle": "tigerladder (loop 5, TIGER track): scale the Tiger overlay's drawdown rungs (cut 15%, stop 30%) by the vol the book runs, measured up to its high-water mark, with a floor and a ceiling. This is loop 1's allocator fix carried over to the single-name overlay. RESULT: NULL. No diff is proposed.",
+   "track": "tiger",
+   "status": "null-result",
+   "hypothesis": "Hypothesis tested: a fixed-percentage ladder mis-prices drawdowns across books that run different vol, as it did for the allocator's agents in loop 1. If so, rungs in vol units (sigma measured up to the high-water mark, so the losses being judged cannot move their own limit) should stop fewer books on noise, or protect low-vol books sooner, and do better than uniform deleveraging.\n\nWhy it fails here (NULL on both blocks):\n\n1) The overlay is already vol-targeted (35% on the long), so its risk is compressed. Its unit-return vol (every gate but the ladder) is 22.8 / 33.3 / 37.1% at the 10th / 50th / 90th percentiles on dev (27.3 / 34.1 / 37.4% on check). The name's own vol is 36 / 50 / 65%. A fixed-% ladder on a vol-targeted book is already close to a risk-scaled ladder. Loop 1's agents' vols differed several-fold.\n\n2) Drawdowns in sigma units carry no more information than drawdowns in percent. Test: the no-ladder book on dev, 32,200 closes, forward 20-day return in sigma units.\n   - By drawdown %: +0.114 near the high to -0.111 at 30% or more.\n   - By drawdown in sigma: +0.126 to -0.114.\n   - The spread is the same, and the risk-scaled drawdown ranks books no better.\n\n3) The name has no edge (overlay Sharpe about -0.2), so in this arena every ladder only deleverages. The tiger track's CE rises monotonically as exposure falls:\n   - vol target 0.37 / 0.33 / 0.31 / 0.29 gives -0.71 / +0.60 / +1.01 / +1.82 pp on dev\n   - it gives -0.57 / +0.80 / +1.88 pp on check (0.37 / 0.33 / 0.31).\n   Loop 1's gain came from not stopping skilled agents with positive expected returns. That mechanism is absent here.\n\nVariants (all point-in-time: the ladder at close t reads only unit returns up to the last high-water mark, at or before t; a fork test on 40 arena worlds x 3 fork points, 10,240 weights, moved nothing):\n- (a) l1, the loop-1 analogue, widen only: stop = clamp(30% x sigma/20%, 30%, 40%) = max(30%, 1.5 sigma) capped at 40%; the cut moves in proportion.\n- (b) vt-ref, two-sided: rungs set for a book at the 35% vol target; stop = clamp(30% x sigma/35%, 15%, 40%).\n- (c) neutral: as (b) with the reference at the median unit vol, 33.3%. This is a diagnostic, run on dev only.\n- (d) fix0.40: the literal \"name's vol\" reading. 1.5 x name vol is at least 54% in more than 90% of worlds, so that reading collapses to the 40% ceiling, i.e. a 20% cut and 40% stop.\n\nPaired results vs 1d672c1 (tiger track; the allocator is untouched):\n\nDEV, seeds 2001-2200:\n- (a) U -0.05 pp [-0.59, +0.49]; maxDD +0.39 pp [+0.18, +0.60]; Sharpe +0.013\n- (b) U +0.46 [-0.13, +1.05]; maxDD -0.55 [-0.78, -0.33]; Sharpe +0.012 [-0.013, +0.037]\n- (c) U +0.27 [-0.32, +0.86]; maxDD -0.45\n- (d) U -0.22 [-0.91, +0.47]; maxDD +0.79 [+0.52, +1.07]\n- Uniform deleveraging, vol target 0.33: U +0.60 [+0.15, +1.06]; maxDD -0.87 [-1.06, -0.67]; Sharpe +0.012\n\nCHECK, seeds 6500-6649:\n- (a) U +0.09 [-0.74, +0.92]; maxDD +0.75 [+0.48, +1.02]. Fails the +0.5 pp risk guard.\n- (b) U +0.61 [-0.07, +1.30]; maxDD -0.21 [-0.56, +0.15]; Sharpe +0.017\n- (d) U -0.50 [-1.44, +0.44]; maxDD +1.28 [+0.96, +1.60]. Fails the risk guard.\n- Vol target 0.33: U +0.80 [+0.36, +1.25]; maxDD -0.87 [-1.03, -0.70]\n\nConclusions:\n- Widening the rungs (a, d) gives no utility and raises maxDD. On check it fails the risk guard.\n- Two-sided scaling (b) is simply a tightening for lower-vol books: 46-48 stop-outs vs 25-28. Its utility gain is not significant on either block. A 6% cut in the vol target beats it on BOTH blocks, with more utility and less drawdown. It does not beat uniform deleveraging, so it is not proposed.",
+   "research": {
+    "checkBefore": "Check block, seeds 6500-6649 (150 worlds), code at 1d672c1:\n- allocator: utility 13.56% vs baseline 7.34%; uplift 6.22% [90% 4.86%, 7.57%]; wins 69%; Sharpe 1.35 vs 0.89; maxDD 7.18% vs 6.79% (6.23% at the baseline's vol).\n- tiger: utility -7.69% vs baseline -22.13%; uplift 14.44% [11.50%, 17.38%]; wins 79%; Sharpe -0.27 vs -0.15 (-0.275 unrounded); maxDD 24.39% vs 39.62%.",
+    "checkAfter": "Check block, seeds 6500-6649, no diff proposed: 'after' equals 'before'.\n\nFor the record, the full arena with the best variant, (b) vt-ref, set in RECOMMENDED_TIGER:\n- allocator: bit-identical (13.56%, Sharpe 1.35, maxDD 7.18%).\n- tiger: utility -7.08% vs baseline -22.13%; uplift 15.05% [12.11%, 17.99%]; wins 81%; Sharpe -0.26; maxDD 24.18%.\n- Paired vs before: U +0.61 pp [-0.07, +1.30], maxDD -0.21 pp [-0.56, +0.15], Sharpe +0.017 [-0.012, +0.045]. None of these is significant.\n- Uniform deleveraging (vol target 0.35 to 0.33) does better: U +0.80 [+0.36, +1.25], maxDD -0.87 [-1.03, -0.70].\n\nThe loop-1 analogue (a) on this block: maxDD +0.75 pp [+0.48, +1.02]. That fails the risk guard.",
+    "devBefore": "Dev block, seeds 2001-2200 (200 worlds), code at 1d672c1:\n- allocator: utility 12.13% vs baseline 5.96%; uplift 6.17% [90% 5.04%, 7.31%]; wins 72%; Sharpe 1.24 vs 0.79; maxDD 7.24% vs 6.97% (6.54% at the baseline's vol).\n- tiger: utility -4.16% vs baseline -19.03%; uplift 14.87% [12.23%, 17.51%]; wins 81%; Sharpe -0.19 vs -0.12; maxDD 23.06% vs 38.47%.\n- Ladder activity: 28 stop-outs in 28 worlds; 592 CUT events in 168 of 200 worlds.",
+    "devAfter": "Dev block, seeds 2001-2200, no diff proposed: 'after' equals 'before'.\n\nFor the record, the full arena with the best variant, (b) vt-ref, set in RECOMMENDED_TIGER:\n- allocator: bit-identical (12.13%, Sharpe 1.24, maxDD 7.24%).\n- tiger: utility -3.70% vs baseline -19.03%; uplift 15.33% [12.56%, 18.10%]; wins 78%; Sharpe -0.18; maxDD 22.50%.\n- Paired vs before: U +0.46 pp [-0.13, +1.05], maxDD -0.55 pp [-0.78, -0.33], Sharpe +0.012 [-0.013, +0.037].\n- Uniform deleveraging to a 0.33 vol target is better on both axes: U +0.60 [+0.15, +1.06], maxDD -0.87 [-1.06, -0.67].\n\nDeleveraging line on this block:\n| Vol target | U | maxDD |\n|---|---|---|\n| 0.37 | -0.71 | +0.79 |\n| 0.33 | +0.60 | -0.87 |\n| 0.31 | +1.01 | -1.61 |\n| 0.29 | +1.82 | -2.50 |",
+    "variantsTried": 4
+   },
+   "notes": "- NULL result. The diff is empty and the worktree is clean at 1d672c1. On the clean tree, typecheck passes, `npm test` passes 272/272 and the lab suite passes 62/62.\n- Variant count: 4 candidate mechanisms (a-d). There were also 9 reference runs used only to draw the deleveraging line and the matched-exposure checks: vol target 0.29 / 0.31 / 0.33 / 0.37, fixed rungs 25% and 35%, no ladder, no ladder at a 0.29 vol target, and no cut rung.\n- The research harness reproduces the arena's tiger numbers exactly (-4.16% / 23.06% / -0.19 on dev; -7.69% / 24.39% / -0.27 on check).\n- For reproducibility only (not proposed): the experimental patch is at /tmp/claude-0/-home-user-hackathon/4acc9e66-6757-5937-8dcf-eea6aa2ad843/scratchpad/tigerladder-660-1/experimental-ladderVol.diff. It adds TigerParams.ladderVol (null = today's fixed rungs, bit-identical), unit returns and the vol at the high-water mark carried in BookState, and ladderRungs(). The harnesses are in the same folder: res.ts, pred.ts (predictability), pit.ts (point-in-time fork check).\n\nFindings for the orchestrator:\n1) On the tiger track, utility rises monotonically as exposure falls on both blocks. The primary name has no edge (overlay Sharpe about -0.2 to -0.27), so the gamma-3 optimum is less exposure.\n   - Vol target 0.35 to 0.33 alone: +0.60 / +0.80 pp.\n   - Vol target 0.35 to 0.31: +1.01 / +1.88 pp.\n   - Both come with maxDD 0.9-1.8 pp lower.\n   - I do not propose this: it is a parameter sweep outside my angle.\n   - Every future tiger proposal that trims exposure (ladders, gates, cuts) should be judged against this vol-target line. Loop 4's crowding gate should probably be re-read in that light too.\n2) The ladder itself sits on that line. Removing it entirely and matching exposure (vol target 0.29, no ladder) gives U +0.36 pp and maxDD +0.51 pp with Sharpe +0.13. Removing only the cut rung gives Sharpe +0.11. So the ladder mostly exits before rebounds and earns its utility purely by carrying less exposure.\n3) Observation, untested: the cut rung chatters. It produced 592 CUT events in 168 of 200 worlds, about 3.5 per world, because it lifts the moment the drawdown is back under 15%. There is no recover rung, unlike the allocator's ddRecover of 5%. Hysteresis would cut turnover, but it also changes exposure, so it too must beat the vol-target line.\n4) Scratch hygiene: the shared scratchpad root is written by other worktree agents. My first diag.ts was overwritten by agent 660-2. All my files live in scratchpad/tigerladder-660-1/."
+  },
+  {
+   "angle": "Residual scoring (ALLOCATOR track): rank each agent on its record net of the book's common factor instead of its raw Sharpe. NULL RESULT, so no diff is submitted.",
+   "track": "allocator",
+   "status": "null-result",
+   "hypothesis": "Herders and trend agents earn a Sharpe that is mostly the crowd's run-up, and their records overlap the skilled pickers'. The candidate (v1) scored each agent on its Sharpe net of what the rest of the book already earns: score = S − max(0,ρ)·max(0,S_peers). Here S_peers is the Sharpe of a leave-one-out, equal-risk index of the other live agents' records over the same recordWindow. Each record is divided by its own vol, so the index is scale-invariant and no single levered book dominates it. This equals the residual (r − β·f) mean per unit of the agent's TOTAL risk, and it is the marginal-Sharpe test S > ρ·S_peers. The haircut only ever takes credit away. It is point-in-time: it reads only unitReturns up to t−1. The hypothesis was that capital would move from factor riders to pickers.\n\nFinding: the haircut orders the styles correctly. At t=150 on dev seeds (survivors) the mean haircut is: herd 1.36 of S 2.14, trend 0.69 of 1.28, skilled 0.48 of 1.79, noise 0.13 of 0.98, meanrev 0.07 of 1.63. But in the real book it buys nothing, for three reasons.\n(1) Herders are already starved by the position-based crowding limits and multiplicity: 3% of NAV, and their net PnL is positive (+0.23% of NAV).\n(2) The largest no-edge bucket is noise, at 8% of NAV. Noise is uncorrelated with everyone, so the residual cannot touch it. The capital freed from trend (7.6→6.55% of NAV) flows pro rata, partly to noise (8.0→8.2%), and total capital at work falls 46.6→45.4%.\n(3) Pickers share skill (they correlate about 0.17 with each other), so a peer index charges them about 0.5 Sharpe for each other's edge. That is shared alpha, not crowd.\n\nIn an idealized re-allocation on the baseline records with no ladder and no crowd limits, the haircut does lift forward Sharpe (1.04→1.11). So it works as a substitute for position-based crowd limits, not as an addition to them.",
+   "research": {
+    "checkBefore": "Check block 6500–6649, current code 1d672c1: center CE 13.56% vs guardrails 7.34% (uplift +6.22 pp); Sharpe 1.345; maxDD 7.18% (6.23% at the guardrails' vol). Tiger -7.69% vs -22.13%.",
+    "checkAfter": "Check block 6500–6649 with the residual candidate (v1; not submitted): center CE 13.54% (paired -0.02 pp [90% -0.33, +0.29], better in 45% of worlds); Sharpe 1.337 (-0.009 [-0.035, +0.018]); maxDD 7.15% (-0.03 pp [-0.16, +0.10]); 6.24% at the guardrails' vol. Tiger bit-identical. Null.",
+    "devBefore": "Dev block 2001–2200, current code 1d672c1: center CE 12.13% vs guardrails 5.96% (uplift +6.17 pp); Sharpe 1.244; maxDD 7.24% (6.54% at the guardrails' vol). Tiger -4.16% vs -19.03%.",
+    "devAfter": "Dev block 2001–2200, paired against 1d672c1:\nv1, equal-risk leave-one-out peer haircut: CE 12.08%, -0.06 pp [90% -0.34, +0.22]; Sharpe 1.242 (-0.002 [-0.028, +0.024]); maxDD 7.21% (-0.03 pp [-0.13, +0.06]); 6.56% at the guardrails' vol.\nv2, crowd-cluster index (peers weighted by ρ+): CE -0.28 pp [-0.63, +0.07]; maxDD -0.18 pp [-0.30, -0.06]; Sharpe -0.007; 6.45% at vol. That buys 0.63 pp of maxDD per pp of CE, on the deleveraging line, far below the 1.3 risk-track bar.\nv3, literal appraisal ratio (Sharpe of r−βf, signed ρ): CE -0.30 pp [-0.63, +0.03]; maxDD +0.06 pp; Sharpe -0.021; 6.63% at vol.\nTiger bit-identical in all three.",
+    "variantsTried": 4
+   },
+   "notes": "NULL RESULT. No diff is submitted, and the worktree is back at 1d672c1 with no changes. On that commit `npm run typecheck` is clean, `npm test` passes 272/272 and `npm -w @allowance/lab run test` passes 62/62. The v1 candidate also passed all 16 existing allocator tests unchanged, including the scale-invariance and year-of-record tests; that is why it uses an equal-risk index and floors ρ and S_peers at 0.\n\nTrials, all on research seeds only: v1, v2 and v3 above. The fourth was a diagnostic oracle, never proposable: the v1 haircut with skilled agents exempted by label, used to bound what separating crowd from shared skill could buy. It gave +0.20 pp [-0.03, +0.44] on dev, maxDD -0.03, Sharpe +0.021. So even perfect separation is worth only about 0.2 pp here, because the crowding limits and multiplicity already handle the crowd.\n\nWhat limits the book is the noise bucket: about 8% of NAV with forward Sharpe about 0. Noise is uncorrelated with everything, so no residual or factor method can find it. Per-style capital (% of NAV, dev) and base→v1 PnL:\n- trend: capital 7.60→6.55, PnL -0.16→-0.28\n- herd: capital 2.99→2.64\n- noise: capital 8.01→8.20\n- meanrev: capital 6.23→6.40\n- skilled: capital 19.98→19.82\n- total capital: 46.6→45.4\n\nPairwise record correlations (dev, first 150 ticks): herd~herd 0.95, trend~trend 0.49, herd~trend 0.31, skilled~skilled 0.17 (the same for same-operator desks), meanrev~trend -0.30, noise~anything about 0.\n\nPer-world swings are large (±10 pp, e.g. seed 2066 -11.4 pp, 2120 +10.4 pp) and cancel. They come from worlds where trend is genuinely profitable, or not. In 2066 two identical trend agents (Sharpe 2.15) were each charged for the other, on top of multiplicity, and their capital went to a noise agent.\n\nFiles, none of them in the repo:\n- experiment diff for v1 (allocator.ts plus stats.ts equalRiskIndex): /tmp/claude-0/-home-user-hackathon/4acc9e66-6757-5937-8dcf-eea6aa2ad843/scratchpad/residual-v1-experiment.diff\n- per-world JSONs: base_A/B, v1_A/B, v2_A, v3_A and oracle_A .json in the same folder\n- diagnostic scripts: corr.mts, alloc.mts, haircut.mts, ic.mts and world.mts in the same folder\n\nNo arena, CLI, judge or setup files were touched."
+  }
+ ],
+ "structureAlone": {
+  "rule": "from loop 5: if nothing confirmed, each structure winner is checked alone on block B for neutrality (the driver now does this itself)",
+  "candidate": 1,
+  "blockB": {
+   "allocator": {
+    "mean": -0.00001436584368266991,
+    "lo": -0.00003654959284943839,
+    "hi": 0.000007817905484098571,
+    "wins": 0.02
+   },
+   "tiger": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": -4.016653379379509e-7,
+     "lo": -0.000009024847429648302,
+     "hi": 0.0000082215167537724,
+     "wins": 0.025
+    },
+    "allocatorSharpe": {
+     "mean": -0.00012222231376103705,
+     "lo": -0.0002894637370935272,
+     "hi": 0.00004501910957145313,
+     "wins": 0.015
+    },
+    "tigerMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    }
+   },
+   "book": {
+    "worlds": 200,
+    "utility": 0.12406209131339882,
+    "baseline": 0.05849492736907525,
+    "uplift": 0.06556716394432356,
+    "upliftLo": 0.05283814078948535,
+    "upliftHi": 0.07829618709916178,
+    "winRate": 0.745,
+    "sharpe": 1.2532419555997591,
+    "baselineSharpe": 0.7053298708684398,
+    "maxDD": 0.07291804135139957,
+    "baselineMaxDD": 0.06917008575817098,
+    "maxDDAtBaselineVol": 0.06261507303497908
+   }
+  },
+  "baseline": {
+   "sha": "1d672c17276f9d4ee10d0e31fe646f6050e19cab",
+   "allocator": {
+    "worlds": 200,
+    "utility": 0.12407645715708149,
+    "baseline": 0.05849492736907525,
+    "uplift": 0.06558152978800626,
+    "upliftLo": 0.05285267963911128,
+    "upliftHi": 0.07831037993690124,
+    "winRate": 0.745,
+    "sharpe": 1.2533641779135203,
+    "baselineSharpe": 0.7053298708684398,
+    "maxDD": 0.07291844301673751,
+    "baselineMaxDD": 0.06917008575817098,
+    "maxDDAtBaselineVol": 0.06261355135737992
+   }
+  },
+  "ok": true,
+  "verdict": "neutral on block B: utility -0.0014 pp [-0.0037, +0.0008], max drawdown -0.0000 pp, Sharpe -0.0001; tiger unchanged"
+ }
+}

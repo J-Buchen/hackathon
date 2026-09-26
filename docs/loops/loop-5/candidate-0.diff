@@ -1,0 +1,152 @@
+diff --git a/packages/lab/src/strategy.test.ts b/packages/lab/src/strategy.test.ts
+index 513300e..57a6b66 100644
+--- a/packages/lab/src/strategy.test.ts
++++ b/packages/lab/src/strategy.test.ts
+@@ -378,3 +378,92 @@ test("RECOMMENDED_TIGER runs the crowding gate: 2 standard errors over ~a quarte
+   assert.equal(RECOMMENDED_TIGER.crowdLookback, 60);
+   assert.equal(RECOMMENDED_TIGER.crowdFactor, 0.5);
+ });
++
++/* ------------------------------------------------------------------ */
++/* Catalyst timing: de-risk into a print, re-risk after (loop 5)      */
++/* ------------------------------------------------------------------ */
++
++test("RECOMMENDED_TIGER de-risks into a print and re-risks after: half size on the eve only", () => {
++  assert.equal(RECOMMENDED_TIGER.preEventDays, 1, "only the close before the print");
++  assert.equal(RECOMMENDED_TIGER.preEventMult, 0.5);
++  assert.equal(RECOMMENDED_TIGER.postEventDays, 0, "no post-print tilt: size comes back at the print's close");
++  assert.ok(RECOMMENDED_TIGER.announceLead >= RECOMMENDED_TIGER.preEventDays, "the eve always comes after the announcement");
++  const p = syntheticPanel({ days: 520, seed: 31, beta: 0.5, vol: 0.03 });
++  const events = quarterlyEvents(520);
++  // The ladder is off in both books, so NAV paths cannot feed back. Every other
++  // gate (vol target, crowding, beta) reads returns only, so the two books
++  // differ ONLY where the timing rule acts.
++  const on: TigerParams = { ...RECOMMENDED_TIGER, hedgeSymbol: "HG", ddCut: null, ddStop: null };
++  const off: TigerParams = { ...on, preEventDays: 0, preEventMult: 1 };
++  const from = 130;
++  const a = runTiger(p, events, on, { from, to: 519 });
++  const b = runTiger(p, events, off, { from, to: 519 });
++  const prints = new Set(events.map((e) => e.t));
++  let eves = 0;
++  for (let i = 0; i < a.wLong.length; i++) {
++    const day = from + i; // weights held INTO return day `day`, decided at the close of day − 1
++    if (prints.has(day)) {
++      eves++;
++      assert.ok(b.wLong[i]! > 0 && b.wHedge[i]! < 0, "the untimed book is long and hedged into the print");
++      assert.ok(b.wLong[i]! + Math.abs(b.wHedge[i]!) < on.maxGross, "premise: the gross cap does not bind");
++      assert.equal(a.wLong[i], 0.5 * b.wLong[i]!, `half the long into the print on day ${day}`);
++      assert.equal(a.wHedge[i], 0.5 * b.wHedge[i]!, "the hedge follows the long: still beta-neutral through the gap");
++      assert.equal(a.wLong[i + 1], b.wLong[i + 1], `full size again from the print's close (day ${day})`);
++    } else {
++      assert.equal(a.wLong[i], b.wLong[i], `untouched off the eve (day ${day})`);
++      assert.equal(a.wHedge[i], b.wHedge[i]);
++    }
++  }
++  assert.equal(eves, 6, "six prints in range");
++});
++
++test("catalyst timing acts only on public prints: a new print moves only its own eve; an unannounced one moves nothing", () => {
++  const p = syntheticPanel({ days: 400, seed: 32, beta: 0.5 });
++  const base = quarterlyEvents(400);
++  const extra = [...base, { t: 300, date: "d300", label: "new print" }];
++  const params: TigerParams = { ...RECOMMENDED_TIGER, hedgeSymbol: "HG", ddCut: null, ddStop: null };
++  const from = 130;
++  const a = runTiger(p, base, params, { from, to: 399 });
++  const b = runTiger(p, extra, params, { from, to: 399 });
++  for (let i = 0; i < a.wLong.length; i++) {
++    if (from + i === 300) assert.equal(b.wLong[i], 0.5 * a.wLong[i]!, "half into the new print");
++    else assert.equal(b.wLong[i], a.wLong[i], `day ${from + i} does not depend on the print at 300`);
++  }
++  // announceLead 0: a print is public only on its own day, too late to trade into.
++  const surprise: TigerParams = { ...params, announceLead: 0 };
++  const c = runTiger(p, base, surprise, { from, to: 399 });
++  const d = runTiger(p, base, { ...surprise, preEventDays: 0, preEventMult: 1 }, { from, to: 399 });
++  assert.deepEqual(c.wLong, d.wLong, "an unannounced print is carried at full size");
++});
++
++test("NO LOOK-AHEAD holds for RECOMMENDED_TIGER with catalyst timing on", () => {
++  const base = syntheticPanel({ days: 700, seed: 33 });
++  const events = quarterlyEvents(700); // prints at 40 + 63k: 229, 292, 355, …
++  const params: TigerParams = { ...RECOMMENDED_TIGER, hedgeSymbol: "HG" };
++  for (const k of [291, 292, 460]) {
++    // k = 291 is a print's eve, k = 292 the print's close.
++    const fork = forkAt(base, k, 91 + k);
++    const a = runTiger(base, events, params, { from: 130, to: 699 });
++    const b = runTiger(fork, events, params, { from: 130, to: 699 });
++    const lastSame = k + 1 - 130;
++    for (let i = 0; i <= lastSame; i++) {
++      assert.equal(a.wLong[i], b.wLong[i], `long weight moved at return day ${i + 130} after forking at ${k}`);
++      assert.equal(a.wHedge[i], b.wHedge[i]);
++    }
++    assert.notDeepEqual(a.ret.slice(lastSame + 1), b.ret.slice(lastSame + 1), "the fork does change the future");
++  }
++});
++
++test("a gap on a print costs the recommended book about half of what the untimed book pays", () => {
++  const p = syntheticPanel({ days: 400, seed: 34, beta: 0.5, vol: 0.03, shocks: { 292: -0.25 } });
++  const events = quarterlyEvents(400); // 292 = 40 + 4·63 is a print
++  const on: TigerParams = { ...RECOMMENDED_TIGER, hedgeSymbol: "HG" };
++  const off: TigerParams = { ...on, preEventDays: 0, preEventMult: 1 };
++  const from = 130;
++  const a = runTiger(p, events, on, { from, to: 399 });
++  const b = runTiger(p, events, off, { from, to: 399 });
++  const i = 292 - from;
++  assert.ok(b.ret[i]! < -0.1, `the untimed book takes the gap (${b.ret[i]})`);
++  const ratio = a.ret[i]! / b.ret[i]!;
++  assert.ok(ratio > 0.45 && ratio < 0.55, `timed/untimed loss on the print ${ratio.toFixed(3)}`);
++});
+diff --git a/packages/lab/src/strategy.ts b/packages/lab/src/strategy.ts
+index 8fe7daa..5ed5a93 100644
+--- a/packages/lab/src/strategy.ts
++++ b/packages/lab/src/strategy.ts
+@@ -9,12 +9,14 @@
+  *   cut    a trend filter (don't fight the tape) and a drawdown ladder:
+  *          cut at `ddCut`, flat at `ddStop` (the mandate is revoked), and only
+  *          re-underwritten after `reentryDays` AND the trend is back
+- *   time   lean in (or out) ahead of scheduled earnings, and after them
++ *   time   lean in (or out) ahead of scheduled earnings, and after them. A
++ *          print the thesis has no edge on is unpaid gap risk, so the
++ *          recommended book carries only half its long (and its hedge) through
++ *          each public print and re-risks at the print's close
+  *   hedge  short China-ADR beta (KWEB/FXI/MCHI) with a trailing-beta hedge;
+  *          with `hedgeBeta` set, the beta is shrunk toward a prior by its own
+  *          precision and clipped, so the short leg cancels the market
+  *          exposure the thesis does not claim (and no more)
+- *   hedge  short China-ADR beta (KWEB/FXI/MCHI) with a trailing-beta hedge
+  *   crowd  trim a name whose rally the thesis cannot explain: when its
+  *          idiosyncratic return (net of its trailing beta to the hedge index)
+  *          over the last `crowdLookback` days has a t-statistic above
+@@ -145,11 +147,33 @@ export interface HedgeBeta {
+  * size. Realized volatility cannot see that risk: a steady, flow-driven rally
+  * looks calm, so vol targeting alone holds full (sometimes levered) size into the
+  * unwind, and the one-day gap is what a γ = 3 investor pays most for.
++ * Catalyst timing (loop 5): de-risk INTO a scheduled print, re-risk after it.
++ * On the close before a public print (announced ≥ `announceLead` days ahead)
++ * the long's target — and with it the hedge, which is sized off the long — is
++ * halved; at the print's close the normal size comes back (the vol target then
++ * includes the print). A print the thesis cannot sign is a zero-mean gap:
++ * holding it pays no premium, a γ-investor's cost of a gap grows with the
++ * SQUARE of the size carried through it, and the round trip to shed it
++ * (costBps on the long, hedgeCostBps on the hedge, out and back) grows only
++ * linearly. Halving removes 3/4 of the gap variance for half of a full exit's
++ * round trip; going flat pays the other half for the last 1/4. Leaning IN
++ * (preEventMult > 1) is the same trade with the sign flipped: it pays only if
++ * the book can sign the print. On the arena's research seeds (half and flat
++ * were the only fixed cuts tried; a cut sized by the name's estimated print
++ * volatility did no better), half lowers the overlay's max drawdown in every
++ * 200-world block and raises its expected utility by ~0.4 pp, a gain that one
++ * 200-world block usually cannot resolve: each world's utility swings with
++ * the signs of its ~3 prints. Flat gains nothing measurable after its round
++ * trips; leaning in loses. Break-even: an expected print return of about
++ * +0.4% (a thesis edge on the print itself) would make carrying the full size
++ * worth it again.
+  */
+ export const RECOMMENDED_TIGER: TigerParams = {
+   ...BUY_AND_HOLD,
+   volTarget: 0.35,
+   volLookback: 40,
++  preEventDays: 1,
++  preEventMult: 0.5,
+   ddCut: 0.15,
+   ddStop: 0.3,
+   reentryDays: 20,

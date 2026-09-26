@@ -195,6 +195,19 @@ function confirmIn(dir, kept, dropped, label) {
 if (winners.length) {
   let conf = winners.length > 1 ? tryConfirm(winners, "combined") : null;
   if (!conf?.ok) conf = tryConfirm([winners[0]], "best");
+  // From loop 5: a structure winner never rides on a performance claim. If
+  // nothing confirmed, each structure winner is checked alone on block B for
+  // neutrality (loop 5's operator fix was only ever tried paired with a
+  // performance change that failed).
+  if (!conf?.ok) {
+    for (const w of winners.filter((x) => x.p.track === "structure" && x !== winners[0])) {
+      const alone = tryConfirm([w], `structure-${w.k}`);
+      if (alone?.ok) {
+        conf = alone;
+        break;
+      }
+    }
+  }
   if (conf) {
     report.confirmation = { ok: conf.ok, kept: conf.kept, dropped: conf.dropped, blockB: conf.blockB, booksB: conf.booksB, baselineB: conf.baselineB };
     if (conf.ok) {

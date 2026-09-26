@@ -20,8 +20,10 @@
  *   - counterparty        = AgentSpec.operator     (a stop-out of one name caps the
  *                           operator's other live names at cutFactor of their full size,
  *                           as a group in one applyTargets plan, until each recovers on
- *                           its own record; a ceiling on capital, so it never compounds
- *                           with a ladder cut or an earlier cap, and it never revokes)
+ *                           its own record; a ceiling kept apart from the name's own
+ *                           size, so a name holds min(own size, ceiling): the cap never
+ *                           compounds with a ladder cut or an earlier cap, never weakens
+ *                           the name's own ladder, and never revokes)
  *   - trading size        = available × leverage   (available = the budget − what the node
  *                           spent itself − what it handed down; sized by `sizeOrder` in the
  *                           gate, never from a number the book keeps)
@@ -48,14 +50,19 @@
 import { DelegationTree, formatAmount, parseAmount } from "@allowance/core";
 import {
   allocate,
-  cutToCeiling,
+  cutTo,
   ladderStep,
   nextCounterpartyCaps,
+  nextSizing,
+  rebalanceMove,
   scanCrowding,
+  sizedBudget,
   type AllocationPolicy,
   type CenterBookPolicy,
   type CounterpartyCap,
   type LadderState,
+  type OperatorSizing,
+  type SizingEvent,
 } from "./allocator";
 import { orderNotional, orderPnl, preTradeCheck, sizeOrder, type GateViolation, type SizedOrder } from "./gate";
 import { cosineSimilarity } from "./stats";
@@ -162,6 +169,14 @@ export interface AgentResult {
    * one; 0 once its mandate is closed). An operator cap is a fraction of this.
    */
   fullSize: number[];
+  /**
+   * The agent's OWN size each tick (USDC, a budget, like `fullSize`): what its
+   * own rules give it, i.e. what it would hold with no operator (see
+   * `OperatorSizing`). Its budget is this, or its operator's ceiling
+   * (cutFactor × `fullSize`) while one holds it, whichever is smaller. 0 once
+   * its mandate is closed.
+   */
+  ownSize: number[];
   /** Realized PnL (USDC) each tick. */
   pnl: number[];
   ladder: LadderState;
@@ -202,6 +217,11 @@ function toUnits(usdc: number): bigint {
 
 function toUsdc(units: bigint): number {
   return Number(formatAmount(units));
+}
+
+/** `usdc` rounded to whole micro-USDC, as a budget in the tree is. */
+function asBudget(usdc: number): number {
+  return toUsdc(toUnits(usdc));
 }
 
 function describeViolation(v: GateViolation): string {
@@ -532,6 +552,7 @@ export async function runBook(
       unitReturns: [],
       capital: [],
       fullSize: [],
+      ownSize: [],
       pnl: [],
       ladder: "active",
       gateViolations: 0,
@@ -552,12 +573,18 @@ export async function runBook(
   // clone standing would be re-sized straight back into the same trade.
   const crowdCaps = new Map<string, { cap: number; book: Weights }>();
   // Each agent's full size (see `AgentResult.fullSize`), and the names capped
-  // because another name of the same operator was stopped out. The cap is sized
-  // on capital (`cutToCeiling`), so it needs the full size it is a fraction of.
+  // because another name of the same operator was stopped out. The cap is a
+  // ceiling on capital (`OperatorSizing`), a fraction of that full size.
   const fullSize = new Map<string, number>(agents.map((a) => [a.name, perAgent]));
   let operatorCaps: ReadonlyMap<string, CounterpartyCap> = new Map();
   // The operator cap is a cut to `cutFactor`: without a cut factor below 1 there is none.
   const capFactor = center?.cutFactor !== undefined && center.cutFactor < 1 ? center.cutFactor : null;
+  // Every name an operator ceiling holds (capped, or lifted and not yet
+  // re-sized), with its OWN size kept apart from the ceiling: it holds the
+  // smaller of the two (`OperatorSizing`). A name without an entry holds its
+  // own size, which is then simply its budget in the tree.
+  const holds = new Map<string, OperatorSizing & { ceiling: number }>();
+  const sizingPolicy = { cutFactor: capFactor ?? 1, rebalanceBand: center?.rebalanceBand ?? 0 };
   const history: Observation["history"][number][] = [];
   const nav: number[] = [];
   const bookReturns: number[] = [];
@@ -570,6 +597,17 @@ export async function runBook(
   // from the mandate's AVAILABLE authority and audited against the tree.
   const budgetOf = (a: AgentResult) =>
     tree.isRevokedInChain(a.name) ? 0 : toUsdc(tree.requireNode(a.name).mandate.budget);
+  // Move a name's sizing by one event and return the budget it now holds (a
+  // name with no hold starts from its budget in the tree, which is its own
+  // size). Its own size is kept in whole micro-USDC, as a budget in the tree
+  // is; the entry is dropped once no ceiling holds the name.
+  const moveHeld = (a: AgentResult, e: SizingEvent): number => {
+    const next = nextSizing(holds.get(a.name) ?? { own: budgetOf(a), ceiling: null }, e, sizingPolicy);
+    const own = asBudget(next.own);
+    if (next.ceiling === null) holds.delete(a.name);
+    else holds.set(a.name, { own, ceiling: next.ceiling });
+    return sizedBudget({ own, ceiling: next.ceiling });
+  };
   const size = (gated: readonly { weights: Weights }[], now: number): SizedOrder[] =>
     agents.map((a, i) => sizeOrder(tree, a.name, gated[i]!.weights, { leverage: policy.leverage, now }));
   const audit = (t: number, at: "start" | "end") => {
@@ -596,14 +634,14 @@ export async function runBook(
     /* 1) Scheduled reallocation (center book only). ---------------- */
     if (center && t >= center.warmup && (t - center.warmup) % center.rebalanceEvery === 0) {
       const deployable = center.deploy * Math.min(currentNav, spec.aum);
+      // Each name's OWN target: its ladder's cut and any crowding cap, and no
+      // operator cap. An operator's ceiling is applied on top (`holds`).
       const scores = allocate(
         agents.map((a) => ({
           name: a.name,
           unitReturns: a.unitReturns,
           stopped: a.ladder === "stopped",
           ladderMultiplier: a.ladder === "cut" ? (center.cutFactor ?? 1) : 1,
-          // A ceiling like the ladder's: `allocate` takes the smaller, never the product.
-          ...(capFactor !== null && operatorCaps.has(a.name) ? { counterpartyMultiplier: capFactor } : {}),
           crowdCap: crowdCaps.get(a.name)?.cap,
         })),
         deployable,
@@ -615,17 +653,38 @@ export async function runBook(
         const agent = agents.find((a) => a.name === s.name)!;
         if (agent.ladder === "stopped") continue;
         const current = budgetOf(agent);
-        const moved = current === 0 ? (s.target > 0 ? Infinity : 0) : Math.abs(s.target - current) / current;
-        if (moved < center.rebalanceBand) continue;
+        const record = `(sharpe ${s.sharpe.toFixed(2)}, shrunk ${s.shrunkSharpe.toFixed(2)}, same-bet ×${s.multiplicity.toFixed(2)})`;
+        const held = holds.get(s.name);
+        if (held) {
+          // Its own size moves as every budget does (to its own target, under
+          // the band). The ceiling is refreshed at its new full size while the
+          // cap is in force, and dropped once the cap has lifted. It holds the
+          // smaller of the two, exactly: no band on top.
+          const capped = operatorCaps.has(s.name);
+          const to = moveHeld(agent, { kind: "reallocate", target: s.target, fullSize: s.fullTarget, capped });
+          if (toUnits(to) === toUnits(current)) continue;
+          targets.set(s.name, toUnits(to));
+          decisions.push({
+            t,
+            kind: "REALLOCATE",
+            node: s.name,
+            detail:
+              `${current.toFixed(0)} → ${to.toFixed(0)} USDC ` +
+              (capped
+                ? `(its own size ${held.own.toFixed(0)} → ${holds.get(s.name)!.own.toFixed(0)}, under its operator's cap ` +
+                  `at ×${capFactor} of its full size ${s.fullTarget.toFixed(0)}) `
+                : "(its operator's cap has lifted: back to its own size) ") +
+              record,
+          });
+          continue;
+        }
+        if (rebalanceMove(current, s.target) < center.rebalanceBand) continue;
         targets.set(s.name, toUnits(s.target));
         decisions.push({
           t,
           kind: "REALLOCATE",
           node: s.name,
-          detail:
-            `${current.toFixed(0)} → ${s.target.toFixed(0)} USDC ` +
-            `(sharpe ${s.sharpe.toFixed(2)}, shrunk ${s.shrunkSharpe.toFixed(2)}, ` +
-            `same-bet ×${s.multiplicity.toFixed(2)})`,
+          detail: `${current.toFixed(0)} → ${s.target.toFixed(0)} USDC ${record}`,
         });
       }
       applyTargets(tree, podOf, subsOf, targets);
@@ -686,6 +745,8 @@ export async function runBook(
           const prior = crowdCaps.get(name);
           crowdCaps.set(name, { cap: prior ? Math.min(prior.cap, cut) : cut, book: gated[i]!.weights });
           targets.set(name, toUnits(cut));
+          // A held name's own size is cut to the same level: it holds `cut` either way.
+          if (holds.has(name)) moveHeld(agents[i]!, { kind: "crowdCut", to: cut });
         }
         applyTargets(tree, podOf, subsOf, targets);
         const podCount = (names: string[]) => new Set(names.map((m) => podOf.get(m))).size;
@@ -724,6 +785,7 @@ export async function runBook(
       a.unitReturns.push(unit);
       a.capital.push(order.authority);
       a.fullSize.push(tree.isRevokedInChain(a.name) ? 0 : fullSize.get(a.name)!);
+      a.ownSize.push(tree.isRevokedInChain(a.name) ? 0 : (holds.get(a.name)?.own ?? budgetOf(a)));
       a.pnl.push(pnl);
       tickPnl += pnl;
     });
@@ -760,6 +822,7 @@ export async function runBook(
         // subtree is revoked). The freed authority is available to the pod.
         const subs = tree.subtree(a.name).length - 1;
         const freed = toUsdc(tree.close(a.name));
+        holds.delete(a.name);
         stoppedNow.push(a.name);
         decisions.push({
           t,
@@ -773,18 +836,23 @@ export async function runBook(
         });
       } else if (next === "cut" && center) {
         const factor = center.cutFactor ?? 1;
-        if (capFactor !== null && operatorCaps.has(a.name)) {
-          // Its operator's cap already holds it at `cutFactor` of its full size,
-          // and the ladder's cut is the same ceiling: cut on capital, not again.
-          const to = cutToCeiling(capital, fullSize.get(a.name)!, factor);
+        const held = holds.get(a.name);
+        if (held) {
+          // An operator ceiling holds it below its own size. Its ladder cuts its
+          // OWN size, as it cuts every name's, and it holds the smaller of that
+          // and the ceiling: never more than its ladder alone allows, and not
+          // cut again where the ceiling already holds it.
+          const to = cutTo(capital, moveHeld(a, { kind: "ladderCut" }));
           if (to !== null) applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(to)]]));
           decisions.push({
             t,
             kind: "CUT",
             node: a.name,
             detail:
-              `drawdown ≥ ${pct(rungs.ddCut)}${why} → capital ×${factor} of its full size ` +
-              (to === null ? "(its operator's cap already holds it there: not cut again)" : `(${capital.toFixed(0)} → ${to.toFixed(0)} USDC)`),
+              `drawdown ≥ ${pct(rungs.ddCut)}${why} → its own size ×${factor} ` +
+              `(${held.own.toFixed(0)} → ${holds.get(a.name)!.own.toFixed(0)} USDC), under its operator's ceiling ` +
+              `${held.ceiling.toFixed(0)} ` +
+              (to === null ? `(it holds ${capital.toFixed(0)}: not cut again)` : `(${capital.toFixed(0)} → ${to.toFixed(0)} USDC)`),
           });
         } else {
           applyTargets(tree, podOf, subsOf, new Map([[a.name, toUnits(capital * factor)]]));
@@ -822,9 +890,13 @@ export async function runBook(
       // The whole group in ONE plan: shrinks, then the pods, in one applyTargets.
       const cuts = new Map<string, bigint>();
       for (const { name, after } of update.capped) {
-        const capital = budgetOf(agents.find((a) => a.name === name)!);
+        const agent = agents.find((a) => a.name === name)!;
+        const capital = budgetOf(agent);
         const full = fullSize.get(name)!;
-        const to = cutToCeiling(capital, full, capFactor);
+        // The ceiling is cutFactor × its full size however many caps came
+        // before, and its own size is untouched: a name lifted and not yet
+        // re-sized keeps the own size its hold kept, not the capped budget.
+        const to = cutTo(capital, moveHeld(agent, { kind: "cap", fullSize: full }));
         if (to !== null) cuts.set(name, toUnits(to));
         decisions.push({
           t,

@@ -1,0 +1,700 @@
+diff --git a/README.md b/README.md
+index e338f1f..37bc9a8 100644
+--- a/README.md
++++ b/README.md
+@@ -13,7 +13,9 @@ the decisions, and each one lands as one operation on one mandate tree:
+   order is sized from the agent's available authority in the tree (since loop 3),
+   so the book's own accounting can never let an agent trade more than its
+   reservation; each order is audited against the tree before it is marked.
+-- **(A) Adjusted:** reservations are resized from risk-adjusted records (`resize`).
++- **(A) Adjusted:** reservations are resized from risk-adjusted records (`resize`),
++  scored on alpha (since loop 5): the part of a record the market explains
++  (its beta times the market's return) is the market's, not the agent's.
+ - **(G) Grouped:** agents that are one trade (overlapping positions) are cut as a
+   group, by one factor in one pass. Since loop 3 an operator is also one
+   counterparty: when one of its agents is stopped out, its other live agents are
+@@ -128,7 +130,10 @@ the mandate tree:
+   a mandate tree, and every allocator action lands in the same audited event
+   log as payments.
+ - **Allocation uses risk-adjusted, attributable returns, and is
+-  correlation-aware.** Clones split one allocation.
++  correlation-aware.** Each record is scored on the Sharpe ratio of what the
++  market does not explain (an appraisal ratio: single-index regression on the
++  equal-weighted market of the fund's universe), so an agent is not paid in
++  capital for riding a rally. Clones split one allocation.
+ - **A risk-scaled drawdown ladder:** cut at 10% and stop out at 20%,
+   widened for a volatile agent to 1.5× the volatility it runs (measured up to its
+   last high-water mark, so a loss cannot loosen its own stop), and never past a
+@@ -154,10 +159,11 @@ The example portfolio **runs like a Tiger Cub**:
+ 
+ Three Tiger-Cub agents in three pods, each weighting the questions differently,
+ all land on SBUX: a hedge-fund hotel. Over 20 synthetic markets, the center book
+-cuts mean max drawdown from **7.9% to 5.6%**, the loss in the crowd's unwind
+-from **−4.9% to −2.5%**, and peak crowded exposure from **52% to 15% of NAV**,
+-at the same mean Sharpe (0.50). It gives up return to do it (+2.8% vs +5.5%). An
+-ablation shows crowding control is where the value comes from. This small
++cuts mean max drawdown from **7.9% to 5.5%**, the loss in the crowd's unwind
++from **−4.9% to −2.6%**, and peak crowded exposure from **52% to 15% of NAV**.
++It gives up return to do it (+2.5% vs +5.5%), at a lower mean Sharpe on these
++20 markets (0.43 vs 0.50). An ablation shows crowding control is where the
++value comes from. This small
+ example does not show the improvement loops' gains: across 200-world blocks of
+ the virtual-world arena the center book's certainty-equivalent return beats the
+ per-agent baseline's (14.4% vs 8.6% on loop 3's confirmation block). Its raw max
+diff --git a/docs/CENTER-BOOK.md b/docs/CENTER-BOOK.md
+index 8d025bb..504992e 100644
+--- a/docs/CENTER-BOOK.md
++++ b/docs/CENTER-BOOK.md
+@@ -127,8 +127,16 @@ Around them sit agents that give the allocator something to allocate between:
+ ## The allocator (`allocator.ts`, pure functions)
+ 
+ - **Score** = shrunk Sharpe over the agent's last year of record
+-  (`recordWindow`, 252 days). Shrinkage is `n / (n + 60)`, which pulls a
+-  short record toward zero relative to a long one. (In the examples and the
++  (`recordWindow`, 252 days), **scored on alpha** (`score: "alpha"`, loop 5):
++  the record is regressed on the market's return over the same days (the
++  equal-weighted return of the fund's universe) and scored on what the market
++  does not explain, the appraisal ratio. An agent that was long while the
++  market rallied earned what an index fund would have; that part of its record
++  is attributed to the market, as a pod shop pays its PMs on idiosyncratic
++  P&L. Two records that differ only by market exposure score the same.
++  Correlations and the drawdown ladder still read the raw record.
++  Shrinkage is `n / (n + 60)`, which pulls a short record toward zero
++  relative to a long one. (In the examples and the
+   arena every agent starts on day one, so all records have the same length and
+   the factor cancels when scores become shares; it changes no allocation there.
+   It matters only for agents added mid-run.) A Sharpe estimate's standard error is
+@@ -188,7 +196,7 @@ drawdown against the risk that agent runs, which a per-agent stop-loss cannot.
+ ## Results
+ 
+ The numbers below come from `npm run demo:swarm` at the current code (after
+-loop 2: one-year Sharpe scores, risk-scaled ladder with its 40% ceiling,
++loop 5: one-year Sharpe scores on alpha, risk-scaled ladder with its 40% ceiling,
+ stop-outs by `close`), using the coffee thesis as of
+ 2026-09-25, 260 simulated trading days and 20 market seeds. The two books share
+ agents, gate, leverage and initial capital; they differ in the center book's
+@@ -208,11 +216,11 @@ short **BROS**.
+ 
+ | | per-agent guardrails | center book |
+ |---|---:|---:|
+-| loss in the unwind | −4.9% | **−2.5%** |
+-| max drawdown | 7.9% | **5.6%** (smaller on **17/20** seeds) |
+-| peak crowded (SBUX) exposure | 51.5% of NAV | **15.3%** |
+-| Sharpe | 0.50 | 0.50 (higher on only 10/20 seeds) |
+-| total return | **+5.5%** | +2.8% |
++| loss in the unwind | −4.9% | **−2.6%** |
++| max drawdown | 7.9% | **5.5%** (smaller on **17/20** seeds) |
++| peak crowded (SBUX) exposure | 51.5% of NAV | **15.4%** |
++| Sharpe | **0.50** | 0.43 (higher on only 9/20 seeds) |
++| total return | **+5.5%** | +2.5% |
+ 
+ On day 1 the center book flags "4 agents across 3 pods running one trade in
+ SBUX: 48.0% of NAV > 10% limit". The three Tiger Cubs are joined by the rogue
+@@ -220,8 +228,8 @@ agent, whose clipped book is also long SBUX. Per-agent guardrails never raise
+ it, because no single agent breached anything.
+ 
+ **If the research is wrong** (catalysts carry no edge), the center book still has
+-the smaller max drawdown on **16/20** seeds: 5.6% vs 8.3% mean. Sharpe goes from
+-0.17 to 0.35, and total return from +2.8% to +1.9%. Crowding control doesn't
++the smaller max drawdown on **15/20** seeds: 5.8% vs 8.3% mean. Sharpe goes from
++0.17 to 0.21, and total return from +2.8% to +1.2%. Crowding control doesn't
+ depend on the thesis being right.
+ 
+ **Ablation (mean over the same 20 seeds):**
+@@ -229,10 +237,10 @@ depend on the thesis being right.
+ | variant | max DD | unwind | Sharpe | return |
+ |---|---:|---:|---:|---:|
+ | per-agent guardrails | 7.9% | −4.9% | 0.50 | +5.5% |
+-| center book (all on) | 5.6% | −2.5% | 0.50 | +2.8% |
+-| − crowding limits | 15.4% | −12.1% | 0.32 | +5.0% |
+-| − drawdown cut rung | 5.6% | −2.6% | 0.54 | +3.1% |
+-| − risk-scaled ladder (fixed 10%/20% rungs) | 5.1% | −1.9% | 0.40 | +2.2% |
++| center book (all on) | 5.5% | −2.6% | 0.43 | +2.5% |
++| − crowding limits | 15.9% | −12.6% | 0.30 | +5.1% |
++| − drawdown cut rung | 5.5% | −2.7% | 0.47 | +2.7% |
++| − risk-scaled ladder (fixed 10%/20% rungs) | 5.1% | −1.9% | 0.34 | +2.0% |
+ | crowding limits only | 4.2% | −2.8% | 0.46 | +2.3% |
+ 
+ What this says, plainly:
+@@ -241,13 +249,13 @@ What this says, plainly:
+   comes from it.
+ - **Performance-chasing allocation without crowding control is worse than doing
+   nothing.** Sharpe-weighting pays the crowd for its run-up: max drawdown rises
+-  to 15.4% vs 7.9% for equal weights. This is the case for a book-level risk
++  to 15.9% vs 7.9% for equal weights. This is the case for a book-level risk
+   engine rather than a leaderboard.
+-- **The cost is return.** The center book gives up about 2.7 points of return in
++- **The cost is return.** The center book gives up about 3 points of return in
+   the edge-on case, because it refuses to let the fund's single best idea become
+   half its NAV.
+ - **The drawdown-cut rung does not earn its keep on this market.** Removing it
+-  raises Sharpe from 0.50 to 0.54. It stays in the default because it's standard
++  raises Sharpe from 0.43 to 0.47. It stays in the default because it's standard
+   pod-shop practice and costs little drawdown, but the data doesn't support it
+   here. The stop-out rung (now a `close`) stays either way. Since loop 1 the
+   rungs are risk-scaled. The cut still fires (about 9 times per arena world on
+@@ -257,8 +265,8 @@ What this says, plainly:
+   (−0.03..+0.27). That is not enough to change the default. It is optional:
+   leave `ddCut` unset for a stop-only ladder.
+ - **The risk-scaled ladder (loop 1) trades drawdown for Sharpe here.** With
+-  fixed 10%/20% rungs the center book's mean max drawdown is 5.1% (Sharpe 0.40);
+-  risk-scaled, 5.6% (Sharpe 0.50). It was adopted because it raised fund utility
++  fixed 10%/20% rungs the center book's mean max drawdown is 5.1% (Sharpe 0.34);
++  risk-scaled, 5.5% (Sharpe 0.43). It was adopted because it raised fund utility
+   on sealed arena worlds, where the center book's mean max drawdown is still
+   above the per-agent baseline's; see [`LOOPS.md`](LOOPS.md).
+ - **Loop 2's one-year scores do not help this example.** On sealed arena worlds
+@@ -266,9 +274,16 @@ What this says, plainly:
+   center book's mean Sharpe fell from 0.61 to 0.50 and its max drawdown rose
+   from 5.0% to 5.6%. The markets are one scenario, a crowded trade that unwinds;
+   the arena's 200-world blocks are the yardstick.
++- **Neither do loop 5's alpha scores, on these 20 markets.** Scoring records on
++  alpha moved the center book's mean Sharpe here from 0.50 to 0.43 and its max
++  drawdown from 5.6% to 5.5%. Twenty seeds are too few to tell: over seeds 1–200
++  of this same example the paired change is −0.02 Sharpe (90% ± 0.04), −0.08 pp
++  of certainty-equivalent return (± 0.18) and −0.15 pp of max drawdown (± 0.10):
++  neutral, with a little less drawdown. The example's universe mixes eight coffee
++  equities with gold, rates, FX and bitcoin, so its equal-weighted "market" is a blend.
+ - **The headline seed (7)** is shown as-is rather than a cherry-picked one. On it
+-  the center book has the lower drawdown (5.5% vs 6.6%) and unwind loss, and the
+-  higher Sharpe (1.22 vs 1.08), but the lower return (+7.4% vs +9.3%).
++  the center book has the lower drawdown (5.4% vs 6.6%) and unwind loss, and the
++  higher Sharpe (1.37 vs 1.08), but the lower return (+8.9% vs +9.3%).
+ 
+ ## Limits
+ 
+diff --git a/package.json b/package.json
+index f0f712b..995e542 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/attribution.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/swarm/package.json b/packages/swarm/package.json
+index d7a15dc..d3b2e18 100644
+--- a/packages/swarm/package.json
++++ b/packages/swarm/package.json
+@@ -10,7 +10,7 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/allocator.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/example.test.ts src/reserve.test.ts"
++    "test": "node --import tsx --test src/allocator.test.ts src/attribution.test.ts src/tigercub.test.ts src/book.test.ts src/close.test.ts src/counterparty.test.ts src/example.test.ts src/reserve.test.ts"
+   },
+   "dependencies": {
+     "@allowance/core": "*"
+diff --git a/packages/swarm/src/allocator.ts b/packages/swarm/src/allocator.ts
+index 0ecea48..0e185f5 100644
+--- a/packages/swarm/src/allocator.ts
++++ b/packages/swarm/src/allocator.ts
+@@ -9,7 +9,11 @@
+  *     score = shrunk Sharpe over the agent's last year of record (`recordWindow`),
+  *     then divided by how many OTHER agents are really the same bet (sum of
+  *     positive return correlations). Two clones split one allocation instead of
+- *     each taking a full one.
++ *     each taking a full one. The record is scored on ALPHA (`score`): the
++ *     market's part of it (its beta times the market's return, tick by tick)
++ *     is attributed to the market, not to the agent, as a pod shop pays its
++ *     PMs on idiosyncratic P&L: the market's run over the window is not the
++ *     agent's skill, and an index fund would have earned it too.
+  *  2. A DRAWDOWN LADDER. At `ddCut` an agent's capital is cut to `cutFactor`;
+  *     it is restored only once it recovers above `ddRecover`. At `ddStop` it is
+  *     stopped out: its mandate is closed together with every sub-mandate it
+@@ -47,6 +51,7 @@ import {
+   cosineSimilarity,
+   currentDrawdown,
+   isNewHigh,
++  marketResidual,
+   sharpe,
+   volAtHighWater,
+ } from "./stats";
+@@ -77,6 +82,23 @@ export interface CenterBookPolicy {
+    * drawdown ladder, not by forgetting the evidence.
+    */
+   recordWindow: number;
++  /**
++   * What a record is scored on.
++   *
++   *  - "alpha": the appraisal ratio. Each record is regressed on the market's
++   *    return over the same ticks (`marketResidual`: single-index OLS), and
++   *    the score is the Sharpe ratio of what the market does not explain,
++   *    alpha plus idiosyncratic noise. An agent whose year looks good because
++   *    it was long while the market rose is paid for being long, which any
++   *    index fund supplies for free; the part of the record the fund should
++   *    pay for is the part the market cannot explain. Two records that differ
++   *    only by market exposure score the same.
++   *  - "total": the Sharpe ratio of the raw record.
++   *
++   * Correlations (`multiplicity`) and the drawdown ladder still read the raw
++   * record: risk is risk, whoever explains it.
++   */
++  score: "alpha" | "total";
+   /**
+    * Bayesian-style shrinkage: Sharpe × n / (n + shrinkageObs). It only matters
+    * between records of different lengths: when every agent started together
+@@ -147,6 +169,7 @@ export function defaultCenterBookPolicy(): CenterBookPolicy {
+     warmup: 30,
+     window: 90,
+     recordWindow: 252,
++    score: "alpha",
+     shrinkageObs: 60,
+     maxAgentShare: 0.25,
+     rebalanceBand: 0.1,
+@@ -194,8 +217,11 @@ export interface AgentScoreInput {
+ 
+ export interface AgentScore {
+   name: string;
++  /** Sharpe ratio of what the score reads: the alpha (appraisal ratio), or the raw record (see `CenterBookPolicy.score`). */
+   sharpe: number;
+   shrunkSharpe: number;
++  /** The record's beta to the market over the scoring window (0 when scored on the raw record). */
++  beta: number;
+   vol: number;
+   /** How many agents this one effectively duplicates (≥ 1). */
+   multiplicity: number;
+@@ -214,21 +240,37 @@ export interface AgentScore {
+  * Compute capital targets for every agent. Capital freed by caps, cuts and
+  * crowding stays in cash rather than being pushed onto whoever is left —
+  * cutting risk should reduce risk, not relocate it.
++ *
++ * `market` is the market's return on every tick of the records (oldest first,
++ * `market[i]` realized on the same tick as each agent's `unitReturns[i]`), the
++ * benchmark a record is attributed against when `policy.score` is "alpha".
++ * Every live agent's record must be exactly as long. Without it there is
++ * nothing to attribute to the market and records are scored raw.
+  */
+ export function allocate(
+   agents: readonly AgentScoreInput[],
+   deployable: number,
+   policy: CenterBookPolicy,
++  market?: readonly number[],
+ ): AgentScore[] {
+   const live = agents.filter((a) => !a.stopped);
+   const windows = live.map((a) => a.unitReturns.slice(-policy.recordWindow));
+   const n = windows[0]?.length ?? 0;
++  const bench = policy.score === "alpha" && market !== undefined ? market.slice(-policy.recordWindow) : null;
++  if (bench) {
++    for (const a of live) {
++      if (a.unitReturns.length !== market!.length) {
++        throw new RangeError(`allocate: ${a.name} has ${a.unitReturns.length} returns but the market has ${market!.length} ticks`);
++      }
++    }
++  }
+ 
+   const base = live.map((a, i) => {
+     const w = windows[i]!;
+-    const s = sharpe(w);
++    const { beta, residual } = bench ? marketResidual(w, bench) : { beta: 0, residual: w };
++    const s = sharpe(residual);
+     const shrunk = s * (w.length / (w.length + policy.shrinkageObs));
+-    return { name: a.name, sharpe: s, shrunkSharpe: shrunk, vol: Math.max(annualVol(w), 1e-6) };
++    return { name: a.name, sharpe: s, shrunkSharpe: shrunk, beta, vol: Math.max(annualVol(w), 1e-6) };
+   });
+ 
+   let raw: number[];
+@@ -269,7 +311,7 @@ export function allocate(
+   });
+   for (const a of agents) {
+     if (a.stopped) {
+-      out.push({ name: a.name, sharpe: 0, shrunkSharpe: 0, vol: 0, multiplicity: 1, share: 0, fullTarget: 0, target: 0 });
++      out.push({ name: a.name, sharpe: 0, shrunkSharpe: 0, beta: 0, vol: 0, multiplicity: 1, share: 0, fullTarget: 0, target: 0 });
+     }
+   }
+   return out;
+diff --git a/packages/swarm/src/attribution.test.ts b/packages/swarm/src/attribution.test.ts
+new file mode 100644
+index 0000000..b2e4dca
+--- /dev/null
++++ b/packages/swarm/src/attribution.test.ts
+@@ -0,0 +1,265 @@
++/**
++ * (A) Records are scored on what the market does not explain. An agent is
++ * paid (in capital) for its alpha, not for the market's run while it held
++ * beta. Each test names the guarantee it pins and fails if it breaks.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { allocate, defaultCenterBookPolicy, type AgentScoreInput, type CenterBookPolicy } from "./allocator";
++import { runBook, type BookResult, type SwarmSpec } from "./book";
++import type { SizedOrder } from "./gate";
++import { generateMarket, genericMarketConfig, type Market } from "./market";
++import { gaussian, mulberry32 } from "./rng";
++import { equalWeightReturn, marketResidual, mean, sharpe } from "./stats";
++import { NoiseStrategy, type Strategy, type Weights } from "./strategies";
++
++const series = (seed: number, n: number, drift: number, vol: number) => {
++  const z = gaussian(mulberry32(seed));
++  return Array.from({ length: n }, () => drift + vol * z());
++};
++
++/* ------------------------------------------------------------------ */
++/* The single-index split                                             */
++/* ------------------------------------------------------------------ */
++
++test("marketResidual: recovers beta, keeps the alpha, and ignores any market exposure added to a record", () => {
++  const m = series(1, 250, 0.001, 0.01);
++  const e = series(2, 250, 0.0004, 0.008);
++  const y = e.map((v, i) => v + 1.7 * m[i]!);
++  const { beta, residual } = marketResidual(y, m);
++  // OLS of y on m: the slope is 1.7 plus e's sample covariance with m.
++  const cov = mean(e.map((v, i) => (v - mean(e)) * (m[i]! - mean(m))));
++  const varM = mean(m.map((v) => (v - mean(m)) ** 2));
++  assert.ok(Math.abs(beta - (1.7 + cov / varM)) < 1e-9, `beta ${beta}`);
++  // The residual keeps the intercept: its mean is the record's alpha.
++  assert.ok(Math.abs(mean(residual) - (mean(y) - beta * mean(m))) < 1e-12);
++  // Adding k × market to a record moves its beta by k and leaves the residual as it was.
++  for (const k of [-2, 0.5, 3]) {
++    const shifted = marketResidual(y.map((v, i) => v + k * m[i]!), m);
++    assert.ok(Math.abs(shifted.beta - (beta + k)) < 1e-9);
++    shifted.residual.forEach((r, i) => assert.ok(Math.abs(r - residual[i]!) < 1e-12, `tick ${i}`));
++  }
++});
++
++test("marketResidual: a flat market explains nothing; misaligned series are refused", () => {
++  const y = series(3, 50, 0.001, 0.01);
++  const flat = marketResidual(y, y.map(() => 0.002));
++  assert.equal(flat.beta, 0);
++  assert.deepEqual(flat.residual, y);
++  assert.deepEqual(marketResidual([0.01], [0.02]), { beta: 0, residual: [0.01] });
++  assert.throws(() => marketResidual(y, y.slice(1)), RangeError);
++});
++
++test("equalWeightReturn: the mean over the universe, a missing instrument counting as flat", () => {
++  assert.equal(equalWeightReturn({ A: 0.02, B: -0.01, C: 0.05 }, ["A", "B", "C"]), 0.02);
++  assert.equal(equalWeightReturn({ A: 0.03 }, ["A", "B", "C"]), 0.01);
++  assert.equal(equalWeightReturn({ A: 0.03 }, []), 0);
++});
++
++/* ------------------------------------------------------------------ */
++/* allocate                                                            */
++/* ------------------------------------------------------------------ */
++
++const policy: CenterBookPolicy = { ...defaultCenterBookPolicy(), maxAgentShare: 1 };
++const N = 250;
++// A year in which the market rallied: +0.1% a tick on average, at 1% vol.
++const rally = series(10, N, 0.001, 0.01);
++const agent = (name: string, unitReturns: readonly number[]): AgentScoreInput => ({ name, unitReturns, stopped: false, ladderMultiplier: 1 });
++const shareOf = (out: ReturnType<typeof allocate>, name: string) => out.find((s) => s.name === name)!.share;
++
++test("allocate: alpha is the default score", () => {
++  assert.equal(defaultCenterBookPolicy().score, "alpha");
++});
++
++test("allocate: a record that is the market's run earns no capital for it; the record the market cannot explain does", () => {
++  // Square waves of periods 2, 4 and 8 are exactly uncorrelated over 256 ticks,
++  // so every slope and residual below is known in closed form.
++  const wave = (period: number, i: number) => (i % period < period / 2 ? 1 : -1);
++  const n = 256;
++  // The market rallied: +0.2% a tick at 1% vol (annual Sharpe ≈ 3.2).
++  const market = Array.from({ length: n }, (_, i) => 0.002 + 0.01 * wave(2, i));
++  // `beta`: long the market at 2× plus zero-mean noise of its own. Its raw
++  // record (annual Sharpe ≈ 3.0) is all rally: its alpha is exactly zero.
++  const beta = market.map((m, i) => 2 * m + 0.006 * wave(4, i));
++  // `alpha`: market-neutral, a real but smaller edge (annual Sharpe ≈ 1.3).
++  const alpha = Array.from({ length: n }, (_, i) => 0.0008 + 0.01 * wave(8, i));
++  const agents = [agent("beta", beta), agent("alpha", alpha)];
++  assert.ok(sharpe(beta) > 2 * sharpe(alpha), "raw Sharpe ranks the beta record first, by far");
++
++  const total = allocate(agents, 1_000_000, { ...policy, score: "total" }, market);
++  const scored = allocate(agents, 1_000_000, policy, market);
++  assert.ok(shareOf(total, "beta") > 0.6, `scored raw, the rally wins the book (${shareOf(total, "beta").toFixed(2)})`);
++  assert.ok(shareOf(scored, "beta") < 1e-9, `scored on alpha, the rally is the market's, not the agent's (${shareOf(scored, "beta")})`);
++  assert.ok(shareOf(scored, "alpha") > 1 - 1e-9);
++  const b = scored.find((s) => s.name === "beta")!;
++  assert.ok(Math.abs(b.beta - 2) < 1e-9, `its beta is measured (${b.beta})`);
++  assert.ok(Math.abs(scored.find((s) => s.name === "alpha")!.beta) < 1e-9);
++  assert.equal(total.find((s) => s.name === "beta")!.beta, 0, "a raw score reports no beta");
++});
++
++test("allocate: two records that differ only by market exposure score the same", () => {
++  const edge = series(13, N, 0.0008, 0.01);
++  const other = series(14, N, 0.0005, 0.01);
++  const plain = allocate([agent("edge", edge), agent("other", other)], 1_000_000, policy, rally);
++  const levered = allocate([agent("edge", edge.map((v, i) => v + 1.5 * rally[i]!)), agent("other", other)], 1_000_000, policy, rally);
++  const shorted = allocate([agent("edge", edge.map((v, i) => v - 0.8 * rally[i]!)), agent("other", other)], 1_000_000, policy, rally);
++  for (const out of [levered, shorted]) {
++    for (const name of ["edge", "other"]) {
++      const a = plain.find((s) => s.name === name)!;
++      const b = out.find((s) => s.name === name)!;
++      assert.ok(Math.abs(a.shrunkSharpe - b.shrunkSharpe) < 1e-9, `${name}: same alpha, same score`);
++    }
++  }
++  // (Shares can still differ through the multiplicity: correlations read the raw
++  // record, because risk is risk whoever explains it.)
++  // Scored raw, the same market exposure moves the score.
++  const rawPlain = allocate([agent("edge", edge), agent("other", other)], 1_000_000, { ...policy, score: "total" }, rally);
++  const rawLevered = allocate([agent("edge", edge.map((v, i) => v + 1.5 * rally[i]!)), agent("other", other)], 1_000_000, { ...policy, score: "total" }, rally);
++  assert.ok(Math.abs(rawPlain[0]!.shrunkSharpe - rawLevered[0]!.shrunkSharpe) > 0.1);
++});
++
++test("allocate: scores read the market over the record window only, and exactly the record's ticks", () => {
++  const long = N + 100;
++  const m = series(20, long, 0.001, 0.01);
++  const a = series(21, long, 0.0006, 0.01).map((v, i) => v + m[i]!);
++  const b = series(22, long, 0.0003, 0.01);
++  const out = allocate([agent("a", a), agent("b", b)], 1_000_000, policy, m);
++  // Changing the market BEFORE the window changes nothing.
++  const early = m.map((v, i) => (i < long - policy.recordWindow ? v + 0.05 : v));
++  const again = allocate([agent("a", a), agent("b", b)], 1_000_000, policy, early);
++  assert.deepEqual(again, out);
++  // The window's score is the appraisal ratio of the window.
++  const w = policy.recordWindow;
++  const expected = sharpe(marketResidual(a.slice(-w), m.slice(-w)).residual) * (w / (w + policy.shrinkageObs));
++  assert.ok(Math.abs(out.find((s) => s.name === "a")!.shrunkSharpe - expected) < 1e-12);
++  // A market series not aligned with the records is refused, not silently re-aligned.
++  assert.throws(() => allocate([agent("a", a), agent("b", b)], 1_000_000, policy, m.slice(1)), RangeError);
++});
++
++test("allocate: without a market series, or with score 'total', records are scored raw (the pre-attribution allocator)", () => {
++  const a = series(30, N, 0.0006, 0.01).map((v, i) => v + rally[i]!);
++  const b = series(31, N, 0.0004, 0.01);
++  const agents = [agent("a", a), agent("b", b)];
++  const none = allocate(agents, 1_000_000, policy);
++  const raw = allocate(agents, 1_000_000, { ...policy, score: "total" }, rally);
++  assert.deepEqual(none, raw);
++  assert.ok(Math.abs(none[0]!.sharpe - sharpe(a)) < 1e-12);
++});
++
++/* ------------------------------------------------------------------ */
++/* The book                                                           */
++/* ------------------------------------------------------------------ */
++
++/**
++ * The seed-7 generic market with a scripted market factor on top: every
++ * instrument gets the same f(t) (a rally: +0.1% a tick on average at 1% vol),
++ * and EURUSD alone an edge of its own (+0.15% a tick). Scripting the market
++ * rather than the agents keeps every agent point-in-time.
++ */
++function rallyMarket(): Market {
++  const m = generateMarket(genericMarketConfig(7));
++  const f = series(40, m.ticks.length, 0.001, 0.01);
++  m.ticks.forEach((tick, t) => {
++    for (const k of m.instruments) tick.returns[k] = tick.returns[k]! + f[t]! + (k === "EURUSD" ? 0.0015 : 0);
++  });
++  return m;
++}
++
++/** Long every instrument but EURUSD, equally: the market, give or take. */
++class LongMarket implements Strategy {
++  readonly style = "long-market";
++  decide(): Weights {
++    return { ETH: 1 / 6, BTC: 1 / 6, SOL: 1 / 6, GOLD: 1 / 6, UST10Y: 1 / 6, MEME: 1 / 6 };
++  }
++}
++
++/** Long EURUSD against GOLD: market-neutral, holding the one real edge. */
++class Pair implements Strategy {
++  readonly style = "pair";
++  decide(): Weights {
++    return { EURUSD: 0.5, GOLD: -0.5 };
++  }
++}
++
++function roster(): SwarmSpec {
++  const all = ["ETH", "BTC", "SOL", "GOLD", "UST10Y", "EURUSD", "MEME"];
++  return {
++    principal: "alice",
++    fund: "fund.eth",
++    aum: 10_000_000,
++    pods: [{ label: "systematic", instruments: all }],
++    agents: [
++      { label: "long-market", pod: "systematic", instruments: all, strategy: new LongMarket() },
++      { label: "pair", pod: "systematic", instruments: all, strategy: new Pair() },
++      { label: "noise", pod: "systematic", instruments: all, strategy: new NoiseStrategy(5) },
++    ],
++  };
++}
++
++const avgCapital = (b: BookResult, label: string) => mean(b.agents.find((a) => a.label === label)!.capital.slice(60));
++// Scoring alone: no per-agent cap (three capped agents would all sit at the cap
++// whatever their scores) and no crowding limits (the pair's EURUSD leg would
++// otherwise breach the book's single-instrument limit).
++const isolated: CenterBookPolicy = { ...defaultCenterBookPolicy(), maxAgentShare: 1, crowdMaxShare: 1e9, bookMaxShare: 1e9 };
++
++test("book: the market series it scores against is the equal-weighted return of the fund's universe, tick by tick", async () => {
++  const market = rallyMarket();
++  const book = await runBook(market, roster(), defaultCenterBookPolicy());
++  assert.equal(book.marketReturns.length, market.ticks.length);
++  book.marketReturns.forEach((r, t) => {
++    const want = market.instruments.reduce((s, k) => s + market.ticks[t]!.returns[k]!, 0) / market.instruments.length;
++    assert.ok(Math.abs(r - want) < 1e-15, `tick ${t}`);
++  });
++  for (const a of book.agents) assert.equal(a.unitReturns.length, book.marketReturns.length, "aligned with every record");
++});
++
++test("book: in a rally, the center book moves capital from the agent riding the market to the one with alpha", async () => {
++  const market = rallyMarket();
++  const alpha = await runBook(market, roster(), isolated);
++  const total = await runBook(market, roster(), { ...isolated, score: "total" });
++  const lm = alpha.agents.find((a) => a.label === "long-market")!;
++  assert.ok(sharpe(lm.unitReturns) > 1, "the market rider's raw record looks skilled");
++  assert.ok(
++    avgCapital(alpha, "long-market") < 0.5 * avgCapital(total, "long-market"),
++    `market rider: ${avgCapital(alpha, "long-market").toFixed(0)} scored on alpha vs ${avgCapital(total, "long-market").toFixed(0)} raw`,
++  );
++  assert.ok(avgCapital(alpha, "pair") > avgCapital(total, "pair"), "the alpha agent gets the capital");
++  // The book's decisions say what it scored.
++  const d = alpha.decisions.find((x) => x.kind === "REALLOCATE" && x.node === lm.name);
++  assert.ok(d, "the market rider is resized");
++  assert.match(d!.detail, /alpha sharpe -?\d+\.\d+ net of beta \d+\.\d+/);
++  assert.ok(total.decisions.filter((x) => x.kind === "REALLOCATE").every((x) => !x.detail.includes("alpha")));
++});
++
++test("book: point-in-time — everything that sizes tick t's trades reads the market only through t − 1", async () => {
++  const k = 150;
++  const policy = isolated;
++  // Tick k is a scheduled reallocation: its targets are scored on records and
++  // the market through k − 1, then its crowding check runs, then it trades.
++  assert.equal((k - policy.warmup) % policy.rebalanceEvery, 0);
++  const base = rallyMarket();
++  const future = rallyMarket();
++  // Rewrite every return from tick k on: a crash in the market factor.
++  future.ticks.forEach((tick, t) => {
++    if (t >= k) for (const s of future.instruments) tick.returns[s] = tick.returns[s]! - 0.03;
++  });
++  const watch = (into: SizedOrder[][]) => ({
++    onTrade: (t: number, _tree: unknown, orders: readonly SizedOrder[]) => {
++      into[t] = structuredClone([...orders]);
++    },
++  });
++  const oa: SizedOrder[][] = [];
++  const ob: SizedOrder[][] = [];
++  const a = await runBook(base, roster(), policy, watch(oa));
++  const b = await runBook(future, roster(), policy, watch(ob));
++  assert.deepEqual(b.marketReturns.slice(0, k), a.marketReturns.slice(0, k));
++  assert.deepEqual(ob.slice(0, k + 1), oa.slice(0, k + 1), "every order through tick k is sized exactly as before");
++  // The ladder and operator caps move at tick k's close, on tick k's own return.
++  const atClose = new Set(["CUT", "RESTORE", "STOP_OUT", "OPERATOR_CUT", "OPERATOR_RESTORE"]);
++  const before = (r: BookResult) => r.decisions.filter((d) => d.t < k || (d.t === k && !atClose.has(d.kind)));
++  assert.deepEqual(before(b), before(a), "so is every decision before tick k's close");
++  assert.notDeepEqual(ob.slice(k + 1), oa.slice(k + 1), "the rewritten future does change later orders");
++  // …and the allocator reads it: the first reallocation after the crash resizes differently.
++  const next = (r: BookResult) => r.decisions.filter((d) => d.kind === "REALLOCATE" && d.t === k + policy.rebalanceEvery);
++  assert.notDeepEqual(next(b), next(a));
++});
+diff --git a/packages/swarm/src/book.ts b/packages/swarm/src/book.ts
+index c72bcea..42ba239 100644
+--- a/packages/swarm/src/book.ts
++++ b/packages/swarm/src/book.ts
+@@ -58,7 +58,7 @@ import {
+   type LadderState,
+ } from "./allocator";
+ import { orderNotional, orderPnl, preTradeCheck, sizeOrder, type GateViolation, type SizedOrder } from "./gate";
+-import { cosineSimilarity } from "./stats";
++import { cosineSimilarity, equalWeightReturn } from "./stats";
+ import { SIM_START, type Market } from "./market";
+ import type { Observation, Strategy, Weights } from "./strategies";
+ import type { TrendThesis } from "./tigercub";
+@@ -179,6 +179,12 @@ export interface BookResult {
+   returns: number[];
+   /** Signed exposure to the crowded instrument as a share of NAV, each tick. */
+   crowdExposure: number[];
++  /**
++   * The market's return each tick (equal-weighted over the fund's universe):
++   * the benchmark agents' records are attributed against (see
++   * `CenterBookPolicy.score`), aligned with every agent's `unitReturns`.
++   */
++  marketReturns: number[];
+   agents: AgentResult[];
+   decisions: Decision[];
+ }
+@@ -562,6 +568,9 @@ export async function runBook(
+   const nav: number[] = [];
+   const bookReturns: number[] = [];
+   const crowdExposure: number[] = [];
++  // Pushed with the agents' records at the end of each tick, so a reallocation
++  // at tick t attributes records through t − 1 against the market through t − 1.
++  const marketReturns: number[] = [];
+   let currentNav = spec.aum;
+   // The allocator's lever: the agent's budget in the tree, 0 once its mandate
+   // is closed (what is left of the budget is then only the record of what its
+@@ -608,6 +617,7 @@ export async function runBook(
+         })),
+         deployable,
+         center,
++        marketReturns,
+       );
+       const targets = new Map<string, bigint>();
+       for (const s of scores) {
+@@ -624,8 +634,8 @@ export async function runBook(
+           node: s.name,
+           detail:
+             `${current.toFixed(0)} → ${s.target.toFixed(0)} USDC ` +
+-            `(sharpe ${s.sharpe.toFixed(2)}, shrunk ${s.shrunkSharpe.toFixed(2)}, ` +
+-            `same-bet ×${s.multiplicity.toFixed(2)})`,
++            `(${center.score === "alpha" ? `alpha sharpe ${s.sharpe.toFixed(2)} net of beta ${s.beta.toFixed(2)}` : `sharpe ${s.sharpe.toFixed(2)}`}, ` +
++            `shrunk ${s.shrunkSharpe.toFixed(2)}, same-bet ×${s.multiplicity.toFixed(2)})`,
+         });
+       }
+       applyTargets(tree, podOf, subsOf, targets);
+@@ -733,6 +743,7 @@ export async function runBook(
+     nav.push(currentNav);
+     bookReturns.push(tickPnl / prevNav);
+     history.push(tick.returns);
++    marketReturns.push(equalWeightReturn(tick.returns, market.instruments));
+ 
+     /* 6) Drawdown ladder. -------------------------------------------- */
+     const stoppedNow: string[] = [];
+@@ -846,5 +857,5 @@ export async function runBook(
+     audit(t, "end");
+   }
+ 
+-  return { policy, tree, startNav: spec.aum, nav, returns: bookReturns, crowdExposure, agents, decisions };
++  return { policy, tree, startNav: spec.aum, nav, returns: bookReturns, crowdExposure, marketReturns, agents, decisions };
+ }
+diff --git a/packages/swarm/src/stats.ts b/packages/swarm/src/stats.ts
+index d290edb..50f506a 100644
+--- a/packages/swarm/src/stats.ts
++++ b/packages/swarm/src/stats.ts
+@@ -126,6 +126,45 @@ export function correlation(a: readonly number[], b: readonly number[]): number
+   return saa === 0 || sbb === 0 ? 0 : sab / Math.sqrt(saa * sbb);
+ }
+ 
++/**
++ * The market's return on one tick: the equal-weighted mean of `returns` over
++ * `instruments` (a missing instrument counts as flat). The broadest index of
++ * a universe that can be built without market capitalizations.
++ */
++export function equalWeightReturn(returns: Readonly<Record<string, number>>, instruments: readonly string[]): number {
++  if (instruments.length === 0) return 0;
++  let s = 0;
++  for (const k of instruments) s += returns[k] ?? 0;
++  return s / instruments.length;
++}
++
++/**
++ * Split a return series into what the market explains and what it does not
++ * (single-index model, OLS with intercept): `beta` is the slope of `y` on the
++ * market `x` over the same ticks, and `residual[i] = y[i] − beta · x[i]`, the
++ * alpha plus the idiosyncratic noise. The residual keeps the intercept, so its
++ * mean is the record's alpha and its Sharpe is the appraisal ratio. Adding any
++ * multiple of `x` to `y` changes `beta` and nothing else. beta = 0 (residual =
++ * y) when the market did not move or the series are shorter than two ticks.
++ */
++export function marketResidual(y: readonly number[], x: readonly number[]): { beta: number; residual: number[] } {
++  if (y.length !== x.length) throw new RangeError(`marketResidual: ${y.length} returns vs ${x.length} market ticks`);
++  const n = y.length;
++  // A market that did not move explains nothing (tested exactly: a constant's
++  // floating-point mean can leave dust deviations that would fit a spurious slope).
++  if (n < 2 || x.every((v) => v === x[0])) return { beta: 0, residual: [...y] };
++  const mx = mean(x);
++  const my = mean(y);
++  let sxy = 0;
++  let sxx = 0;
++  for (let i = 0; i < n; i++) {
++    sxy += (x[i]! - mx) * (y[i]! - my);
++    sxx += (x[i]! - mx) * (x[i]! - mx);
++  }
++  const beta = sxx > 0 ? sxy / sxx : 0;
++  return { beta, residual: y.map((v, i) => v - beta * x[i]!) };
++}
++
+ /** Full correlation matrix of a list of series (symmetric, unit diagonal). */
+ export function correlationMatrix(series: readonly (readonly number[])[]): number[][] {
+   const n = series.length;

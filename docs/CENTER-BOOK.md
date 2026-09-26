@@ -167,16 +167,39 @@ Around them sit agents that give the allocator something to allocate between:
   production). One operator is one counterparty however many names it runs, so
   a stop-out of one of its names is a credit event for all of them. Its other
   live names are capped in the same tick, as a group, in one tree plan, at 50%
-  of their **full size** (what the allocator gives them uncut). The cap is a
-  ceiling on capital, not a multiplier on what a name holds. A name already at
-  or below it is not cut again: for example, one its own ladder cut, or cut and
-  restored but not yet resized, or one an earlier credit event capped. A
-  reallocation sizes a name that is both ladder-cut and capped at 50%, never
-  25%. The cap lifts at the name's first recovery on its own record: a new
-  high, or its own ladder lifting a cut. It never revokes anyone, and it never
-  moves a ladder. Every stop-out lands on exactly the tick of the agent's own
-  record replayed alone (tested on a scripted book and on every shared-operator
-  arena world on seeds 1–40).
+  of their **full size** (what the allocator gives them uncut). The cap lifts
+  at the name's first recovery on its own record: a new high, or its own ladder
+  lifting a cut. It never revokes anyone, and it never moves a ladder. Every
+  stop-out lands on exactly the tick of the agent's own record replayed alone
+  (tested on a scripted book and on every shared-operator arena world on seeds
+  1–40).
+  The cap is a **ceiling kept apart from the name's own size** (loop 5). The own
+  size is what the name's own rules give it: the allocator's target under the
+  rebalance band, its own ladder's cuts and the crowding cuts. Where no
+  crowding limit binds, that is exactly what it would hold with no operator; a
+  crowding cut is solved on what the names actually hold and lands on the own
+  size at the same level. The name holds the smaller of its own size and
+  the ceiling (`OperatorSizing` in `allocator.ts`). Every rule moves only its
+  own number: a ladder cut halves the own size, and a cap or re-cap sets the
+  ceiling to 50% of full size. The ceiling is refreshed at each reallocation
+  while the cap is in force. After a lift it stays until the next reallocation
+  re-sizes the name, just as a lifted ladder cut is not re-grown before then.
+  So, however many names the operator runs and in whatever order they are
+  stopped, cut, restored, capped, lifted and capped again,
+
+      min(own size, 50% × full size)  ≤  budget  ≤  own size.
+
+  The cap and the ladder never compound: a name is never held below the
+  stricter of its own rules and one cap. The cap never weakens the name's own
+  ladder either: a name is never held above what its own rules allow. Loop 3's
+  rule, one number cut on capital, broke both. A name lifted and then cut by
+  its ladder before any reallocation went to 25%. A name cut and restored by
+  its ladder, then capped, then cut again stayed at 50%, twice what its ladder
+  allows. Loop 4's rejected fix still compounded to 25% once an operator ran
+  three names (capped, lifted, capped again, then cut). These paths are tested
+  against the same book with its labels removed, on a scripted book and on 40
+  random books with 1–5 names per operator, and as a property over random event
+  sequences (`operator-sizing.test.ts`).
 
 The baseline ("per-agent guardrails") is what agent-trading products ship today.
 It uses the same agents, the same pre-trade gate and the same leverage, with

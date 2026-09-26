@@ -1,6 +1,6 @@
 # Improvement loops: capital allocated across agents
 
-Improvement loops (four run so far; more to come) aimed at the most novel part of the project: **a delegation tree as the control layer of a
+Improvement loops (five run so far; one more to come) aimed at the most novel part of the project: **a delegation tree as the control layer of a
 multi-manager fund whose PMs are AI agents**, where
 
 - **(R)** capital is *reserved* per agent when it is granted, not merely capped when spent;
@@ -44,6 +44,10 @@ multi-manager fund whose PMs are AI agents**, where
    orchestrator composes them by hand (three-way merges, all suites green) before the sealed run,
    and the driver uses a composition only if the winners are exactly its members. A diff the
    driver cannot apply is recorded, never silently dropped (loop 3's defect).
+   **Structure winners stand alone (from loop 5).** If neither the combination nor the best single
+   winner confirms, each structural winner is checked alone on block B for neutrality: a neutrality
+   check cannot be won by chasing noise, and a guarantee should not fail because it was paired with
+   a performance claim that did.
    **Simulator harvests (from loop 4).** A change whose gain disappears when a known, hard-coded
    feature of the arena's market generator is switched off is a harvest of the yardstick, not an
    improvement, and is rejected before judging: the sealed blocks come from the same generator,
@@ -281,4 +285,43 @@ stand. With the corrected arena, on research seeds 1–200 the overlay's certain
   and the ladder can still compound to 25%.
 
 Full numbers: [`docs/loops/loop-4.json`](loops/loop-4.json); diffs: [`docs/loops/loop-4/`](loops/loop-4/).
+
+## Loop 5
+
+**Merged: an agent's own ladder cut is never weakened by its operator's cap (a (G) fix).** Loop 3's
+operator cap could stop an agent's own drawdown cut from biting (a capped name already below the
+cap was not cut when its ladder fired), and loop 4's first fix was rejected because with three or
+more names per operator the cap and the ladder could still compound. Now the operator cap is a
+ceiling kept separate from each agent's own size, and the agent holds the smaller of the two, for
+any number of names per operator and any order of stop-outs, cuts and restores (property tests
+over random event sequences with 1–5 names per operator). Structural: block A 0.00 pp; alone on
+block B (seeds 15500–15699) −0.0014 pp [−0.0037, +0.0008], max drawdown unchanged. On that block
+the center book returns a certainty equivalent of 12.41% vs 5.85% for per-agent guardrails, max
+drawdown 7.29% vs 6.92% (6.26% at the guardrails' volatility); the Tiger overlay −6.91% vs −21.61%
+for buy-and-hold, max drawdown 24.1% vs 39.7%.
+
+| candidate | review | sealed block A (vs current code) | outcome |
+|---|---|---|---|
+| operator fix: cap as a separate ceiling (structure) | passed | 0.00 pp, max DD 0.00 pp | winner on A; neutral alone on B; **merged** |
+| de-risk the Tiger overlay into dated prints (tiger) | passed | tiger +1.02 pp [+0.17, +1.87], max DD −0.93 pp | winner on A; **failed B** (+0.86 pp [−0.04, +1.76]) |
+| alpha scoring: rank agents net of the market (allocator) | passed | +0.23 pp [−0.00, +0.46], max DD −0.11 pp | no confirmed gain on A |
+| risk-scaled Tiger stop-loss (tiger) | — | no diff | null result |
+| residual (crowd-neutral) scoring (allocator) | — | no diff | null result |
+
+**The driver's fallback, fixed again.** The block-A winners were the print-timing change and the
+operator fix. Their combination failed block B (the timing change did), and the fallback, the
+best single winner, was the timing change, so the operator fix was never checked on its own. A
+structural winner should not fail because it was paired with a performance claim that did, and
+a neutrality check cannot be won by chasing noise, so the orchestrator checked it alone on block B
+(neutral, above) and the driver now does this itself.
+
+**What the null results found.** The overlay is already vol-targeted, so a fixed-percentage
+drawdown ladder on it is close to risk-scaled already, and drawdowns measured in σ predict forward
+returns no better than in percent. More broadly: in the arena the Tiger overlay's single name has
+no edge (overlay Sharpe about −0.2), so any exposure cut raises its certainty equivalent. Tiger
+changes that trim exposure have to beat plain deleveraging (a lower vol target), and the
+print-timing change did not do so reliably. Scoring agents on returns net of the crowd changed
+nothing measurable.
+
+Full numbers: [`docs/loops/loop-5.json`](loops/loop-5.json); diffs: [`docs/loops/loop-5/`](loops/loop-5/).
 

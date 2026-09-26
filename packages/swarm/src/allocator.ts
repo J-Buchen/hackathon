@@ -33,12 +33,15 @@
  *     other live names are capped at `cutFactor` of their FULL SIZE (the
  *     capital the allocator gives them uncut) until each recovers on its own
  *     record: a new high, or its own ladder lifting a cut. The cap is a
- *     ceiling on capital, not a multiplier on whatever the name holds: a name
- *     the ladder already cut (or an earlier operator event already capped) is
- *     not cut again, and at a reallocation the ladder and the cap take the
- *     smaller multiplier, never the product. Every name keeps its own ladder:
- *     the cap never stops anyone, and no name's own stop-out is ever delayed
- *     or brought forward.
+ *     ceiling on capital, kept apart from the name's OWN size (what its own
+ *     rules give it: reallocations, its own ladder, crowding), and the name
+ *     holds the smaller of the two (`OperatorSizing`). So however many names
+ *     the operator runs, and in whatever order its names are stopped, cut,
+ *     restored, capped and lifted, a name holds at least the stricter of its
+ *     own rules and one cap (the two never compound), and never more than its
+ *     own rules allow (the cap never weakens its own ladder). Every name
+ *     keeps its own ladder: the cap never stops anyone, and no name's own
+ *     stop-out is ever delayed or brought forward.
  */
 
 import {
@@ -186,6 +189,9 @@ export interface AgentScoreInput {
    * see `nextCounterpartyCaps`). Both multipliers are ceilings on the same
    * full-size target, so the target takes the SMALLER of the two: a name the
    * ladder cut and its operator capped is sized at cutFactor, not cutFactor².
+   * The book leaves it unset: it sizes a capped name from its own target and
+   * applies the operator's ceiling separately (`OperatorSizing`), so that the
+   * rebalance band acts on the name's own size.
    */
   counterpartyMultiplier?: number;
   /** Absolute capital ceiling from an active crowding cut, if any. */
@@ -632,6 +638,120 @@ export const CEILING_SLACK = 1e-9;
  * factor² × fullSize.
  */
 export function cutToCeiling(capital: number, fullSize: number, factor: number): number | null {
-  const ceiling = Math.max(0, factor * fullSize);
-  return capital > ceiling * (1 + CEILING_SLACK) ? ceiling : null;
+  return cutTo(capital, Math.max(0, factor * fullSize));
+}
+
+/**
+ * A cut of `capital` to `to`: `to` if the agent holds more than that (beyond
+ * `CEILING_SLACK`), else `null` (no write; a cut never grows a name).
+ */
+export function cutTo(capital: number, to: number): number | null {
+  return capital > to * (1 + CEILING_SLACK) ? to : null;
+}
+
+/* ------------------------------------------------------------------ */
+/* 5. Sizing under an operator cap                                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * How a name is sized, as two numbers kept apart. Its budget is the SMALLER
+ * of them (`sizedBudget`), never their product:
+ *
+ *  - `own`: its OWN size, the budget its own rules give it. These are the
+ *    allocator's target under the rebalance band, its own ladder's cuts and
+ *    the crowding cuts. A crowding cut is solved on the capital the name
+ *    actually holds and applies to `own` as the same absolute level. Where no
+ *    crowding limit binds, `own` is exactly what the name would hold if it had
+ *    no operator. No operator event moves it.
+ *  - `ceiling`: its operator's ceiling, `cutFactor` × its full size. It is set
+ *    when another name of its operator is stopped out, and refreshed at each
+ *    reallocation while the cap is in force. After the cap lifts, the ceiling
+ *    stays until the next reallocation re-sizes the name: a lifted name is not
+ *    grown between reallocations, just as a name whose ladder cut was lifted
+ *    is not. `null` means no ceiling, so `own` is the budget.
+ *
+ * Every rule moves only its own number. A ladder cut takes `own` to
+ * `cutFactor` × `own`; the cap and a re-cap take `ceiling` to
+ * `cutFactor` × full size. Over ANY sequence of stop-outs, caps, re-caps,
+ * lifts, ladder cuts and restores, crowding cuts and reallocations, however
+ * many names the operator runs, the budget the book sizes the name at
+ * therefore stays in the band (to the micro-USDC; as with every write, the
+ * tree never shrinks a mandate below what its subtree has already spent)
+ *
+ *     min(own, cutFactor × fullSize)  ≤  budget  ≤  own.
+ *
+ * It is never above what the name's own rules allow, so an operator label
+ * never weakens its own ladder. It is never below the stricter of its own
+ * rules and ONE operator cap, so the cap and the ladder never compound. The
+ * sizing does not care whether the name was cut, capped, lifted and re-capped
+ * before: those events leave `own` where the name's own rules put it.
+ * (`operator-sizing.test.ts` checks the band over random event sequences with
+ * 1 to 5 names per operator, and the book against the same book with its
+ * operator labels removed.)
+ */
+export interface OperatorSizing {
+  own: number;
+  ceiling: number | null;
+}
+
+/** The budget a sizing leaves the name: the smaller of its own size and its operator's ceiling. */
+export function sizedBudget(s: OperatorSizing): number {
+  return s.ceiling === null ? s.own : Math.min(s.own, s.ceiling);
+}
+
+/** One event that moves a name's sizing (a lift or a ladder restore moves nothing until the next reallocation). */
+export type SizingEvent =
+  /**
+   * A scheduled reallocation. `target` is the allocator's target for the name
+   * with no operator cap (its ladder cut and any crowding cap included),
+   * `fullSize` its full size, and `capped` whether its operator's cap is in
+   * force.
+   */
+  | { kind: "reallocate"; target: number; fullSize: number; capped: boolean }
+  /** Its own ladder cuts it to `cutFactor` of its own size. */
+  | { kind: "ladderCut" }
+  /**
+   * A crowding cut to `to`: the capital that brings its crowd back to the
+   * limit, solved on what it holds. The crowding check limits the exposure the
+   * book actually carries, so the cut is an absolute ceiling, the same whether
+   * or not an operator cap is holding the name down.
+   */
+  | { kind: "crowdCut"; to: number }
+  /**
+   * Another name of its operator was stopped out, so the cap applies (again).
+   * The ceiling is `cutFactor` × `fullSize` however many caps came before.
+   */
+  | { kind: "cap"; fullSize: number }
+  /** Its own ladder stopped it out. */
+  | { kind: "stop" };
+
+/**
+ * The relative move a reallocation would make from `current` to `target`. A
+ * move under `rebalanceBand` is skipped.
+ */
+export function rebalanceMove(current: number, target: number): number {
+  return current === 0 ? (target > 0 ? Infinity : 0) : Math.abs(target - current) / current;
+}
+
+/** The sizing after one event (see `OperatorSizing`). Pure: it only reads its arguments. */
+export function nextSizing(
+  s: OperatorSizing,
+  e: SizingEvent,
+  policy: { cutFactor: number; rebalanceBand: number },
+): OperatorSizing {
+  switch (e.kind) {
+    case "reallocate":
+      return {
+        own: rebalanceMove(s.own, e.target) < policy.rebalanceBand ? s.own : e.target,
+        ceiling: e.capped ? Math.max(0, policy.cutFactor * e.fullSize) : null,
+      };
+    case "ladderCut":
+      return { own: s.own * policy.cutFactor, ceiling: s.ceiling };
+    case "crowdCut":
+      return { own: Math.min(s.own, e.to), ceiling: s.ceiling };
+    case "cap":
+      return { own: s.own, ceiling: Math.max(0, policy.cutFactor * e.fullSize) };
+    case "stop":
+      return { own: 0, ceiling: null };
+  }
 }
