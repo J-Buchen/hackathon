@@ -293,7 +293,18 @@ class DelegationTree {
   //   The API preserves all of them; audit() catches an unserialized
   //   overspend or a direct write. delegate() also refuses (PARENT_REVOKED)
   //   under any revoked ANCESTOR, so nothing is minted inside a closed subtree.
-  recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent; // custom events
+  static replay(events: readonly AllowanceEvent[]): DelegationTree;
+  // ^ (loop 6) rebuild a tree from its own event log; throws ReplayError on a
+  //   log that does not apply cleanly. FUND/DELEGATE events carry the node as
+  //   created (`grant`), RESIZE events the budget before (`before`).
+  verifyAgainstLog(): Discrepancy[];
+  // ^ every way the live tree differs from its log's rebuild ([] when they
+  //   agree): catches a direct write even when it keeps every invariant and a
+  //   later resize overwrote it. runBook calls it at every audit. Limits: the
+  //   log is not signed (recordEvent is public, so a forged matching event
+  //   hides a write), and snapshot JSON does not carry `grant`/`before`, so
+  //   only an in-memory log replays.
+  recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent; // custom events (frozen once recorded)
 }
 ```
 
@@ -415,6 +426,8 @@ class AgentHireScreeningService  implements ScreeningService {}  // banned / tie
 class OperatorRegistry {}   // agentId -> { deployerWallet, worldIdNullifier (World ID mock) }: one counterparty per operator
 class IncidentLedger {}     // Allowance-side incidents keyed by agent AND operator (AgentHire has no keyless non-slashing route); in memory or an IncidentStore
 class JsonFileIncidentStore implements IncidentStore {} // local JSON file: other processes / restarts see the same incidents (single writer)
+class StopOutIncidentSink implements IncidentSink {} // (loop 6) runBook's stop-outs -> "stop-out" incidents keyed by operator: a loss, never misconduct, never sent to AgentHire's dispute route
+class OperatorGrantScreen {} // (loop 6) refuses a new grant for an operator over its record (maxOperatorIncidents 0 misconduct, maxOperatorStopOuts 2); a refusal creates no node
 class OverspendWatch {}     // repeated "exceeds available" -> incident (+ sent to AgentHire's dispute route, which keyless only logs)
 class SerializedPayer {}    // pay()/close() one at a time per root mandate; queues shared by every payer in the process
 function agentHireTreeHooks(tree): { mandateExpiry, nextSeq };

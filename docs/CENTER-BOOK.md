@@ -189,6 +189,12 @@ Around them sit agents that give the allocator something to allocate between:
 
       min(own size, 50% × full size)  ≤  budget  ≤  own size.
 
+  Every stop-out also goes on the operator's record (loop 6): with an incident
+  sink in the book options, each STOP_OUT files one `stop-out` incident
+  against the agent's operator (a loss, never misconduct, never a slash), and
+  new hires or grants for an operator past its stop-out limit are refused. The
+  book never reads the record back, so it cannot change a run.
+
   The cap and the ladder never compound: a name is never held below the
   stricter of its own rules and one cap. The cap never weakens the name's own
   ladder either: a name is never held above what its own rules allow. Loop 3's
