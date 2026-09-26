@@ -143,6 +143,7 @@ export function MandateTree({ snapshot, index, onIndex, highlight, selectedKind,
               )}
               <span className={`fc-status fc-status-${status}`}>
                 <span aria-hidden="true">{STATUS_ICON[status]}</span> {statusText[status]}
+                {status === "cut" && budget <= 0 && <span className="fc-status-at"> · allocator sized it to 0</span>}
               </span>
             </span>
           )}

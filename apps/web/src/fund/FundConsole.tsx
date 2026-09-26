@@ -156,10 +156,13 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
   const stoppedAt = useMemo(() => new Map(snapshot.stopOuts.map((s) => [s.name, s.t])), [snapshot.stopOuts]);
   const opCount = useMemo(() => new Map(world.operators.map((o) => [o.id, o.agents.length])), [world.operators]);
 
-  const status = (state: LadderState, at: number | null | undefined) => (
+  // `empty`: a cut agent the allocator has since sized to zero. The ladder's
+  // cut is a ceiling on its size, not what it holds, so say where the 0 came from.
+  const status = (state: LadderState, at: number | null | undefined, empty = false) => (
     <span className={`fc-status fc-status-${state}`}>
       <span aria-hidden="true">{ICON[state]}</span> {statusText[state]}
       {state === "stopped" && at !== undefined && at !== null && <span className="fc-status-at"> {day(at)}</span>}
+      {state === "cut" && empty && <span className="fc-status-at"> · allocator sized it to 0</span>}
     </span>
   );
 
@@ -350,7 +353,7 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
                       )}
                     </td>
                     <td>{a.pod}</td>
-                    <td>{status(a.status, stoppedAt.get(a.name))}</td>
+                    <td>{status(a.status, stoppedAt.get(a.name), now <= 0)}</td>
                     <td className="num">{now > 0 ? usdCompact(now) : "0"}</td>
                     <td>
                       <Sparkline

@@ -35,15 +35,21 @@ export function formatMoney(raw: string, decimals: number, currency: string): st
   return `${formatAmount(raw, decimals)} ${currency}`;
 }
 
-/** Format a unix-seconds timestamp as a compact local date/time. */
+/**
+ * Format a unix-seconds timestamp as a compact date/time in UTC, with the zone
+ * shown: a snapshot's time reads the same for every viewer.
+ */
 export function formatDate(unixSeconds: number): string {
-  return new Date(unixSeconds * 1000).toLocaleString(undefined, {
+  const s = new Date(unixSeconds * 1000).toLocaleString("en-US", {
     year: "numeric",
     month: "short",
     day: "numeric",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: false,
+    timeZone: "UTC",
   });
+  return `${s} UTC`;
 }
 
 /** The left-most label of a dotted ENS-style name (the node's own label). */
