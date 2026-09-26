@@ -47,7 +47,7 @@ the evidence. The showcase world is more favourable than the sealed average.
 
 ![Fund console, virtual world: the mandate tree replayed to Day 34 with picker-0 and desk-0 ringed, next to the decision log filtered to one-trade cuts whose members share an operator (flagged).](docs/img/fund-console.png)
 
-![Sealed evidence, virtual worlds: the paired uplift in certainty-equivalent return of each loop's merged change with 90% intervals; superseded results are hollow and dashed.](docs/img/sealed-evidence.png)
+![Sealed evidence, virtual worlds: the paired uplift in certainty-equivalent return of each loop's merged change with 90% intervals (loop 4's rows measure the Tiger overlay, not the fund); superseded results are hollow and dashed.](docs/img/sealed-evidence.png)
 
 ![Sealed evidence, virtual worlds: the center book's mean max drawdown on each loop's block B before and after its change, against per-agent guardrails. On loop 2's block B it is 7.75% against the guardrails' 6.88%: still above them.](docs/img/sealed-drawdown.png)
 
