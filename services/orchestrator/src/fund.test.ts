@@ -150,6 +150,7 @@ const LOOP_FIXTURES: Record<string, unknown> = {
       centerMaxDDBefore: 0.081,
       centerMaxDDAfter: 0.078,
       guardrailsMaxDD: 0.069,
+      centerMaxDDAtGuardrailsVolAfter: 0.066,
       pairedChange: { mean: -0.003, lo: -0.005, hi: -0.001 },
     },
     rejections: [
@@ -228,8 +229,10 @@ test("readEvidence carries the drawdown summary, the rejections and the sealed b
     centerMaxDDBefore: 0.081,
     centerMaxDDAfter: 0.078,
     guardrailsMaxDD: 0.069,
+    centerMaxDDAtGuardrailsVolAfter: 0.066,
     pairedChange: { mean: -0.003, lo: -0.005, hi: -0.001 },
     note: null,
+    tiger: null,
   });
   // Entries without a title and a reason are dropped.
   assert.deepEqual(two.rejections, [{ title: "Looser crowding limits (G)", reason: "stopped by the risk guard" }]);
@@ -254,6 +257,44 @@ test("readEvidence leaves the guardrails Sharpe null when the report cannot vouc
   const [two] = readEvidence(dir);
   assert.equal(two!.booksB!.guardrails.sharpe, null);
   assert.equal(two!.booksB!.guardrails.utility, 0.06);
+});
+
+test("readEvidence: the vol-matched drawdown is optional, and a bad one drops only itself", () => {
+  const read = (v: unknown) => {
+    const dir = mkdtempSync(join(tmpdir(), "loops-"));
+    const body = JSON.parse(JSON.stringify(LOOP_FIXTURES["loop-2.json"])) as { riskSummary: Record<string, unknown> };
+    if (v === undefined) delete body.riskSummary.centerMaxDDAtGuardrailsVolAfter;
+    else body.riskSummary.centerMaxDDAtGuardrailsVolAfter = v;
+    writeFileSync(join(dir, "loop-2.json"), JSON.stringify(body));
+    return readEvidence(dir)[0]!.riskSummary!;
+  };
+  // Loops before 3 did not record it: null, "not recorded".
+  assert.equal(read(undefined).centerMaxDDAtGuardrailsVolAfter, null);
+  assert.equal(read(null).centerMaxDDAtGuardrailsVolAfter, null);
+  // Percent units, a string or a negative number would be refused by the
+  // console's parser: the field becomes null, the raw drawdowns stay.
+  for (const bad of [5.88, "5.88%", -0.01]) {
+    const r = read(bad);
+    assert.equal(r.centerMaxDDAtGuardrailsVolAfter, null, String(bad));
+    assert.equal(r.centerMaxDDAfter, 0.078, "the raw drawdown is never dropped with it");
+    assert.equal(r.guardrailsMaxDD, 0.069);
+  }
+  assert.equal(read(0.0588).centerMaxDDAtGuardrailsVolAfter, 0.0588);
+});
+
+test("the committed loop-3 evidence: raw drawdown above guardrails, lower per unit of risk", () => {
+  const three = readEvidence(loopsDir).find((l) => l.loop === 3)!;
+  const r = three.riskSummary!;
+  assert.ok(r, "docs/loops/loop-3.json riskSummary");
+  // The raw number stays above the guardrails' (6.63% vs 6.53%)…
+  assert.ok(r.centerMaxDDAfter > r.guardrailsMaxDD);
+  // …and at the guardrails' volatility it is below both (5.88%): it runs more volatility.
+  assert.ok(r.centerMaxDDAtGuardrailsVolAfter !== null);
+  assert.ok(Math.abs(r.centerMaxDDAtGuardrailsVolAfter - 0.0588) < 0.0001);
+  assert.ok(r.centerMaxDDAtGuardrailsVolAfter < r.guardrailsMaxDD);
+  assert.ok(r.centerMaxDDAtGuardrailsVolAfter < r.centerMaxDDAfter);
+  // Loops 1 and 2 did not record it.
+  for (const l of readEvidence(loopsDir).filter((x) => x.loop < 3)) assert.equal(l.riskSummary?.centerMaxDDAtGuardrailsVolAfter, null);
 });
 
 test("the committed loop-2 evidence: the center book beats guardrails on utility but draws down more", () => {

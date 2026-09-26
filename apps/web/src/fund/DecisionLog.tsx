@@ -200,6 +200,7 @@ export function DecisionLog({ snapshot, filter, onFilter, selected, onSelect }: 
     return c;
   }, [log]);
   const shown = useMemo(() => filterLog(log, filter), [log, filter]);
+  const opCaps = useMemo(() => log.filter((e) => e.type === "opcap").length, [log]);
 
   // Roving tabindex: one entry is tabbable, the selected one if it is shown.
   const [focusId, setFocusId] = useState<string | null>(null);
@@ -252,8 +253,10 @@ export function DecisionLog({ snapshot, filter, onFilter, selected, onSelect }: 
       </div>
       {filter === "operator" && (
         <p className="fc-filter-note">
-          Operator caps (when one of an operator's agents is stopped out, its other agents are capped together until
-          each recovers on its own record) and one-trade cuts whose members include both agents of one operator.
+          One-trade cuts whose members share an operator (flagged; the cut itself groups by overlapping positions only)
+          {opCaps > 0
+            ? `, and ${opCaps} operator ${opCaps === 1 ? "cap" : "caps"}: one of an operator's agents was stopped out, so its other agents were capped together until each recovers on its own record.`
+            : ". No operator cap (a stop-out capping the same operator's other agents) fired in this world."}
         </p>
       )}
       <p id={hintId} className="sr-only">

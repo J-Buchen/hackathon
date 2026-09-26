@@ -3,7 +3,6 @@ import { LineChart, type Series } from "../swarm/LineChart";
 import type { FundAgent, FundSnapshot, LadderState } from "./types";
 import { MandateTree } from "./MandateTree";
 import { DecisionLog, entryKind } from "./DecisionLog";
-import { Evidence } from "./Evidence";
 import { SealedContext } from "./Context";
 import { parseConsoleHash } from "./hash";
 import {
@@ -23,7 +22,8 @@ import {
 /**
  * Fund console v1: one virtual world, the allocator vs per-agent guardrails.
  * (a) fund NAV, (b) the mandate tree with replay, (c) the decision log, (d) the
- * agent table, then the sealed-loop evidence. Lazy-loaded (see App.tsx).
+ * agent table. The sealed-loop evidence is its own section right after it
+ * (EvidencePanel.tsx). Lazy-loaded (see App.tsx).
  */
 
 // Validated pair (dataviz validator): gold = center book, blue = baseline.
@@ -136,12 +136,13 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
   const freed = snapshot.stopOuts.reduce((s, x) => s + x.freed, 0);
   const sharedOps = world.operators.filter((o) => o.agents.length > 1);
   const operatorCaps = snapshot.decisions.filter((d) => d.kind === "OPERATOR_CUT").length;
+  // Was any agent of a shared operator stopped out (the operator cap's trigger)?
+  const sharedStopped = snapshot.stopOuts.some((x) => sharedOps.some((o) => o.agents.includes(x.agent)));
   const statusText: Record<LadderState, string> = {
     active: "active",
     cut: `cut ×${snapshot.policy.center.cutFactor}`,
     stopped: "stopped out",
   };
-  const worldCounts = [...new Set(snapshot.evidence.loops.flatMap((l) => [l.blocks.A.count, l.blocks.B.count]))];
   const context = useMemo(() => showcaseContext(snapshot), [snapshot]);
 
   const agents = useMemo(
@@ -194,11 +195,13 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
           <>
             {" "}
             In the roster, {sharedOps.map((o) => `${o.agents.join(" and ")} are run by one operator (${o.id})`).join("; ")}.
-            The allocator treats an operator as one counterparty: if one of its agents is stopped out, its other
-            agents are capped together until each recovers on its own record.{" "}
-            {operatorCaps === 0
-              ? "In this world none of those agents was stopped out, so no operator cap fired; shared operators are flagged on the overlap cuts."
-              : `In this world that happened ${operatorCaps} ${operatorCaps === 1 ? "time" : "times"}.`}
+            The crowding cut groups agents by overlapping positions only; a cut whose members share an operator is flagged.
+            Separately, since loop 3 a stop-out caps the same operator's other agents
+            {operatorCaps > 0
+              ? `, which happened ${operatorCaps} ${operatorCaps === 1 ? "time" : "times"} in this world.`
+              : sharedStopped
+                ? "; it did not fire in this world."
+                : "; no agent of a shared operator was stopped out in this world, so it did not fire."}
           </>
         )}
       </p>
@@ -229,8 +232,10 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
             {cuts.oneTradeSharedOperator > 0 && (
               <div className="fc-kpi-note">
                 <span aria-hidden="true">⚑</span> {cuts.oneTradeSharedOperator} one-trade cuts included both agents of one
-                operator (flagged); {operatorCaps} operator {operatorCaps === 1 ? "cap" : "caps"} (a stop-out capping the
-                operator's other agents).
+                operator (flagged)
+                {operatorCaps > 0
+                  ? `; ${operatorCaps} operator ${operatorCaps === 1 ? "cap" : "caps"} (a stop-out capping the operator's other agents).`
+                  : "."}
               </div>
             )}
           </div>
@@ -256,7 +261,8 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
         />
         <p className="fc-caption">
           Same agents, same prices, same leverage ({snapshot.policy.center.leverage}×) and the same deployment. The
-          center book (the allocator) looks <em>across</em> the agents (allocation, crowding and operator limits) and
+          center book (the allocator) looks <em>across</em> the agents (allocation and crowding limits
+          {operatorCaps > 0 ? ", and operator caps after a stop-out" : ""}) and
           judges each agent's drawdown against the risk it runs (a stop between 20% and a 40% ceiling); per-agent
           guardrails keep each agent's fixed 20% stop-loss.
         </p>
@@ -367,22 +373,6 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
         </div>
       </div>
 
-      <div className="panel" id="fc-evidence">
-        <div className="panel-head">
-          <span className="overline fc-overline">Out-of-sample</span>
-          <h2>
-            Sealed evidence <span className="fc-vw">virtual worlds</span>
-          </h2>
-          <p className="panel-sub">
-            One world proves nothing. Each improvement loop is judged world by world against the version before it on
-            {worldCounts.length === 1 ? ` ${worldCounts[0]} ` : " "}virtual worlds no researcher has seen, then confirmed
-            on a second fresh block. Read from <code>{snapshot.evidence.source}</code>.
-          </p>
-        </div>
-        <div className="fc-evidence-body">
-          <Evidence loops={snapshot.evidence.loops} />
-        </div>
-      </div>
     </div>
   );
 }

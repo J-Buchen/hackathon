@@ -89,11 +89,13 @@ async function main(): Promise<void> {
     const merged = l.merged.map((m) => m.angle.split(":")[0]).join(" + ") || "nothing merged";
     line(`loop ${l.loop}: ${l.title ?? merged}`);
     if (l.note) line(`  note: ${l.note}`);
-    if (l.blockA) line(`  block A (${l.blocks.A.count} worlds from ${l.blocks.A.from}): ${pp(l.blockA.allocator.mean)} [${pp(l.blockA.allocator.lo)}, ${pp(l.blockA.allocator.hi)}] 90% CI`);
+    const tr = l.merged[0]?.track === "tiger" ? "tiger" : "allocator";
+    if (tr === "tiger") line("  track: the Tiger overlay (the allocator is unchanged)");
+    if (l.blockA) line(`  block A (${l.blocks.A.count} worlds from ${l.blocks.A.from}): ${pp(l.blockA[tr].mean)} [${pp(l.blockA[tr].lo)}, ${pp(l.blockA[tr].hi)}] 90% CI`);
     if (l.blockB) {
       line(
         `  block B (${l.blocks.B.count} worlds from ${l.blocks.B.from})${l.correctedB ? ", as first confirmed, before the fix" : ""}: ` +
-          `${pp(l.blockB.allocator.mean)} [${pp(l.blockB.allocator.lo)}, ${pp(l.blockB.allocator.hi)}] 90% CI`,
+          `${pp(l.blockB[tr].mean)} [${pp(l.blockB[tr].lo)}, ${pp(l.blockB[tr].hi)}] 90% CI`,
       );
     }
     if (l.correctedB) {
@@ -124,6 +126,14 @@ async function main(): Promise<void> {
         `  center-book max drawdown, block ${r.block} (seeds ${r.seeds}): ${pct(r.centerMaxDDBefore, 2)} -> ${pct(r.centerMaxDDAfter, 2)} ` +
           `(${paired}); per-agent guardrails ${pct(r.guardrailsMaxDD, 2)}${vs}`,
       );
+      // Per unit of risk: the raw number above stands; this one only adds the volatility it runs.
+      if (r.centerMaxDDAtGuardrailsVolAfter !== null) {
+        line(`  (${pct(r.centerMaxDDAtGuardrailsVolAfter, 2)} at the guardrails' volatility: the same returns scaled to their vol)`);
+      }
+      if (r.tiger) {
+        const tp = r.tiger.pairedChange ? `paired ${pp(r.tiger.pairedChange.mean)} [${pp(r.tiger.pairedChange.lo)}, ${pp(r.tiger.pairedChange.hi)}]` : "paired change not recorded";
+        line(`  Tiger overlay max drawdown: ${pct(r.tiger.before, 2)} -> ${pct(r.tiger.after, 2)} (${tp}); buy-and-hold ${pct(r.tiger.buyHold, 2)}`);
+      }
     }
     for (const x of l.rejections) line(`  not merged: ${x.title} — ${x.reason}`);
   }

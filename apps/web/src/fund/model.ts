@@ -285,9 +285,27 @@ export function evidenceRows(loops: readonly LoopEvidence[]): EvidenceRow[] {
   for (const l of loops) {
     if (!l.confirmed || l.merged.length === 0) continue;
     const track = l.merged[0]?.track === "tiger" ? "tiger" : "allocator";
-    const corrected = l.correctedB && track === "allocator" ? l.correctedB : null;
+    const corrected = l.correctedB;
+    const correctedA = l.correctedA ?? null;
     if (l.blockA) {
-      rows.push({ key: `${l.loop}A`, label: `Loop ${l.loop} · block A`, sub: worlds(l.blocks.A), u: l.blockA[track], superseded: false, detail: null });
+      rows.push({
+        key: `${l.loop}A`,
+        label: `Loop ${l.loop} · block A`,
+        sub: correctedA ? "first measured · before the fix" : worlds(l.blocks.A),
+        u: l.blockA[track],
+        superseded: correctedA !== null,
+        detail: correctedA ? `${worlds(l.blocks.A)}; replaced by the re-measurement after the fix` : null,
+      });
+    }
+    if (correctedA) {
+      rows.push({
+        key: `${l.loop}Ac`,
+        label: `Loop ${l.loop} · block A`,
+        sub: "re-measured after the fix",
+        u: correctedA.uplift,
+        superseded: false,
+        detail: `the same ${l.blocks.A.count} worlds, on the code that shipped${correctedA.vs ? `, vs ${correctedA.vs}` : ""}`,
+      });
     }
     if (l.blockB) {
       rows.push({
@@ -327,6 +345,63 @@ export function standing(before: number, after: number, guardrails: number): Sta
   return was && is ? "still-above" : is ? "now-above" : was ? "now-below" : "below";
 }
 
+/**
+ * The evidence panel's one-line method. It names the block size only when
+ * every loop used the same one; with mixed sizes, or no loop yet, it needs no
+ * count.
+ */
+export function evidenceBlocksLine(loops: ReadonlyArray<Pick<LoopEvidence, "blocks">>): string {
+  const counts = [...new Set(loops.flatMap((l) => [l.blocks.A.count, l.blocks.B.count]))];
+  return counts.length === 1
+    ? `Each loop is judged against the code before it on ${counts[0]} sealed virtual worlds (block A), then confirmed on ${counts[0]} more (block B).`
+    : "Each loop is judged against the code before it on sealed virtual worlds (block A), then confirmed on a fresh block (block B).";
+}
+
+/**
+ * A loop card's verdict. A loop that merged only structural guarantees had to
+ * be neutral on block B, not win (docs/LOOPS.md, Protocol), so its card says
+ * "confirmed neutral" rather than reading as a win.
+ */
+export function loopVerdict(l: Pick<LoopEvidence, "confirmed" | "merged">): string {
+  if (!l.confirmed) return l.merged.length ? "merged · not confirmed" : "nothing merged";
+  const structural = l.merged.length > 0 && l.merged.every((m) => m.track === "structure");
+  return structural ? "✓ merged · confirmed neutral on block B (structural)" : "✓ merged · confirmed on block B";
+}
+
+/**
+ * A plain-words gloss for a merged change whose title uses a term of art,
+ * matched on the ledger's title. Loop 3's "an operator is one counterparty"
+ * is the cap after a stop-out; the crowding cut does not group by operator.
+ */
+export function titleGloss(title: string | null): string | null {
+  if (title && /\boperator is one counterparty\b/i.test(title)) {
+    return (
+      "One counterparty means: when one of an operator's agents is stopped out, its other live agents are capped " +
+      "together until each recovers on its own record. It is not a grouping key: the crowding cut still groups agents " +
+      "by overlapping positions only."
+    );
+  }
+  return null;
+}
+
+/**
+ * The center book's drawdown per unit of risk: its mean max drawdown with its
+ * returns scaled to the guardrails book's volatility. Shown next to the raw
+ * drawdown, never instead of it.
+ */
+export interface VolMatched {
+  value: number;
+  /** It runs more volatility than the guardrails (so scaling to theirs lowers its drawdown). */
+  moreVol: boolean;
+  /** At the guardrails' volatility its drawdown is below the guardrails'. */
+  belowGuardrails: boolean;
+}
+
+export function volMatched(raw: number, atVol: number | null, guardrails: number): VolMatched | null {
+  if (atVol === null) return null;
+  return { value: atVol, moreVol: atVol < raw, belowGuardrails: atVol < guardrails };
+}
+
 export interface DrawdownRow {
   key: string;
   loop: number;
@@ -335,6 +410,8 @@ export interface DrawdownRow {
   before: number;
   after: number;
   guardrails: number;
+  /** `after` at the guardrails' volatility, when the loop recorded it. */
+  atGuardrailsVol: VolMatched | null;
   /** The center book's paired change (after − before) with its 90% interval, when the loop recorded it. */
   paired: { mean: number; lo: number; hi: number } | null;
   /** The center book's mean max drawdown after this loop is above per-agent guardrails'. */
@@ -362,6 +439,7 @@ export function drawdownRows(loops: readonly LoopEvidence[]): DrawdownRow[] {
         before: r.centerMaxDDBefore,
         after: r.centerMaxDDAfter,
         guardrails: r.guardrailsMaxDD,
+        atGuardrailsVol: volMatched(r.centerMaxDDAfter, r.centerMaxDDAtGuardrailsVolAfter, r.guardrailsMaxDD),
         paired: r.pairedChange,
         aboveGuardrails: r.centerMaxDDAfter > r.guardrailsMaxDD,
         standing: standing(r.centerMaxDDBefore, r.centerMaxDDAfter, r.guardrailsMaxDD),
@@ -403,6 +481,12 @@ export interface SealedAverage {
   /** On the sealed block the center book's mean max drawdown is above the guardrails'. */
   drawdownAbove: boolean;
   utilityAbove: boolean;
+  /**
+   * The same loop's block-B drawdown at the guardrails' volatility, when its
+   * risk summary recorded it for this very run (same block, same "after"
+   * drawdown as the books); null otherwise.
+   */
+  volMatched: VolMatched | null;
 }
 
 export interface ShowcaseContext {
@@ -467,6 +551,10 @@ export function showcaseContext(s: FundSnapshot): ShowcaseContext {
   const gapWorld = c.utility - g.utility;
   if (!l || !b) return { rows, gapWorld, sealed: null };
   const gap = b.center.utility - b.guardrails.utility;
+  // Only a vol-matched number measured on these very books: block B, and the
+  // risk summary's raw "after" drawdown is the books' (to the ledger's rounding).
+  const r = l.riskSummary;
+  const sameRun = r !== null && r.block === "B" && Math.abs(r.centerMaxDDAfter - b.center.maxDrawdown) < 0.0005;
   return {
     rows,
     gapWorld,
@@ -478,6 +566,7 @@ export function showcaseContext(s: FundSnapshot): ShowcaseContext {
       favourable: gapWorld > gap,
       drawdownAbove: b.center.maxDrawdown > b.guardrails.maxDrawdown,
       utilityAbove: b.center.utility > b.guardrails.utility,
+      volMatched: sameRun && r ? volMatched(b.center.maxDrawdown, r.centerMaxDDAtGuardrailsVolAfter, b.guardrails.maxDrawdown) : null,
     },
   };
 }

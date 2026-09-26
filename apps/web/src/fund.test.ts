@@ -12,13 +12,20 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { FundSnapshotError, parseFundSnapshot, type FundSnapshot } from "./fund/types";
 import { Evidence } from "./fund/Evidence";
+import EvidencePanel from "./fund/EvidencePanel";
+import FundConsole from "./fund/FundConsole";
+import { DecisionLog } from "./fund/DecisionLog";
 import { SealedContext } from "./fund/Context";
 import {
   buildLog,
   drawdownRows,
   entryAgents,
+  evidenceBlocksLine,
   evidenceRows,
   latestSealed,
+  pct,
+  loopVerdict,
+  titleGloss,
   pp,
   showcaseContext,
   standing,
@@ -31,6 +38,7 @@ import {
   replayIndexAt,
   stateAtIndex,
   treeRows,
+  volMatched,
   usdCompact,
 } from "./fund/model";
 import { isConsoleAlias, parseConsoleHash } from "./fund/hash";
@@ -191,6 +199,7 @@ test("evidence rows plot only merged, confirmed changes", () => {
     // A report can carry block B for a winner that FAILED it; it must not plot.
     blockB: { allocator: u(-0.004), tiger: u(0) },
     correctedB: null,
+    correctedA: null,
     headVsBaseline: null,
     riskSummary: null,
     rejections: [],
@@ -199,7 +208,7 @@ test("evidence rows plot only merged, confirmed changes", () => {
   const rows = evidenceRows([...s.evidence.loops, unmerged]);
   assert.ok(rows.every((r) => !r.key.startsWith("9")), "the unmerged loop is not plotted");
   const confirmed = s.evidence.loops.filter((l) => l.confirmed);
-  assert.equal(rows.length, confirmed.reduce((n, l) => n + (l.blockA ? 1 : 0) + (l.blockB ? 1 : 0) + (l.correctedB ? 1 : 0), 0));
+  assert.equal(rows.length, confirmed.reduce((n, l) => n + (l.blockA ? 1 : 0) + (l.blockB ? 1 : 0) + (l.correctedB ? 1 : 0) + (l.correctedA ? 1 : 0), 0));
   // A correction is plotted next to the confirmed number, not instead of it:
   // the first confirmation is marked superseded and the re-measurement right
   // after it is the one that stands.
@@ -210,7 +219,8 @@ test("evidence rows plot only merged, confirmed changes", () => {
   assert.equal(first.key, corrected.key.slice(0, -1), "its first confirmation comes right before it");
   assert.equal(first.superseded, true);
   assert.equal(corrected.superseded, false);
-  assert.equal(rows.filter((r) => r.superseded).length, 1, "nothing else is marked superseded");
+  const corrections = confirmed.reduce((n, l) => n + (l.correctedB ? 1 : 0) + (l.correctedA ? 1 : 0), 0);
+  assert.equal(rows.filter((r) => r.superseded).length, corrections, "only rows a correction replaced are marked superseded");
   // Plain words on the chart; the commit hash stays in the hover title and the data table.
   assert.doesNotMatch(`${corrected.label} ${corrected.sub}`, /[0-9a-f]{7}|post-push/);
   assert.match(corrected.detail ?? "", /f5b2d80/);
@@ -493,4 +503,255 @@ test("showcase context without a sealed confirmation: the card stays and says so
     },
   };
   assert.equal(showcaseContext(noSharpe).rows[1]!.sealed, null);
+});
+
+/* -------------------------------------------------------------------------- */
+/* Loop 4: the center book's drawdown per unit of risk, next to the raw one    */
+/* -------------------------------------------------------------------------- */
+
+const withLoop3 = (mutate: (l: Loop) => void): Record<string, unknown> => {
+  const r = raw();
+  mutate((r.evidence as { loops: Loop[] }).loops.find((l) => l.loop === 3)!);
+  return r;
+};
+
+test("parseFundSnapshot: the vol-matched drawdown is nullable, and must be a drawdown when present", () => {
+  // null and a fraction are accepted.
+  assert.doesNotThrow(() => parseFundSnapshot(withLoop3((l) => ((l.riskSummary as Loop).centerMaxDDAtGuardrailsVolAfter = null))));
+  assert.doesNotThrow(() => parseFundSnapshot(withLoop3((l) => ((l.riskSummary as Loop).centerMaxDDAtGuardrailsVolAfter = 0.05))));
+  // A snapshot written before the field existed reads it as null ("not recorded").
+  const old = parseFundSnapshot(withLoop3((l) => delete (l.riskSummary as Loop).centerMaxDDAtGuardrailsVolAfter));
+  assert.equal(old.evidence.loops.find((l) => l.loop === 3)!.riskSummary!.centerMaxDDAtGuardrailsVolAfter, null);
+  // Percent units, a string or a negative number are refused with the JSON path.
+  assert.throws(
+    () => parseFundSnapshot(withLoop3((l) => ((l.riskSummary as Loop).centerMaxDDAtGuardrailsVolAfter = 5.88))),
+    /evidence\.loops\[\d+\]\.riskSummary\.centerMaxDDAtGuardrailsVolAfter: expected number in \[0, 1\], got 5\.88$/,
+  );
+  assert.throws(
+    () => parseFundSnapshot(withLoop3((l) => ((l.riskSummary as Loop).centerMaxDDAtGuardrailsVolAfter = "5.88%"))),
+    /riskSummary\.centerMaxDDAtGuardrailsVolAfter: expected finite number, got string/,
+  );
+  assert.throws(
+    () => parseFundSnapshot(withLoop3((l) => ((l.riskSummary as Loop).centerMaxDDAtGuardrailsVolAfter = -0.01))),
+    /riskSummary\.centerMaxDDAtGuardrailsVolAfter: expected number in \[0, 1\], got -0\.01$/,
+  );
+});
+
+test("the committed snapshot carries loop 3's vol-matched drawdown (docs/loops/loop-3.json) and none before it", () => {
+  const s = load();
+  const r3 = s.evidence.loops.find((l) => l.loop === 3)!.riskSummary!;
+  assert.ok(r3.centerMaxDDAtGuardrailsVolAfter !== null);
+  assert.ok(Math.abs(r3.centerMaxDDAtGuardrailsVolAfter - 0.0588) < 0.0001);
+  for (const l of s.evidence.loops.filter((x) => x.loop < 3)) assert.equal(l.riskSummary!.centerMaxDDAtGuardrailsVolAfter, null);
+});
+
+test("drawdown rows keep the raw drawdown and add the per-unit-of-risk one, worked out from the numbers", () => {
+  const s = load();
+  const rows = drawdownRows(s.evidence.loops);
+  const r3 = rows.find((r) => r.loop === 3)!;
+  const rs = s.evidence.loops.find((l) => l.loop === 3)!.riskSummary!;
+  // The raw number is untouched and still above the guardrails'.
+  assert.equal(r3.after, rs.centerMaxDDAfter);
+  assert.equal(r3.aboveGuardrails, true);
+  assert.equal(r3.standing, "still-above");
+  // At the guardrails' volatility: lower than its own raw number (it runs more
+  // volatility) and lower than the guardrails' (per unit of risk).
+  assert.deepEqual(r3.atGuardrailsVol, { value: rs.centerMaxDDAtGuardrailsVolAfter, moreVol: true, belowGuardrails: true });
+  for (const r of rows.filter((x) => x.loop < 3)) assert.equal(r.atGuardrailsVol, null);
+  // The flags follow the numbers, not a script.
+  assert.deepEqual(volMatched(0.066, 0.07, 0.065), { value: 0.07, moreVol: false, belowGuardrails: false });
+  assert.equal(volMatched(0.066, null, 0.065), null);
+});
+
+test("the context card shows the raw sealed drawdown AND the per-unit-of-risk one, with the one-line reason", () => {
+  const s = load();
+  const ctx = showcaseContext(s);
+  const latest = latestSealed(s.evidence.loops)!;
+  assert.equal(latest.loop, Math.max(...s.evidence.loops.filter((l) => l.booksB).map((l) => l.loop)));
+  assert.ok(ctx.sealed?.volMatched);
+  assert.equal(ctx.sealed.volMatched.value, latest.riskSummary!.centerMaxDDAtGuardrailsVolAfter);
+  const html = renderToStaticMarkup(createElement(SealedContext, { ctx, seed: s.world.seed }))
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x27;/g, "'")
+    .replace(/\s+/g, " ");
+  // Never drop the raw number: flagged higher, and still said in words (values from the latest sealed loop).
+  const L = latestSealed(s.evidence.loops)!;
+  const esc = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const rawDD = esc(pct(L.booksB.center.maxDrawdown, 2));
+  const gDD = esc(pct(L.booksB.guardrails.maxDrawdown, 2));
+  const vmDD = esc(pct(L.riskSummary!.centerMaxDDAtGuardrailsVolAfter!, 2));
+  assert.match(html, new RegExp(`${rawDD} ▲ higher`));
+  assert.match(html, new RegExp(`its mean max drawdown is still higher than theirs \\(${rawDD} vs ${gDD}\\)`));
+  // The per-unit-of-risk number next to it, with its reason. Its owner is
+  // named on screen (not only to screen readers), after both raw numbers.
+  assert.match(html, new RegExp(`${rawDD} ▲ higher (per-agent guardrails )?${gDD} center book at the guardrails' volatility: ${vmDD}`));
+  const raw = renderToStaticMarkup(createElement(SealedContext, { ctx, seed: s.world.seed }));
+  const perRisk = /<span class="fx-perrisk">([\s\S]*?)<\/span><\/span><\/span>/.exec(raw)?.[1] ?? "";
+  assert.doesNotMatch(perRisk, /sr-only/, "the owner is visible text");
+  assert.match(perRisk, /fx-perrisk-key/, "the chart's gold diamond marks it");
+  assert.match(html, /The center book runs more volatility than the guardrails; per unit of risk its drawdown is lower/);
+  assert.match(html, new RegExp(`The raw ${rawDD} is what it actually drew down`));
+  // The terms are defined once, under the sealed evidence: the card links there.
+  assert.match(html, /Certainty equivalent, sealed worlds and block B are defined under Sealed evidence/);
+  assert.match(raw, /href="#evidence-terms"/);
+  assert.doesNotMatch(html, /sure yearly return/);
+
+  // A risk summary from a different run than the books (its raw "after" does
+  // not match) is not shown next to them.
+  const other = {
+    ...s,
+    evidence: {
+      ...s.evidence,
+      loops: s.evidence.loops.map((l) =>
+        l.loop === latest.loop ? { ...l, riskSummary: { ...l.riskSummary!, centerMaxDDAfter: l.riskSummary!.centerMaxDDAfter + 0.01 } } : l,
+      ),
+    },
+  };
+  assert.equal(showcaseContext(other).sealed!.volMatched, null);
+  // Nor is a missing one invented.
+  const none = {
+    ...s,
+    evidence: {
+      ...s.evidence,
+      loops: s.evidence.loops.map((l) => (l.riskSummary ? { ...l, riskSummary: { ...l.riskSummary, centerMaxDDAtGuardrailsVolAfter: null } } : l)),
+    },
+  };
+  const bare = showcaseContext(none);
+  assert.equal(bare.sealed!.volMatched, null);
+  assert.doesNotMatch(renderToStaticMarkup(createElement(SealedContext, { ctx: bare, seed: s.world.seed })), /guardrails&#x27; volatility/);
+});
+
+test("the evidence panel shows loop 3's raw drawdown with its vol-matched one, both in the open", () => {
+  const s = load();
+  const text = visibleEvidence(s.evidence.loops);
+  const three = text.slice(text.indexOf("Loop 3 "));
+  assert.match(three, /6\.65% → 6\.63%/);
+  assert.match(three, /Per-agent guardrails on the same worlds: 6\.53%/);
+  assert.match(three, /center book still above/);
+  assert.match(three, /At the guardrails' volatility: 5\.88% \(below their 6\.53%\)/);
+  assert.match(three, /The center book runs more volatility than the guardrails; per unit of risk its drawdown is lower/);
+  // The drawdown chart labels it next to the raw numbers.
+  assert.match(text, /6\.65% → 6\.63% guardrails 6\.53% ◇ 5\.88% at their vol/);
+  // "at their vol" never splits across lines in the narrow value column.
+  assert.match(renderToStaticMarkup(createElement(Evidence, { loops: s.evidence.loops })), /<span class="fc-dd-vol-note">at their vol<\/span>/);
+});
+
+/* -------------------------------------------------------------------------- */
+/* Loop 4 fixes: what a merge had to do, and what "one counterparty" means     */
+/* -------------------------------------------------------------------------- */
+
+test("loop verdicts: a structural merge is 'confirmed neutral', not read as a win", () => {
+  const s = load();
+  const text = visibleEvidence(s.evidence.loops);
+  const [one, rest] = text.split(/Loop 2 /) as [string, string];
+  const [two, three] = rest.split(/Loop 3 /) as [string, string];
+  // Loops 1 and 2 merged return claims that won block B.
+  assert.match(one, /✓ merged · confirmed on block B/);
+  assert.match(two, /✓ merged · confirmed on block B/);
+  // Loop 3 merged two structural guarantees; its block-B interval crosses zero.
+  const l3 = s.evidence.loops.find((l) => l.loop === 3)!;
+  assert.ok(l3.blockB!.allocator.lo < 0 && l3.merged.every((m) => m.track === "structure"));
+  assert.match(three, /✓ merged · confirmed neutral on block B \(structural\)/);
+  assert.equal(loopVerdict({ confirmed: false, merged: [] }), "nothing merged");
+  assert.equal(loopVerdict({ confirmed: false, merged: [{ k: 0, angle: "x", track: "allocator" }] }), "merged · not confirmed");
+});
+
+test("loop 3's title is glossed: 'one counterparty' is the cap after a stop-out, not a crowding-scan grouping key", () => {
+  const s = load();
+  const text = visibleEvidence(s.evidence.loops);
+  const three = text.slice(text.indexOf("Loop 3 "));
+  assert.match(three, /An operator is one counterparty \(G\)/);
+  assert.match(three, /One counterparty means: when one of an operator's agents is stopped out, its other live agents are capped together/);
+  assert.match(three, /It is not a grouping key: the crowding cut still groups agents by overlapping positions only/);
+  // Only that title gets it.
+  assert.equal(titleGloss("One-year Sharpe scores (A) and stop-out by one close of the agent's subtree (C)"), null);
+  assert.equal(text.match(/One counterparty means/g)?.length, 1);
+});
+
+test("the evidence panel's method line and drawdown caption take the block size from the data, and need none", () => {
+  const s = load();
+  const panel = (loops: LoopEvidence[]) =>
+    renderToStaticMarkup(createElement(EvidencePanel, { snapshot: { ...s, evidence: { ...s.evidence, loops } } }))
+      .replace(/<[^>]+>/g, " ")
+      .replace(/&#x27;/g, "'")
+      .replace(/\s+/g, " ");
+  // Every committed loop used 200-world blocks.
+  const all = panel(s.evidence.loops);
+  assert.match(all, /judged against the code before it on 200 sealed virtual worlds \(block A\), then confirmed on 200 more \(block B\)/);
+  assert.match(all, /Each loop is confirmed on its own block of 200 sealed virtual worlds/);
+  // No loops yet: no dangling "on  more".
+  const none = panel([]);
+  assert.match(none, /on sealed virtual worlds \(block A\), then confirmed on a fresh block \(block B\)\. Read from/);
+  assert.doesNotMatch(none, /on\s+more/);
+  // Mixed block sizes: no count, in the line or in the caption.
+  const mixed = s.evidence.loops.map((l) => (l.loop === 2 ? { ...l, blocks: { ...l.blocks, B: { ...l.blocks.B, count: 100 } } } : l));
+  const m = panel(mixed);
+  assert.match(m, /then confirmed on a fresh block \(block B\)/);
+  assert.match(m, /Each loop is confirmed on its own block of sealed virtual worlds/);
+  assert.equal(evidenceBlocksLine([]), "Each loop is judged against the code before it on sealed virtual worlds (block A), then confirmed on a fresh block (block B).");
+});
+
+const flatten = (html: string) =>
+  html
+    .replace(/<[^>]+>/g, " ")
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&")
+    .replace(/\s+/g, " ");
+
+/** The whole console rendered to text. Its charts measure in useLayoutEffect, which React warns about on the server: that one warning is muted. */
+function consoleText(s: FundSnapshot): string {
+  const error = console.error;
+  console.error = (...args: unknown[]) => {
+    if (!String(args[0]).includes("useLayoutEffect does nothing on the server")) error(...args);
+  };
+  try {
+    return flatten(renderToStaticMarkup(createElement(FundConsole, { snapshot: s })));
+  } finally {
+    console.error = error;
+  }
+}
+
+test("(G) in the console: the crowding cut groups by positions only; the operator cap is named apart, and only as a count", () => {
+  const s = load();
+  const caps = s.decisions.filter((d) => d.kind === "OPERATOR_CUT").length;
+  assert.equal(caps, 0, "the showcase world has no operator cap");
+  const text = consoleText(s);
+  assert.match(text, /The crowding cut groups agents by overlapping positions only; a cut whose members share an operator is flagged\./);
+  assert.match(text, /Separately, since loop 3 a stop-out caps the same operator's other agents; no agent of a shared operator was stopped out in this world, so it did not fire\./);
+  // The NAV caption lists what the allocator does in this world: no operator limits.
+  assert.match(text, /looks across the agents \(allocation and crowding limits\) and judges/);
+  assert.doesNotMatch(text, /operator limits/);
+  // Never "groups by operator" as a claim.
+  assert.doesNotMatch(text.replace(/still being researched/g, ""), /groups? (agents )?by operator/i);
+
+  // With an operator cap in the world, the console says so and counts it.
+  const agent = s.agents.find((a) => a.operator === "op-8")!;
+  const capped = { ...s, decisions: [...s.decisions, { t: 50, kind: "OPERATOR_CUT" as const, node: agent.name, detail: "operator cap" }] };
+  const withCap = consoleText(capped);
+  assert.match(withCap, /caps the same operator's other agents, which happened 1 time in this world\./);
+  assert.match(withCap, /\(allocation and crowding limits, and operator caps after a stop-out\)/);
+});
+
+test("the decision log's operator filter says what it holds, and names operator caps only when one fired", () => {
+  const s = load();
+  const note = (snap: FundSnapshot) =>
+    flatten(
+      renderToStaticMarkup(
+        createElement(DecisionLog, { snapshot: snap, filter: "operator", onFilter: () => {}, selected: null, onSelect: () => {} }),
+      ),
+    );
+  const none = note(s);
+  assert.match(none, /One-trade cuts whose members share an operator \(flagged; the cut itself groups by overlapping positions only\)\. No operator cap/);
+  assert.doesNotMatch(none, /Operator caps \(when/);
+  const agent = s.agents.find((a) => a.operator === "op-8")!;
+  const capped = { ...s, decisions: [...s.decisions, { t: 50, kind: "OPERATOR_CUT" as const, node: agent.name, detail: "operator cap" }] };
+  assert.match(note(capped), /, and 1 operator cap: one of an operator's agents was stopped out/);
+});
+
+test("lint: the drawdown chart paints the before ring's outline and the guardrails tick above the after dot", () => {
+  const css = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+  assert.match(css, /\.fc-dd-before::after \{[^}]*z-index: 2;/);
+  assert.match(css, /\.fc-dd-after \{ z-index: 1;/);
+  assert.match(css, /\.fc-dd-guard \{ z-index: 3;/);
 });

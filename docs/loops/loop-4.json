@@ -6,9 +6,9 @@
   "block": "B",
   "seeds": "14500-14699",
   "track": "tiger",
-  "tigerMaxDDAfter": 0.25775053674056075,
-  "buyHoldMaxDD": 0.43302415887798146,
-  "tigerMaxDDBefore": 0.282897514551927,
+  "tigerMaxDDAfter": 0.23756774993497703,
+  "buyHoldMaxDD": 0.38725953352988607,
+  "tigerMaxDDBefore": 0.2546307357057662,
   "pairedChange": {
    "mean": 0,
    "lo": 0,
@@ -19,11 +19,21 @@
   "centerMaxDDAfter": 0.07577163781617498,
   "guardrailsMaxDD": 0.06849239548845748,
   "tigerPairedChange": {
+   "mean": -0.017062985770789286,
+   "lo": -0.02108186986414622,
+   "hi": -0.013044101677432352
+  },
+  "tigerMaxDDBeforeFirstMeasure": 0.282897514551927,
+  "tigerMaxDDAfterFirstMeasure": 0.25775053674056075,
+  "buyHoldMaxDDFirstMeasure": 0.43302415887798146,
+  "tigerPairedChangeFirstMeasure": {
    "mean": -0.025146977811366416,
    "lo": -0.0305003634028101,
    "hi": -0.01979359221992273,
    "wins": 0.26
-  }
+  },
+  "tigerNote": "tiger fields re-measured with the corrected arena (primary picked on days 0-59); the *FirstMeasure fields are the original block-B confirmation",
+  "centerMaxDDAtGuardrailsVolAfter": 0.06699009058062033
  },
  "rejections": [
   {
@@ -660,6 +670,16 @@
     "maxDD": 0.23756774993497703,
     "baselineMaxDD": 0.38725953352988607
    }
+  }
+ },
+ "correction": {
+  "what": "re-measured after the arena's hindsight bias was fixed (Tiger primary picked on days 0-59), both sides with the corrected arena",
+  "tigerGainOnBAfterFix": {
+   "vs": "9dab3e5 with the corrected arena",
+   "mean": 0.015582423183050581,
+   "lo": 0.0019286061675262787,
+   "hi": 0.029236240198574882,
+   "wins": 0.59
   }
  }
 }

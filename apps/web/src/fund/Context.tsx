@@ -1,5 +1,6 @@
 import type { ShowcaseContext } from "./model";
-import { pp } from "./model";
+import { pct, pp } from "./model";
+import { GLOSSARY_ID } from "../site";
 
 /**
  * The showcase world in context: its head-to-head next to the latest sealed
@@ -13,8 +14,14 @@ import { pp } from "./model";
 const CENTER = "#b8841f";
 const BASELINE = "#4f88d6";
 
-/** One cell: the center book's value over the guardrails'. Each swatch stays on the line of its own number. */
-function Pair({ center, guardrails, flag }: { center: string; guardrails: string; flag?: string }) {
+/**
+ * One cell: the center book's value over the guardrails'. Each swatch stays on
+ * the line of its own number. `perRisk` adds, after both raw numbers, the
+ * center book's drawdown at the guardrails' volatility (never in place of its
+ * raw one), naming its owner on screen, with the evidence chart's gold hollow
+ * diamond.
+ */
+function Pair({ center, guardrails, flag, perRisk }: { center: string; guardrails: string; flag?: string; perRisk?: string }) {
   return (
     <>
       <span className="fx-v">
@@ -37,6 +44,15 @@ function Pair({ center, guardrails, flag }: { center: string; guardrails: string
           {guardrails}
         </span>
       </span>
+      {perRisk && (
+        // Owner in plain sight: after both raw numbers, so it must say whose it is.
+        <span className="fx-perrisk">
+          <span className="fx-perrisk-key" style={{ borderColor: CENTER }} aria-hidden="true" />
+          <span>
+            center book at the guardrails' volatility: <span className="fx-perrisk-v">{perRisk}</span>
+          </span>
+        </span>
+      )}
     </>
   );
 }
@@ -53,7 +69,11 @@ export function SealedContext({ ctx, seed }: { ctx: ShowcaseContext; seed: numbe
           <h3 id="fc-context-h" className="fx-title">
             {s ? `Across ${s.worlds} sealed worlds` : "No sealed average yet"}
           </h3>
-          <p className="fx-gloss">Sealed: virtual worlds no researcher saw or tuned on, used only to confirm a change.</p>
+          {/* Defined once, under the sealed evidence (site.ts GLOSSARY): not again here. */}
+          <p className="fx-gloss">
+            Certainty equivalent, sealed worlds and block B are defined{" "}
+            <a href={`#${GLOSSARY_ID}`}>under Sealed evidence ↓</a>
+          </p>
           <div className="fx-legend">
             <span>
               <span className="chart-key" style={{ background: CENTER }} aria-hidden="true" /> center book
@@ -89,6 +109,7 @@ export function SealedContext({ ctx, seed }: { ctx: ShowcaseContext; seed: numbe
                       center={r.sealed.center}
                       guardrails={r.sealed.guardrails}
                       flag={r.metric === "Max drawdown" && r.sealed.better === "guardrails" ? "higher" : undefined}
+                      perRisk={r.metric === "Max drawdown" && s?.volMatched ? pct(s.volMatched.value, 2) : undefined}
                     />
                   ) : (
                     <span className="fx-na">not recorded</span>
@@ -131,6 +152,14 @@ export function SealedContext({ ctx, seed }: { ctx: ShowcaseContext; seed: numbe
                   </>
                 )}
                 .
+              </p>
+            )}
+            {dd?.sealed && s.volMatched && (
+              <p className="fx-text fx-perrisk-text">
+                The center book runs {s.volMatched.moreVol ? "more" : "no more"} volatility than the guardrails;{" "}
+                {s.volMatched.belowGuardrails ? "per unit of risk its drawdown is lower" : "even per unit of risk its drawdown is not lower"}:{" "}
+                {pct(s.volMatched.value, 2)} at their volatility, vs {dd.sealed.guardrails}. The raw {dd.sealed.center} is what it actually
+                drew down.
               </p>
             )}
             <p className="fx-src">

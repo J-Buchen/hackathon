@@ -621,24 +621,67 @@ The `#fund-console` section follows the same contract over
 hint (validated by `parseFundSnapshot`, including every `policy` field the
 console reads), an empty notice when the file has no agents or no NAV, and the
 lazy-loaded `FundConsole` chunk when ready. Everything it shows is labelled as a
-simulated virtual world. The showcase world's KPI tiles are never shown without
+simulated virtual world. The `#evidence` section right after it reads the same
+fetch (App.tsx `useFundSnapshot`, one request for both) with its own skeleton
+(`EvidenceSkeleton`), the same error notice, and its own lazy chunk
+(`fund/EvidencePanel`); it still renders the ledger when the console is empty.
+The panel keeps the `#fc-evidence` id, so older deep links land on it.
+
+The showcase world's KPI tiles are never shown without
 the context card below them (`fund/Context.tsx`, always rendered): "Across N
 sealed worlds" with the latest confirmed loop's block-B means, including where
 the center book still loses; or, when no loop has recorded its block-B books
 yet, "No sealed average yet", saying this one world has nothing to be read
 against. Both name the books the same way as the tiles ("center book" /
 "per-agent guardrails"). The skeleton reserves the pair (`--fcs-top`,
-`--fcs-context`).
+`--fcs-context`). The card does not define its terms again: one line links
+to the page's single glossary (`site.ts` `GLOSSARY`, rendered under the
+sealed-evidence intro as `#evidence-terms`), so each term has one definition.
+
+The sealed-evidence intro (`site.ts` `EVIDENCE_LEDE`) states the rule the
+ledger applies, not a stronger one: a return or drawdown claim must win on
+block A and again on block B, a structural guarantee must stay neutral on
+both, and a fix found after a push is recorded with its cost (`site.test.ts`
+fails the intro if it says every change "wins" while a merged loop's block-B
+interval crosses zero). A loop that merged only structural changes is marked
+"confirmed neutral on block B (structural)" (`model.ts` `loopVerdict`), and a
+title that uses a term of art gets a one-line gloss under it (`titleGloss`:
+loop 3's "an operator is one counterparty" is the cap after a stop-out, not a
+grouping key in the crowding scan). Block sizes are read from the data; with
+mixed sizes or no loops the method line needs no count
+(`evidenceBlocksLine`).
+
+**(G) wording.** The crowding cut groups agents by overlapping positions only;
+a cut whose members share an operator is flagged. Since loop 3 a stop-out also
+caps the same operator's other agents: the guarantee card and the console name
+it as that separate mechanism, and the console counts it for its world (the NAV
+caption and the decision log's operator filter mention operator caps only when
+one fired). Grouping by operator is research and is never claimed.
+
+Where a loop records the center book's drawdown at the guardrails' volatility
+(`riskSummary.centerMaxDDAtGuardrailsVolAfter`, from loop 3; carried by
+`readEvidence` → snapshot → `parseFundSnapshot`, nullable), the context card,
+the loop card, the drawdown chart (a hollow diamond) and its data table show it
+NEXT TO the raw drawdown, never instead of it, with a one-line reason worked out
+from the numbers (`model.ts` `volMatched`: "runs more volatility … per unit of
+risk its drawdown is lower" only when both hold). The raw number and its
+"higher" flag stay first. On the context card it follows both raw numbers, so
+it names its owner on screen ("center book at the guardrails' volatility")
+next to the chart's gold hollow diamond. In the drawdown chart the before
+ring's outline and the guardrails tick are painted above the after dot, so
+near-equal values (loop 3: 6.65% → 6.63% by 6.53%) still show every mark.
 
 The skeleton's reserved heights are approximate, not exact: text reflows
 continuously with width, so within each width band a block's height is a line
 in the console's own width (`100cqi`; the skeleton is a size container),
-fitted to the ready console on fresh loads. Against the committed snapshot the
-skeleton's total is within 95 px of the ready console at every width sampled
-(every 6 px from 320 to 1436 px; about 15 px on average, 0 from 1180 px up),
-and the browser's scroll anchoring absorbs the rest where it has it (Safari
-does not). Re-fit (`styles.css`, "Loading skeleton") when the snapshot's text
-changes. Charts that size themselves to their container measure before the
+fitted to the ready console on fresh loads. Against the committed snapshot,
+at 197 widths from 320 to 1436 px (every 6 px plus common device widths), the
+console skeleton's total is within 55 px of the ready console (12 px on
+average) and the evidence skeleton within 28 px of its panel (8 px on
+average), both 0 from 1180 px up; the browser's scroll anchoring absorbs the
+rest where it has it (Safari does not). Re-fit (`styles.css`, "Loading
+skeleton") when the snapshot's text changes. Charts that size themselves to
+their container measure before the
 first paint (`LineChart`'s `useLayoutEffect`), so they render at their real
 height from the start.
 
@@ -659,16 +702,73 @@ container queries rather than scrolling sideways. Their keyboard focus ring is
 drawn inside the region (`.panel` clips anything outside it) and above the
 fade and the tag.
 
-Every lazy section (payment dashboard, fund console, center book, AgentHire)
-sits inside a `SectionBoundary`: a render error replaces that section with the
-same `.notice-error` instead of unmounting the page.
+Every lazy section (payment dashboard, fund console, sealed evidence, center
+book, AgentHire) sits inside a `SectionBoundary`: a render error replaces that
+section with the same `.notice-error` instead of unmounting the page.
 
 In-page links clear the sticky nav (`scroll-padding-top` on `html`), deep links
 (`/#fc-evidence`) are re-applied as lazy sections load (App.tsx
-`useHashNavigation`), and console aliases (`#fc-log-rebalance`,
-`#fc-log-group`, `#fc-tree-grant`) scroll to their panel and set the log filter
+`useHashNavigation`), in-page jumps hold their target in place for a moment
+while the `content-visibility: auto` sections they passed over render (only a
+real change of page height re-jumps; the reader's next input ends it, and so
+does any scroll that carries the target away from its spot with no height
+change to explain it: a scrollbar drag, find-in-page, assistive tech or a
+script. The passive scroll listener that judges this returns at once outside
+a hold), every hashchange also scrolls to its target itself (a native
+fragment scroll that starts while another smooth scroll is running can be
+dropped), and
+console aliases (`#fc-log-rebalance`, `#fc-log-group`, `#fc-tree-grant`)
+scroll to their panel and set the log filter
 or the replay (`fund/hash.ts`). Nested scrollers (the decision log, wide tables)
 take the wheel before Lenis does (`allowNestedScroll`).
+
+### 11.1b Page order and navigation
+
+Section order: hero → four guarantees → fund console → sealed evidence →
+worked example (coffee Tiger Cubs) → integrations (cards, then the AgentHire
+run) → under the hood (the mandate primitive, then the payment dashboard).
+Each top-level section carries `data-nav` with the nav entry it lights up
+(`site.ts` `NAV_SECTIONS`, tested against App.tsx in `site.test.ts`).
+
+- **The nav reaches every section at every width.** From 900 px the six links
+  sit in the bar (short labels and the short pill from 900 to 1179 px, so the
+  row fits); below 900 px they fold into a disclosure: a `Menu` button with
+  `aria-expanded` and `aria-controls="nav-menu"`, closed by Escape (focus back
+  on the button), by a link (focus moves to that section's heading, after the
+  jump, so it never falls to `<body>`), by a tap outside (a dim scrim sits
+  under the open menu, so page text does not read as more menu) and by tabbing
+  out. The menu contains its own scroll (`overscroll-behavior: contain`). The
+  rules live in `nav-menu.ts`, tested as behaviour on a fake DOM
+  (`nav-menu.test.ts`). The brand links to the hero (`#top`); the skip link
+  stays first in the tab order. The bar stays `--nav-h` (60 px) tall at every
+  width.
+- **The section in view is marked** `aria-current="location"` (a gold bar under
+  the link, or beside it in the menu), from one IntersectionObserver on a thin
+  line a little above mid-viewport. No scroll handler and no animation beyond a
+  colour and a bar, which reduced motion holds static.
+- **Integrations say how real they are.** One card per integration with a
+  status chip read from the code and `docs/SPONSORS.md` (● runs locally,
+  ○ mock, □ contract and tests, not deployed; the glyph carries the kind, the
+  text stays in theme colours, short enough for one line), one sentence on
+  what it adds, a "Runs in" line naming the demo on this page that runs it
+  (the fund console runs none of their code: its operators and names are
+  simulated) and a link to its file. Nothing claims a deployment, live funds
+  or escrow (`site.test.ts`). The old sponsors marquee (prize amounts) is gone.
+- **GitHub links are pinned.** Every link to the repo is built from
+  `site.ts` `REPO_REF`, a pushed commit that holds every linked file (GitHub's
+  `main` lags the branch the loops are pushed to). `site.test.ts` checks that
+  the ref is in the page's own history and holds each file; move it forward
+  when a later loop is pushed.
+- **One voice.** Every section intro is at most two sentences, leads with the
+  product (the allocation and risk layer for capital run by AI agents), glosses
+  its jargon, says "stop-out"/"close" for a drawdown, and labels simulated
+  numbers "virtual world"/"simulated". Longer disclosures move into lists under
+  the intro (the AgentHire run's "Real / Scripted / Mock / Synthetic /
+  Simulated"), never out of the page. Each term is defined once (the
+  glossary). "Simulated" is scoped to what is simulated: the fund results are,
+  while the worked example's research notes cite real, dated sources over
+  synthetic prices. Headings and overlines balance their lines
+  (`text-wrap: balance`), so no last word sits alone.
 
 ### 11.2 Motion-performance rules (already in force)
 

@@ -1,5 +1,16 @@
 import type { LoopEvidence } from "./types";
-import { drawdownRows, evidenceRows, pp, pct, winPct, type DrawdownRow, type EvidenceRow } from "./model";
+import {
+  drawdownRows,
+  evidenceRows,
+  loopVerdict,
+  pp,
+  pct,
+  titleGloss,
+  winPct,
+  type DrawdownRow,
+  type EvidenceRow,
+  type VolMatched,
+} from "./model";
 
 /**
  * Sealed-loop evidence, per loop: (a) the merged change's paired uplift in the
@@ -100,7 +111,7 @@ function Forest({ rows }: { rows: EvidenceRow[] }) {
  * start at zero (a dot plot encodes position, not length), and the axis says so.
  */
 function DrawdownChart({ rows }: { rows: DrawdownRow[] }) {
-  const values = rows.flatMap((r) => [r.before, r.after, r.guardrails]);
+  const values = rows.flatMap((r) => [r.before, r.after, r.guardrails, ...(r.atGuardrailsVol ? [r.atGuardrailsVol.value] : [])]);
   const lo = Math.min(...values);
   const hi = Math.max(...values);
   // Pad the domain so no mark or edge tick label sits on the panel's edge.
@@ -115,14 +126,20 @@ function DrawdownChart({ rows }: { rows: DrawdownRow[] }) {
       className="fc-forest fc-dd"
       role="img"
       aria-label={`Center book mean max drawdown before and after each loop, with per-agent guardrails: ${rows
-        .map((r) => `${r.label}, ${r.sub}: ${pct(r.before, 2)} to ${pct(r.after, 2)}, guardrails ${pct(r.guardrails, 2)}`)
+        .map(
+          (r) =>
+            `${r.label}, ${r.sub}: ${pct(r.before, 2)} to ${pct(r.after, 2)}, guardrails ${pct(r.guardrails, 2)}` +
+            (r.atGuardrailsVol ? `, center book at the guardrails' volatility ${pct(r.atGuardrailsVol.value, 2)}` : ""),
+        )
         .join("; ")}`}
     >
       {rows.map((r) => (
         <div
           key={r.key}
           className="fc-forest-row"
-          title={`${r.label}: center book ${pct(r.before, 2)} → ${pct(r.after, 2)}; per-agent guardrails ${pct(r.guardrails, 2)}`}
+          title={`${r.label}: center book ${pct(r.before, 2)} → ${pct(r.after, 2)}; per-agent guardrails ${pct(r.guardrails, 2)}${
+            r.atGuardrailsVol ? `; center book at the guardrails' volatility ${pct(r.atGuardrailsVol.value, 2)}` : ""
+          }`}
         >
           <div className="fc-forest-id">
             <span className="fc-forest-label">{r.label}</span>
@@ -136,15 +153,26 @@ function DrawdownChart({ rows }: { rows: DrawdownRow[] }) {
               className="fc-dd-move"
               style={{ left: x(Math.min(r.before, r.after)), right: `calc(100% - ${x(Math.max(r.before, r.after))})`, background: GOLD }}
             />
-            <span className="fc-dd-guard" style={{ left: x(r.guardrails), background: BLUE }} />
+            {/* Paint order (styles.css): the before disc masks the line, the
+                after dot sits on it, and the before ring's outline and the
+                guardrails tick are drawn on top, so near-equal values still
+                show all three marks. */}
             <span className="fc-dd-before" style={{ left: x(r.before), borderColor: GOLD }} />
             <span className="fc-dd-after" style={{ left: x(r.after), background: GOLD }} />
+            <span className="fc-dd-guard" style={{ left: x(r.guardrails), background: BLUE }} />
+            {/* Per unit of risk: a hollow diamond, never in place of the dot. */}
+            {r.atGuardrailsVol && <span className="fc-dd-vol" style={{ left: x(r.atGuardrailsVol.value), borderColor: GOLD }} />}
           </div>
           <div className="fc-forest-val">
             <strong>
               {pct(r.before, 2)} → {pct(r.after, 2)}
             </strong>
             <span>guardrails {pct(r.guardrails, 2)}</span>
+            {r.atGuardrailsVol && (
+              <span>
+                ◇ {pct(r.atGuardrailsVol.value, 2)} <span className="fc-dd-vol-note">at their vol</span>
+              </span>
+            )}
           </div>
         </div>
       ))}
@@ -201,20 +229,41 @@ function StandingFlag({ standing }: { standing: DrawdownRow["standing"] }) {
 }
 
 /**
+ * The center book's drawdown per unit of risk, under its raw number: the same
+ * returns scaled to the guardrails' volatility. The explanation is worked out
+ * from the numbers, so it cannot say "lower" when it is not.
+ */
+function PerRisk({ v, guardrails }: { v: VolMatched; guardrails: number }) {
+  return (
+    <dd className="fc-fact-sub fc-fact-perrisk">
+      At the guardrails' volatility: <strong>{pct(v.value, 2)}</strong>
+      {v.belowGuardrails ? ` (below their ${pct(guardrails, 2)})` : ` (not below their ${pct(guardrails, 2)})`}.{" "}
+      <span className="fc-fact-why">
+        The center book runs {v.moreVol ? "more" : "no more"} volatility than the guardrails;{" "}
+        {v.belowGuardrails ? "per unit of risk its drawdown is lower" : "even per unit of risk its drawdown is not lower"}. The raw
+        number above is what it drew down.
+      </span>
+    </dd>
+  );
+}
+
+/**
  * (a) + (b): what the merged change did, on the block that confirmed it. When
  * a post-push correction re-measured the gain, the card leads with the number
  * that stands (the code that shipped) and keeps the first confirmation below it.
  */
 function LoopFacts({ l, dd }: { l: LoopEvidence; dd: DrawdownRow | undefined }) {
-  const first = l.blockB?.allocator ?? null;
+  const track = l.merged[0]?.track === "tiger" ? "tiger" : "allocator";
+  const first = l.blockB?.[track] ?? null;
+  const td = l.riskSummary?.tiger ?? null;
   const fixed = first && l.correctedB ? l.correctedB.uplift : null;
   const lead = fixed ?? first;
-  if (!lead && !dd) return null;
+  if (!lead && !dd && !td) return null;
   return (
     <dl className="fc-facts">
       {lead && (
         <div className="fc-fact">
-          <dt>Certainty equivalent vs the code before it · block B</dt>
+          <dt>{track === "tiger" ? "Tiger overlay certainty equivalent" : "Certainty equivalent"} vs the code before it · block B</dt>
           <dd>
             <strong className="fc-fact-v">{pp(lead.mean)}</strong>{" "}
             <span className="fc-fact-ci">
@@ -232,7 +281,29 @@ function LoopFacts({ l, dd }: { l: LoopEvidence; dd: DrawdownRow | undefined }) 
           )}
         </div>
       )}
-      {dd && (
+      {td && (
+        <div className="fc-fact">
+          <dt>Tiger overlay mean max drawdown · block {l.riskSummary?.block ?? "B"}</dt>
+          <dd>
+            <strong className="fc-fact-v">
+              {pct(td.before, 2)} → {pct(td.after, 2)}
+            </strong>{" "}
+            <span className="fc-fact-ci">
+              {td.pairedChange ? (
+                <>
+                  paired change {pp(td.pairedChange.mean)}, 90% interval {range(td.pairedChange)}
+                </>
+              ) : (
+                "paired change not recorded"
+              )}
+            </span>
+          </dd>
+          <dd className="fc-fact-sub">
+            Buy-and-hold on the same worlds: <strong>{pct(td.buyHold, 2)}</strong>. The allocator is unchanged by this loop.
+          </dd>
+        </div>
+      )}
+      {dd && !td && (
         <div className="fc-fact">
           <dt>Center-book mean max drawdown · block {l.riskSummary?.block ?? "B"}</dt>
           <dd>
@@ -253,6 +324,7 @@ function LoopFacts({ l, dd }: { l: LoopEvidence; dd: DrawdownRow | undefined }) 
             Per-agent guardrails on the same worlds: <strong>{pct(dd.guardrails, 2)}</strong>
             <StandingFlag standing={dd.standing} />
           </dd>
+          {dd.atGuardrailsVol && <PerRisk v={dd.atGuardrailsVol} guardrails={dd.guardrails} />}
           {dd.note && !dd.paired && <dd className="fc-fact-sub fc-fact-note">Ledger: {dd.note}</dd>}
         </div>
       )}
@@ -298,18 +370,20 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
   const rows = evidenceRows(loops);
   const dds = drawdownRows(loops);
   const ddOf = new Map(dds.map((d) => [d.loop, d]));
+  // Block B's size, when every loop used the same one (otherwise the caption needs no count).
+  const bCounts = [...new Set(loops.map((l) => l.blocks.B.count))];
+  const bBlock = bCounts.length === 1 ? `its own block of ${bCounts[0]} sealed virtual worlds` : "its own block of sealed virtual worlds";
   return (
     <div className="fc-evidence">
       <ol className="fc-loops">
         {loops.map((l) => {
           const [title, ...rest] = (l.merged[0]?.angle ?? "").split(": ");
+          const gloss = l.merged.length > 0 ? titleGloss(l.title ?? title ?? null) : null;
           return (
             <li key={l.loop} className="fc-loop">
               <div className="fc-loop-head">
                 <span className="fc-loop-n">Loop {l.loop}</span>
-                <span className={`fc-loop-verdict${l.confirmed ? " is-ok" : ""}`}>
-                  {l.confirmed ? "✓ merged · confirmed on block B" : l.merged.length ? "merged · not confirmed" : "nothing merged"}
-                </span>
+                <span className={`fc-loop-verdict${l.confirmed ? " is-ok" : ""}`}>{loopVerdict(l)}</span>
               </div>
               {l.merged.length > 0 &&
                 (l.title ? (
@@ -322,6 +396,7 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
                     {rest.length > 0 && <>: {rest.join(": ")}</>}
                   </p>
                 ))}
+              {gloss && <p className="fc-loop-gloss">{gloss}</p>}
               <LoopFacts l={l} dd={ddOf.get(l.loop)} />
               {/* The ledger's own words on the loop, always visible: they say
                   what the loop did to drawdown, including the bad news. */}
@@ -417,11 +492,19 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
             <span className="chart-legend-item">
               <span className="fc-dd-key fc-dd-key-guard" style={{ background: BLUE }} /> Per-agent guardrails
             </span>
+            {dds.some((d) => d.atGuardrailsVol) && (
+              <span className="chart-legend-item">
+                <span className="fc-dd-key fc-dd-key-vol" style={{ borderColor: GOLD }} /> Center book, after, at the guardrails'
+                volatility
+              </span>
+            )}
           </div>
           <DrawdownChart rows={dds} />
           <p className="fc-note fc-dd-caption">
-            Lower is better. Each loop is confirmed on its own block of 200 sealed virtual worlds, so the rows are different
-            worlds. The axis does not start at zero.
+            Lower is better. Each loop is confirmed on {bBlock}, so the rows are different worlds. The axis does not start at
+            zero.
+            {dds.some((d) => d.atGuardrailsVol) &&
+              " The diamond is the same book scaled to the guardrails' volatility (its drawdown per unit of risk, recorded from loop 3); the dot is what it actually drew down."}
           </p>
           <details className="chart-table">
             <summary>
@@ -436,6 +519,7 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
                     <th scope="col" className="num">After</th>
                     <th scope="col" className="num">Paired change (90%)</th>
                     <th scope="col" className="num">Guardrails</th>
+                    <th scope="col" className="num">After, at guardrails' vol</th>
                     <th scope="col">After vs guardrails</th>
                   </tr>
                 </thead>
@@ -450,6 +534,7 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
                       <td className="num">{pct(d.after, 2)}</td>
                       <td className="num">{d.paired ? `${pp(d.paired.mean)} (${range(d.paired)})` : "not recorded"}</td>
                       <td className="num">{pct(d.guardrails, 2)}</td>
+                      <td className="num">{d.atGuardrailsVol ? pct(d.atGuardrailsVol.value, 2) : "not recorded"}</td>
                       <td>{STANDING[d.standing]?.text ?? "center book below"}</td>
                     </tr>
                   ))}

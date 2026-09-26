@@ -159,8 +159,21 @@ export interface RiskSummary {
   centerMaxDDBefore: number;
   centerMaxDDAfter: number;
   guardrailsMaxDD: number;
+  /**
+   * The center book's mean max drawdown after the change with its returns
+   * scaled to the guardrails book's volatility (the arena's
+   * `maxDDAtBaselineVol`): its drawdown per unit of risk. Null when the loop
+   * did not record it (before loop 3). Never a replacement for
+   * `centerMaxDDAfter`, which is what the book actually drew down.
+   */
+  centerMaxDDAtGuardrailsVolAfter: number | null;
   /** Paired change in the center book's max drawdown with its 90% interval; null when the loop did not record it. */
   pairedChange: { mean: number; lo: number; hi: number } | null;
+  /**
+   * For a tiger-track loop: the Tiger overlay's mean max drawdown before and
+   * after the change, buy-and-hold's on the same worlds, and the paired change.
+   */
+  tiger: { before: number; after: number; buyHold: number; pairedChange: { mean: number; lo: number; hi: number } | null } | null;
   note: string | null;
 }
 
@@ -206,6 +219,8 @@ export interface LoopEvidence {
    * against. Null when the loop was not corrected.
    */
   correctedB: { uplift: Uplift; vs: string | null } | null;
+  /** The same for block A (`correction.<name>GainOnAAfterFix`), when a correction re-measured it. */
+  correctedA: { uplift: Uplift; vs: string | null } | null;
   /** Center book vs per-agent guardrails, before this loop's change, on block A. */
   headVsBaseline: { worlds: number; utility: number; baseline: number; uplift: number; lo: number; hi: number; winRate: number } | null;
   riskSummary: RiskSummary | null;
@@ -397,7 +412,9 @@ const ordered = (u: { mean: number; lo: number; hi: number }) => u.lo <= u.mean 
 /**
  * The report's `riskSummary`, or null when it is missing, a number in it is not
  * finite, a drawdown is outside [0, 1] or its paired change is not an interval
- * (lo ≤ mean ≤ hi).
+ * (lo ≤ mean ≤ hi). The optional vol-matched drawdown
+ * (`centerMaxDDAtGuardrailsVolAfter`) is null when absent or not a drawdown in
+ * [0, 1]; a bad value there drops only that number, never the raw ones.
  */
 function riskSummary(v: unknown): RiskSummary | null {
   if (!isObj(v) || typeof v.block !== "string" || typeof v.seeds !== "string") return null;
@@ -405,6 +422,7 @@ function riskSummary(v: unknown): RiskSummary | null {
   const after = num(v.centerMaxDDAfter);
   const guard = num(v.guardrailsMaxDD);
   if (![before, after, guard].every(isDrawdown)) return null;
+  const atVol = num(v.centerMaxDDAtGuardrailsVolAfter);
   let pairedChange: RiskSummary["pairedChange"] = null;
   if (v.pairedChange !== null && v.pairedChange !== undefined) {
     if (!isObj(v.pairedChange)) return null;
@@ -412,13 +430,27 @@ function riskSummary(v: unknown): RiskSummary | null {
     if (!finite(p.mean, p.lo, p.hi) || !ordered(p)) return null;
     pairedChange = p;
   }
+  let tiger: RiskSummary["tiger"] = null;
+  const tb = num(v.tigerMaxDDBefore);
+  const ta = num(v.tigerMaxDDAfter);
+  const bh = num(v.buyHoldMaxDD);
+  if ([tb, ta, bh].every(isDrawdown)) {
+    let tp: { mean: number; lo: number; hi: number } | null = null;
+    if (isObj(v.tigerPairedChange)) {
+      const p = { mean: num(v.tigerPairedChange.mean), lo: num(v.tigerPairedChange.lo), hi: num(v.tigerPairedChange.hi) };
+      if (finite(p.mean, p.lo, p.hi) && ordered(p)) tp = p;
+    }
+    tiger = { before: tb, after: ta, buyHold: bh, pairedChange: tp };
+  }
   return {
     block: v.block,
     seeds: v.seeds,
     centerMaxDDBefore: before,
     centerMaxDDAfter: after,
     guardrailsMaxDD: guard,
+    centerMaxDDAtGuardrailsVolAfter: isDrawdown(atVol) ? atVol : null,
     pairedChange,
+    tiger,
     note: strOrNull(v.note),
   };
 }
@@ -466,9 +498,9 @@ function sealedBooks(conf: Json, B: { from: number; count: number }): SealedBook
  * A post-push correction's re-measured block-B gain
  * (`correction.<name>GainOnBAfterFix`); null unless it is an interval.
  */
-function correctedB(v: unknown): LoopEvidence["correctedB"] {
+function correctedB(v: unknown, block: "A" | "B" = "B"): LoopEvidence["correctedB"] {
   if (!isObj(v)) return null;
-  const key = Object.keys(v).find((k) => /GainOnBAfterFix$/.test(k));
+  const key = Object.keys(v).find((k) => new RegExp(`GainOn${block}AfterFix$`).test(k));
   const g = key ? v[key] : null;
   const u = uplift(g);
   return u && ordered(u) ? { uplift: u, vs: isObj(g) ? strOrNull(g.vs) : null } : null;
@@ -549,6 +581,7 @@ export function readEvidence(dir: string): LoopEvidence[] {
       blockA: keptCands.length === 1 ? perTrack(keptCands[0]!.blockA) : null,
       blockB: confirmed ? perTrack(conf?.blockB) : null,
       correctedB: confirmed ? correctedB(j.correction) : null,
+      correctedA: confirmed ? correctedB(j.correction, "A") : null,
       headVsBaseline: head && finite(...Object.values(head)) ? head : null,
       riskSummary: confirmed ? riskSummary(j.riskSummary) : null,
       rejections: rejections(j.rejections),

@@ -12,12 +12,24 @@ import Lenis from "lenis";
 import type { Snapshot } from "./types";
 import { parseSnapshot } from "./snapshot";
 import { DashboardSkeleton } from "./components/DashboardSkeleton";
-import { FundConsoleSkeleton } from "./components/FundConsoleSkeleton";
+import { EvidenceSkeleton, FundConsoleSkeleton } from "./components/FundConsoleSkeleton";
 import { SectionBoundary } from "./components/SectionBoundary";
 import { parseSwarmSnapshot, type SwarmSnapshot } from "./swarm/types";
 import { parseAgentHireSummary, type AgentHireSummary } from "./agenthire";
 import { parseFundSnapshot, type FundSnapshot } from "./fund/types";
-import { isConsoleAlias, parseConsoleHash } from "./fund/hash";
+import { parseConsoleHash } from "./fund/hash";
+import {
+  EVIDENCE_LEDE,
+  GLOSSARY,
+  GLOSSARY_ID,
+  INTEGRATIONS,
+  LEDGER_FILE,
+  NAV_SECTIONS,
+  REPO_TREE,
+  repoFile,
+  type Integration,
+} from "./site";
+import { bindOpenMenu, focusSection } from "./nav-menu";
 import "./styles.css";
 
 // Code-split the payment dashboard: it renders only below the fold AND only after
@@ -30,8 +42,10 @@ const Dashboard = lazy(() => import("./Dashboard"));
 const CenterBook = lazy(() => import("./swarm/CenterBook"));
 // The fund console (the product demo) is its own lazy chunk and snapshot too.
 const FundConsole = lazy(() => import("./fund/FundConsole"));
+// The sealed evidence reads the same snapshot as the console but is its own
+// section, so it is its own (small) chunk.
+const EvidencePanel = lazy(() => import("./fund/EvidencePanel"));
 
-const REPO_URL = "https://github.com/J-Buchen/hackathon";
 const EASE = [0.16, 1, 0.3, 1] as const;
 
 type LoadState =
@@ -69,15 +83,30 @@ function useSmoothScroll() {
 /*
  * The page renders after the browser's own fragment scroll, and the console's
  * panels exist only once its data loads, so a deep link (/#fc-evidence) would
- * otherwise stay at the top. Three pieces:
+ * otherwise stay at the top. Four pieces:
  *   1. On load, jump to the hash target, and again each time the page's height
  *      changes (a section above it finished loading) until the reader scrolls,
  *      clicks or types, or 5 s pass.
- *   2. Console aliases (#fc-log-rebalance, #fc-tree-grant …) have no element of
- *      their own: scroll to the panel they name. FundConsole sets the log
- *      filter or the replay from the same hash.
- *   3. A click on a link to the CURRENT hash fires no hashchange; replay it so
+ *   2. In-page jumps (the nav, "See the …" links) settle the same way for a
+ *      moment: sections are `content-visibility: auto`, so the ones a first
+ *      jump passes over are laid out at a placeholder height and grow once
+ *      they render next to the target, which would push it off screen (a phone
+ *      jumping from the console to Integrations landed inside the worked
+ *      example). Only real height changes re-jump, so a smooth scroll is left
+ *      alone unless the page moved under it.
+ *   3. Every hashchange also scrolls to its target itself: console aliases
+ *      (#fc-log-rebalance, #fc-tree-grant …) have no element of their own
+ *      (FundConsole sets the log filter or the replay from the same hash),
+ *      and a native fragment scroll that starts while another smooth scroll
+ *      is running can be dropped.
+ *   4. A click on a link to the CURRENT hash fires no hashchange; replay it so
  *      the console re-applies its state.
+ * Any hold ends on the reader's next wheel, touch, pointer or key input, and
+ * also on any scroll that carries the target AWAY from where a jump puts it
+ * with no jump in between: a scrollbar drag, find-in-page, assistive tech or a
+ * script's scrollTo. A smooth scroll toward the target only brings it closer,
+ * and a change of page height re-jumps (as the ResizeObserver would) before
+ * the direction is judged, so neither ends the hold.
  * The sticky nav is cleared by `scroll-padding-top` on html (styles.css).
  */
 function useHashNavigation() {
@@ -89,28 +118,67 @@ function useHashNavigation() {
     const smooth = (): ScrollBehavior =>
       window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
 
+    // Where a jump puts the target's top: just below the sticky nav.
+    const pad = parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) || 0;
+    // How far the target sits from that spot (null while it does not exist).
+    const offset = () => {
+      const t = targetOf(window.location.hash);
+      return t ? Math.abs(t.getBoundingClientRect().top - pad) : null;
+    };
+
     let settling = window.location.hash.length > 1;
+    let height = -1;
+    // The closest the target has come to its spot since the last jump.
+    let closest = Infinity;
     // Re-jump when the page's height changes (a section above the target
-    // loaded) or when new elements appear (the target itself was rendered: the
-    // console's skeleton reserves its height, so its arrival resizes nothing).
-    const ro = new ResizeObserver(() => jump());
+    // loaded or rendered) or, on load, when new elements appear (the target
+    // itself was rendered: the console's skeleton reserves its height, so its
+    // arrival resizes nothing).
+    const ro = new ResizeObserver(() => {
+      const h = document.body.scrollHeight;
+      if (h === height) return;
+      height = h;
+      jump();
+    });
     const mo = new MutationObserver(() => jump());
     const jump = () => {
-      if (settling) targetOf(window.location.hash)?.scrollIntoView({ behavior: "instant", block: "start" });
+      if (!settling) return;
+      const t = targetOf(window.location.hash);
+      if (!t) return;
+      t.scrollIntoView({ behavior: "instant", block: "start" });
+      closest = offset() ?? Infinity;
     };
     const stopSettling = () => {
       settling = false;
       ro.disconnect();
       mo.disconnect();
     };
+    // A scroll that moves the target away from its spot, with no change of
+    // page height to explain it, is the reader's: it ends the hold (see
+    // above). Outside a hold it returns at once.
+    const onScroll = () => {
+      if (!settling) return;
+      const d = offset();
+      if (d === null) return;
+      const h = document.body.scrollHeight;
+      if (height >= 0 && h !== height) {
+        height = h;
+        jump();
+        return;
+      }
+      if (d > closest + 8) stopSettling();
+      else closest = Math.min(closest, d);
+    };
     let raf = 0;
+    let timer = 0;
     if (settling) {
       ro.observe(document.body);
       mo.observe(document.getElementById("root") ?? document.body, { childList: true, subtree: true });
       raf = requestAnimationFrame(jump);
+      timer = window.setTimeout(stopSettling, 5000);
     }
-    const timer = window.setTimeout(stopSettling, 5000);
     const passive = { passive: true } as const;
+    window.addEventListener("scroll", onScroll, passive);
     window.addEventListener("wheel", stopSettling, passive);
     window.addEventListener("touchstart", stopSettling, passive);
     window.addEventListener("pointerdown", stopSettling, passive);
@@ -118,7 +186,20 @@ function useHashNavigation() {
 
     const onHashChange = () => {
       stopSettling();
-      if (isConsoleAlias(window.location.hash)) targetOf(window.location.hash)?.scrollIntoView({ behavior: smooth(), block: "start" });
+      // Scroll to the target here as well as natively: an alias has no element
+      // of its own, and a fragment scroll that starts while another smooth
+      // scroll is still running can be dropped (Chrome, motion on: the page
+      // stayed where it was). Toward the same spot, this only restarts it.
+      targetOf(window.location.hash)?.scrollIntoView({ behavior: smooth(), block: "start" });
+      // (2) Hold the target in place while the sections it passed over render.
+      // The pointer or key that followed the link already fired, so only the
+      // reader's next input (or 2 s) ends it.
+      settling = true;
+      height = document.body.scrollHeight;
+      closest = offset() ?? Infinity;
+      ro.observe(document.body);
+      window.clearTimeout(timer);
+      timer = window.setTimeout(stopSettling, 2000);
     };
     window.addEventListener("hashchange", onHashChange);
 
@@ -135,6 +216,7 @@ function useHashNavigation() {
       stopSettling();
       cancelAnimationFrame(raf);
       window.clearTimeout(timer);
+      window.removeEventListener("scroll", onScroll);
       window.removeEventListener("wheel", stopSettling);
       window.removeEventListener("touchstart", stopSettling);
       window.removeEventListener("pointerdown", stopSettling);
@@ -180,10 +262,48 @@ function ScrollProgress() {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Fund snapshot: one fetch, two sections (the console and the evidence)       */
+/* -------------------------------------------------------------------------- */
+type FundLoad =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  /** Parses, but has no agents or no NAV: the console says so; the evidence still renders. */
+  | { status: "empty"; snapshot: FundSnapshot }
+  | { status: "ready"; snapshot: FundSnapshot };
+
+function useFundSnapshot(): FundLoad {
+  const [state, setState] = useState<FundLoad>({ status: "loading" });
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/fund-snapshot.json")
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status} loading fund-snapshot.json`);
+        return r.json() as Promise<unknown>;
+      })
+      .then((raw) => parseFundSnapshot(raw))
+      .then((snapshot) => {
+        if (cancelled) return;
+        // A parseable file with no agents or no NAV has nothing to show in the
+        // console: say so instead of rendering empty panels (DESIGN.md §11.1).
+        if (snapshot.agents.length === 0 || snapshot.books.center.nav.length === 0) setState({ status: "empty", snapshot });
+        else setState({ status: "ready", snapshot });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  return state;
+}
+
+/* -------------------------------------------------------------------------- */
 /* App shell                                                                   */
 /* -------------------------------------------------------------------------- */
 export function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
+  const fund = useFundSnapshot();
   useSmoothScroll();
   useHashNavigation();
 
@@ -227,18 +347,22 @@ export function App() {
       <div className="grain" aria-hidden="true" />
       <ScrollProgress />
       <Nav />
-      {/* Everything from the hero through the sponsors marquee is the primary
+      {/* Everything from the hero to the payment dashboard is the primary
           document content, exposed as a single <main> landmark. tabIndex={-1}
           makes it a programmatic focus target for the skip link above. Nav
-          (<nav>) and SiteFooter (<footer>) stay OUTSIDE as their own landmarks. */}
+          (<nav>) and SiteFooter (<footer>) stay OUTSIDE as their own landmarks.
+          Section order: hero → guarantees → fund console → sealed evidence →
+          worked example → integrations → under the hood. Each top-level
+          section carries `data-nav`, the nav entry it lights up. */}
       <main id="main" tabIndex={-1}>
       <Hero />
       <Guarantees />
-      <FundConsoleSection />
+      <FundConsoleSection state={fund} />
+      <EvidenceSection state={fund} />
 
       <CenterBookSection />
 
-      <AgentHireSection />
+      <IntegrationsSection />
 
       <UnderTheHood />
       <Problem />
@@ -246,7 +370,7 @@ export function App() {
       <EnsWow />
       <Pipeline />
 
-      <section className="section" id="dashboard">
+      <section className="section" id="dashboard" data-nav="under-the-hood">
         <div className="container">
           <Reveal className="dash-head">
             <span className="overline">The primitive at work · agent payments · deterministic mocks</span>
@@ -254,10 +378,9 @@ export function App() {
               The same tree, <span className="hl">spending money</span>.
             </h3>
             <p className="lede">
-              Rendered from <code>demo-snapshot.json</code>, the output of <code>npm run demo</code>: a
-              scripted, reproducible run with no real money or chain. The delegation tree, its attenuation,
-              the mandate checks and revocation are Allowance code. The identity (World ID) and screening
-              (Intercepta) verdicts, and settlement (1inch Aqua), come from deterministic mocks.
+              A scripted, reproducible run of <code>npm run demo</code>, rendered from <code>demo-snapshot.json</code>, with no
+              real money and no chain. The tree, its attenuation, the mandate checks and revocation are Allowance code; the
+              World ID, Intercepta and 1inch Aqua verdicts come from deterministic mocks.
             </p>
           </Reveal>
 
@@ -282,8 +405,6 @@ export function App() {
           )}
         </div>
       </section>
-
-      <Sponsors />
       </main>
       <SiteFooter />
     </LazyMotion>
@@ -302,50 +423,19 @@ const PAYMENT_STAGES = {
 /* -------------------------------------------------------------------------- */
 /* Fund console — the product, on one virtual world (npm run demo:fund)        */
 /* -------------------------------------------------------------------------- */
-type FundLoad =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "empty" }
-  | { status: "ready"; snapshot: FundSnapshot };
-
-function FundConsoleSection() {
-  const [state, setState] = useState<FundLoad>({ status: "loading" });
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/fund-snapshot.json")
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status} loading fund-snapshot.json`);
-        return r.json() as Promise<unknown>;
-      })
-      .then((raw) => parseFundSnapshot(raw))
-      .then((snapshot) => {
-        if (cancelled) return;
-        // A parseable file with no agents or no NAV has nothing to show: say so
-        // instead of rendering empty panels (DESIGN.md §11.1).
-        if (snapshot.agents.length === 0 || snapshot.books.center.nav.length === 0) setState({ status: "empty" });
-        else setState({ status: "ready", snapshot });
-      })
-      .catch((err: unknown) => {
-        if (!cancelled)
-          setState({ status: "error", message: err instanceof Error ? err.message : String(err) });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
+function FundConsoleSection({ state }: { state: FundLoad }) {
   return (
-    <section className="section section-console" id="fund-console">
+    <section className="section section-console" id="fund-console" data-nav="fund-console">
       <div className="container">
         <Reveal className="dash-head">
           <span className="overline">Fund console · virtual world</span>
-          <h2 className="h2">
+          <h2 tabIndex={-1} className="h2">
             AI PMs, one allocator, <span className="hl">one mandate tree</span>.
           </h2>
           <p className="lede">
-            A simulated year in one virtual world: AI agents from different operators trade virtual stocks while a crowd
-            piles into one name and unwinds. The same roster runs twice on the same prices, once under the allocator (the center
-            book) and once with per-agent guardrails only. Every number below is simulated.
+            The allocation and risk layer at work for one simulated year: AI agents from different operators trade virtual
+            stocks while a crowd piles into one name and unwinds. The same roster runs twice on the same simulated prices,
+            once under the allocator (the center book) and once with per-agent guardrails only.
           </p>
         </Reveal>
         {state.status === "loading" && <FundConsoleSkeleton />}
@@ -369,6 +459,52 @@ function FundConsoleSection() {
           <SectionBoundary what="the fund console" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:fund</code> at the repo root to regenerate <code>fund-snapshot.json</code>.</>}>
             <Suspense fallback={<FundConsoleSkeleton />}>
               <FundConsole snapshot={state.snapshot} />
+            </Suspense>
+          </SectionBoundary>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Sealed evidence — every improvement loop (docs/loops/loop-*.json)           */
+/* -------------------------------------------------------------------------- */
+// The intro and the terms are data (site.ts): the intro is tested against the
+// ledger's rule, and the terms are defined here only (the console's context
+// card links to them).
+function EvidenceSection({ state }: { state: FundLoad }) {
+  return (
+    <section className="section section-alt section-evidence" id="evidence" data-nav="evidence" aria-labelledby="evidence-h">
+      <div className="container">
+        <Reveal className="dash-head">
+          <span className="overline">Sealed evidence · virtual worlds</span>
+          <h2 tabIndex={-1} className="h2" id="evidence-h">
+            Every change, judged on <span className="hl">sealed worlds</span>.
+          </h2>
+          <p className="lede">{EVIDENCE_LEDE}</p>
+          <dl className="gloss" id={GLOSSARY_ID} aria-label="Terms used on this page">
+            {GLOSSARY.map((g) => (
+              <div key={g.term} className="gloss-item">
+                <dt>{g.term}</dt>
+                <dd>{g.def}</dd>
+              </div>
+            ))}
+          </dl>
+        </Reveal>
+        {state.status === "loading" && <EvidenceSkeleton />}
+        {state.status === "error" && (
+          <div className="notice notice-error">
+            Could not load <code>/fund-snapshot.json</code>: {state.message}
+            <div className="notice-hint">
+              Run <code>npm run demo:fund</code> at the repo root to generate it, then reload.
+            </div>
+          </div>
+        )}
+        {(state.status === "ready" || state.status === "empty") && (
+          <SectionBoundary what="the sealed evidence" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:fund</code> at the repo root to regenerate <code>fund-snapshot.json</code>.</>}>
+            <Suspense fallback={<EvidenceSkeleton />}>
+              <EvidencePanel snapshot={state.snapshot} />
             </Suspense>
           </SectionBoundary>
         )}
@@ -408,19 +544,18 @@ function CenterBookSection() {
   }, []);
 
   return (
-    <section className="section section-alt" id="center-book">
+    <section className="section" id="center-book" data-nav="center-book">
       <div className="container">
         <Reveal className="dash-head">
           <span className="overline">A worked example · one trend, three Tiger Cubs · simulated prices</span>
-          <h2 className="h2">
+          <h2 tabIndex={-1} className="h2">
             Three Tiger-Cub PMs, <span className="hl">one crowded trade</span>.
           </h2>
           <p className="lede">
-            The console shows the allocator across a whole virtual fund; this is one mechanism up close. Three
-            Tiger-Cub-style PMs in three pods research the same trend, weigh it differently and converge on the same
-            long, each inside its own limits. Together they are one crowded trade, and only the center book, which looks
-            across them, catches it: every cut is a <code>resize</code> and every stop-out a <code>close</code> on the
-            same mandate tree.
+            The allocator's crowding check up close, on simulated prices: three Tiger-Cub-style PMs in three pods research
+            the same coffee trend, each inside its own limits, and all land on the same long. Only the center book, which
+            looks across them, sees one crowded trade and cuts it with a <code>resize</code> on the mandate tree; a stop-out
+            is one <code>close</code>.
           </p>
         </Reveal>
         {state.status === "loading" && <DashboardSkeleton />}
@@ -445,6 +580,73 @@ function CenterBookSection() {
 }
 
 /* -------------------------------------------------------------------------- */
+/* Integrations — one card per integration, with its status as the code has it */
+/* -------------------------------------------------------------------------- */
+const STATUS_GLYPH: Record<Integration["tone"], string> = { local: "●", mock: "○", undeployed: "□" };
+
+function IntegrationCard({ it }: { it: Integration }) {
+  return (
+    <article className="integ">
+      {/* Name, role and chip each on their own line, so every card's header is
+          the same height and the chips of a row line up. */}
+      <div className="integ-top">
+        <h3 className="integ-name">{it.name}</h3>
+        <p className="integ-role">{it.role}</p>
+        <span className={`integ-status is-${it.tone}`}>
+          <span aria-hidden="true">{STATUS_GLYPH[it.tone]} </span>
+          <span className="sr-only">Status: </span>
+          {it.status}
+        </span>
+      </div>
+      <p className="integ-what">{it.what}</p>
+      <p className="integ-used">
+        <span className="integ-used-k">Runs in</span> {it.usedIn}
+      </p>
+      <div className="integ-links">
+        <a href={repoFile(it.file)} target="_blank" rel="noreferrer">
+          <code>{it.file}</code>
+          <span className="sr-only"> (opens GitHub)</span> ↗
+        </a>
+        {it.see && <a href={it.see.href}>{it.see.label} ↓</a>}
+      </div>
+    </article>
+  );
+}
+
+function IntegrationsSection() {
+  return (
+    <section className="section section-alt" id="integrations" data-nav="integrations" aria-labelledby="integrations-h">
+      <div className="container">
+        <Reveal className="dash-head">
+          <span className="overline">Integrations · status as the code has it</span>
+          <h2 tabIndex={-1} className="h2" id="integrations-h">
+            What plugs into the tree, <span className="hl">and how real it is</span>.
+          </h2>
+          <p className="lede">
+            What each integration adds to the allocation and risk layer, which demo on this page runs it, and how real it is
+            today. The fund console runs none of their code: its operators and names are simulated, and nothing here is
+            deployed or moves real funds.
+          </p>
+        </Reveal>
+        <div className="integ-grid">
+          {INTEGRATIONS.map((it, i) => (
+            <Reveal key={it.name} delay={(i % 3) * 0.05} className="integ-cell">
+              <IntegrationCard it={it} />
+            </Reveal>
+          ))}
+        </div>
+        <p className="integ-foot">
+          Read from the code and <code>docs/SPONSORS.md</code>. Each real service has a client stub that refuses to run until
+          it is configured. The repo also carries an offline Curvegrid mock (MultiBaas-style view models, whose summary{" "}
+          <code>npm run demo</code> prints in the terminal) and a Sui mock that no demo runs; neither appears on this page.
+        </p>
+        <AgentHirePanel />
+      </div>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
 /* AgentHire — a local, keyless marketplace run (npm run demo:agenthire)       */
 /* -------------------------------------------------------------------------- */
 // This tree settles through AgentHire (keyless, so simulated), not 1inch Aqua,
@@ -463,7 +665,41 @@ type AgentHireLoad =
   | { status: "error"; message: string }
   | { status: "ready"; snapshot: Snapshot; summary: AgentHireSummary | null };
 
-function AgentHireSection() {
+/** What the AgentHire run is made of: every disclosure the section has carried, one line each. */
+const AGENTHIRE_FACTS: Array<{ k: string; v: ReactNode }> = [
+  {
+    k: "Real",
+    v: (
+      <>
+        The HTTP calls to an unmodified, keyless AgentHire on this machine (its quotes and 402 challenges) and every check
+        Allowance makes before signing. Rendered from <code>agenthire-snapshot.json</code>, written by{" "}
+        <code>npm run demo:agenthire</code>.
+      </>
+    ),
+  },
+  {
+    k: "Scripted",
+    v: (
+      <>
+        The overspend attempts, made by the demo on the scraper's behalf. They are blocked and recorded as an incident on
+        Allowance's side (AgentHire has no keyless incident route); that is a record, not a slash.
+      </>
+    ),
+  },
+  { k: "Mock", v: <>Operators are bound through a World ID mock.</> },
+  { k: "Synthetic", v: <>The PM's return path is an arena virtual world, not market data; its drawdown ladder stops the PM out.</> },
+  {
+    k: "Simulated",
+    v: (
+      <>
+        AgentHire's settlement and agent-to-agent routes in keyless mode. Its escrow is off-chain, so nothing here claims
+        escrow protection.
+      </>
+    ),
+  },
+];
+
+function AgentHirePanel() {
   const [state, setState] = useState<AgentHireLoad>({ status: "loading" });
   useEffect(() => {
     let cancelled = false;
@@ -490,87 +726,173 @@ function AgentHireSection() {
   }, []);
 
   return (
-    <section className="section" id="agenthire">
-      <div className="container">
-        <Reveal className="dash-head">
-          <span className="overline">A real agent marketplace, run locally · settlement simulated</span>
-          <h2 className="h2">
-            A fund's PM hires a scraper on AgentHire. One <span className="hl">close</span> takes it all back.
-          </h2>
-          <p className="lede">
-            Rendered from <code>agenthire-snapshot.json</code>, written by{" "}
-            <code>npm run demo:agenthire</code> against an unmodified, keyless AgentHire on this machine.
-            The scraper is hired at AgentHire's own quote. The overspend attempts, scripted by the demo
-            on the scraper's behalf, are blocked and recorded as an incident on Allowance's side, which
-            is not a slash; operators are bound through a World ID <em>mock</em>. On a synthetic arena
-            return path (not market data), the drawdown ladder stops the PM out, and closing the PM's
-            mandate kills the data budget in the same step. AgentHire's settlement and agent-to-agent
-            routes are simulated in keyless mode, and its escrow is off-chain, so nothing here claims
-            escrow protection.
-          </p>
-          {state.status === "ready" && state.summary && (
-            <div className="notice" style={{ marginTop: 28, textAlign: "left" }}>
-              <strong>Shadow audit (simulated marketplace):</strong> {state.summary.auditHeadline}
-              {state.summary.incidents.map((i) => (
-                <div key={i} className="notice-hint">
-                  Incident: {i}
-                </div>
-              ))}
-              {state.summary.honesty.length > 0 && (
-                <ul className="notice-hint" style={{ margin: "12px 0 0", paddingLeft: 18 }}>
-                  {state.summary.honesty.map((h) => (
-                    <li key={h}>{h}</li>
-                  ))}
-                </ul>
-              )}
+    <div className="ah" id="agenthire">
+      <Reveal className="dash-head">
+        <span className="overline">AgentHire, up close · run locally · settlement simulated</span>
+        <h3 className="h2 h2-sub">
+          A fund's PM hires a scraper on AgentHire. One <span className="hl">close</span> takes it all back.
+        </h3>
+        <p className="lede">
+          The PM hires AgentHire's WebCrawler X at AgentHire's own quote, from a data budget carved out of its capital
+          mandate. When the PM is stopped out, one close of its mandate returns the capital and kills the unspent data budget
+          in the same step.
+        </p>
+        <dl className="ah-facts" aria-label="What is real and what is simulated in this run">
+          {AGENTHIRE_FACTS.map((f) => (
+            <div key={f.k} className="ah-fact">
+              <dt>{f.k}</dt>
+              <dd>{f.v}</dd>
             </div>
-          )}
-        </Reveal>
-        {state.status === "loading" && <DashboardSkeleton />}
-        {state.status === "error" && (
-          <div className="notice notice-error">
-            Could not load <code>/agenthire-snapshot.json</code>: {state.message}
-            <div className="notice-hint">
-              Boot AgentHire with <code>bash scripts/agenthire-up.sh</code> (127.0.0.1:5301), run{" "}
-              <code>npm run demo:agenthire</code>, then reload.
-            </div>
+          ))}
+        </dl>
+        {state.status === "ready" && state.summary && (
+          <div className="notice ah-audit">
+            <strong>Shadow audit (simulated marketplace):</strong> {state.summary.auditHeadline}
+            {state.summary.incidents.map((i) => (
+              <div key={i} className="notice-hint">
+                Incident: {i}
+              </div>
+            ))}
+            {state.summary.honesty.length > 0 && (
+              <ul className="notice-hint ah-honesty">
+                {state.summary.honesty.map((h) => (
+                  <li key={h}>{h}</li>
+                ))}
+              </ul>
+            )}
           </div>
         )}
-        {state.status === "ready" && (
-          <SectionBoundary what="the AgentHire run" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:agenthire</code> at the repo root to regenerate its data.</>}>
-            <Suspense fallback={<DashboardSkeleton />}>
-              <Dashboard snapshot={state.snapshot} stageLabels={AGENTHIRE_STAGES} />
-            </Suspense>
-          </SectionBoundary>
-        )}
-      </div>
-    </section>
+      </Reveal>
+      {state.status === "loading" && <DashboardSkeleton />}
+      {state.status === "error" && (
+        <div className="notice notice-error">
+          Could not load <code>/agenthire-snapshot.json</code>: {state.message}
+          <div className="notice-hint">
+            Boot AgentHire with <code>bash scripts/agenthire-up.sh</code> (127.0.0.1:5301), run{" "}
+            <code>npm run demo:agenthire</code>, then reload.
+          </div>
+        </div>
+      )}
+      {state.status === "ready" && (
+        <SectionBoundary what="the AgentHire run" hint={<>Reload the page. If it keeps failing, run <code>npm run demo:agenthire</code> at the repo root to regenerate its data.</>}>
+          <Suspense fallback={<DashboardSkeleton />}>
+            <Dashboard snapshot={state.snapshot} panelHeading="h4" stageLabels={AGENTHIRE_STAGES} />
+          </Suspense>
+        </SectionBoundary>
+      )}
+    </div>
   );
 }
 
 /* -------------------------------------------------------------------------- */
 /* Nav                                                                        */
 /* -------------------------------------------------------------------------- */
+/**
+ * The section in view: the last top-level section (page order) that crosses a
+ * thin reading line a little above the middle of the viewport. Sections are
+ * marked with `data-nav` (the nav entry they belong to; the hero is "top").
+ * An IntersectionObserver only, no scroll handler and no animation, so it is
+ * cheap and the same under reduced motion.
+ */
+function useActiveSection(): string | null {
+  const [active, setActive] = useState<string | null>(null);
+  useEffect(() => {
+    const els = [...document.querySelectorAll<HTMLElement>("[data-nav]")];
+    if (els.length === 0 || typeof IntersectionObserver === "undefined") return;
+    const crossing = new Set<Element>();
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const e of entries) {
+          if (e.isIntersecting) crossing.add(e.target);
+          else crossing.delete(e.target);
+        }
+        let current: string | null = null;
+        for (const el of els) if (crossing.has(el)) current = el.dataset.nav ?? null;
+        // Between sections (or over the footer) keep the last one.
+        if (current !== null) setActive(current);
+      },
+      { rootMargin: "-38% 0px -58% 0px", threshold: 0 },
+    );
+    els.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, []);
+  return active;
+}
+
+/** Below this width the section links fold into a disclosure menu (styles.css, .nav). */
+const NAV_MENU_QUERY = "(max-width: 899px)";
+
 function Nav() {
+  const active = useActiveSection();
+  const [open, setOpen] = useState(false);
+  const navRef = useRef<HTMLElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+
+  // While the menu is open: Escape, a tap outside (the scrim), tabbing out, a
+  // section link (which also moves focus to that section) and widening past
+  // the breakpoint close it. The rules live in nav-menu.ts, tested as behaviour.
+  useEffect(() => {
+    const nav = navRef.current;
+    if (!open || !nav) return;
+    return bindOpenMenu(
+      { doc: document, nav, toggle: toggleRef.current, mq: window.matchMedia(NAV_MENU_QUERY) },
+      {
+        close: () => setOpen(false),
+        // After the link's own jump: navigating to a fragment whose target is
+        // not focusable moves focus to the document, which would undo it.
+        focusSection: (id) => window.setTimeout(() => focusSection(id), 0),
+      },
+    );
+  }, [open]);
+
   return (
-    <nav className="nav">
-      <div className="nav-brand">
-        <span className="nav-mark">◈</span>
-        Allowance
-      </div>
-      <div className="nav-links">
-        <a href="#guarantees" className="nav-hide-sm">Guarantees</a>
-        <a href="#fund-console">Fund console</a>
-        <a href="#fc-evidence" className="nav-hide-sm nav-hide-md">Evidence</a>
-        <a href="#agenthire" className="nav-hide-sm">AgentHire</a>
-        <a href="#under-the-hood" className="nav-hide-sm nav-hide-md">Under the hood</a>
+    <>
+      <nav className={`nav${open ? " is-open" : ""}`} aria-label="Sections" ref={navRef}>
+        <a className="nav-brand" href="#top" aria-label="Allowance: back to the top">
+          <span className="nav-mark" aria-hidden="true">◈</span>
+          Allowance
+        </a>
         <span className="nav-pill" title="Virtual-world demo: every fund number on this page is simulated">
           <span className="dot" aria-hidden="true" /> <span className="nav-pill-long">virtual-world demo</span>
           {/* Visually hidden below 360px (the dot stays), still read aloud. */}
           <span className="nav-pill-short">virtual world</span>
         </span>
-      </div>
-    </nav>
+        <button
+          ref={toggleRef}
+          type="button"
+          className="nav-toggle"
+          aria-expanded={open}
+          aria-controls="nav-menu"
+          onClick={() => setOpen((o) => !o)}
+        >
+          <span className="nav-toggle-bars" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+          Menu
+        </button>
+        <ul className="nav-links" id="nav-menu">
+          {NAV_SECTIONS.map((s, i) => (
+            <li key={s.id}>
+              <a href={`#${s.id}`} aria-current={active === s.id ? "location" : undefined}>
+                <span className="nav-n" aria-hidden="true">
+                  {String(i + 1).padStart(2, "0")}
+                </span>
+                <span className="nav-l">
+                  <span className="nav-l-long">{s.label}</span>
+                  <span className="nav-l-short">{s.short}</span>
+                </span>
+                <span className="nav-hint">{s.hint}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      </nav>
+      {/* Dims the page under the open phone menu, so page text does not read as
+          more menu; a tap on it closes the menu (outside the nav). */}
+      {open && <div className="nav-scrim" aria-hidden="true" />}
+    </>
   );
 }
 
@@ -612,7 +934,7 @@ function Hero() {
   const glowY = useTransform(scrollYProgress, [0, 1], [0, -140]);
 
   return (
-    <section className="hero" ref={ref}>
+    <section className="hero" id="top" data-nav="top" ref={ref}>
       <m.div className="hero-glow" style={{ y: prefersReduced ? 0 : glowY }} />
       <div className="hero-coins" aria-hidden="true">
         <Coin progress={scrollYProgress} size={84} top="9%" left="86%" drift={140} />
@@ -630,14 +952,14 @@ function Hero() {
             A multi-manager fund where the <span className="hl">PMs are AI agents</span>.
           </h1>
           <p className="lede">
-            Each agent trades inside a mandate that can only shrink, and carries a track record
-            bound to its human operator (World ID in production; simulated here). The allocator moves capital to the best
-            risk-adjusted agents, spots when "independent" agents are one trade, and cuts them.
-            A stop-out closes the agent's whole subtree in one operation.
+            Each agent trades inside a mandate that can only shrink and carries a track record bound to a verified human
+            operator (World ID; in this demo the console's operators are simulated labels and the AgentHire run uses a mock
+            verifier). The allocator moves capital to the best risk-adjusted agents, spots when "independent" agents are one
+            trade and cuts them, and a stop-out closes the agent's whole subtree in one operation.
           </p>
           <div className="btn-row">
             <a className="btn btn-primary" href="#fund-console">Open the fund console ↓</a>
-            <a className="btn btn-ghost" href={REPO_URL} target="_blank" rel="noreferrer">
+            <a className="btn btn-ghost" href={REPO_TREE} target="_blank" rel="noreferrer">
               View the code
             </a>
           </div>
@@ -738,7 +1060,10 @@ function Guarantees() {
       h: "One trade, one cut",
       p: "When \"independent\" agents are really the same bet, the allocator treats them as one position and cuts them together, whatever names they trade under.",
       op: "group resize",
-      how: "The crowding scan groups agents whose books overlap and scales every contributor by one factor in one pass. An operator is also one counterparty: when one of its agents is stopped out, its other agents are capped together in one plan until each recovers on its own record (never revoked, never shielded from their own stop).",
+      // Two mechanisms, kept apart: the crowding cut (grouped by overlapping
+      // positions only) and, since loop 3, the operator cap after a stop-out.
+      // Operator-based grouping of the crowding cut is research, never claimed.
+      how: "The crowding cut groups agents by overlapping positions only and scales every contributor by one factor in one pass; a cut whose members share an operator is flagged. Separately, since loop 3 a stop-out caps the same operator's other agents together until each recovers on its own record; the console says whether that fired in its world. Grouping an operator's agents into one crowding cut is still being researched.",
       see: "#fc-log-group",
       seeLabel: "See the group cuts",
     },
@@ -753,16 +1078,16 @@ function Guarantees() {
     },
   ];
   return (
-    <section className="section section-alt" id="guarantees">
+    <section className="section section-alt" id="guarantees" data-nav="guarantees">
       <div className="container">
         <Reveal>
           <span className="overline">The four guarantees</span>
-          <h2 className="h2">
+          <h2 tabIndex={-1} className="h2">
             Guardrails on one agent are table stakes. <span className="hl">These hold across all of them.</span>
           </h2>
           <p className="lede">
-            An allocator's promises are only as good as what enforces them. The allocator decides; each decision below lands
-            as a single operation on one mandate tree, so it holds whether the agent behaves or not.
+            The allocation and risk layer for capital run by AI agents makes four promises. Each one lands as a single
+            operation on one mandate tree, so it holds whether the agent behaves or not.
           </p>
         </Reveal>
         <div className="guarantees">
@@ -797,7 +1122,7 @@ function Guarantees() {
 /* -------------------------------------------------------------------------- */
 /* Under the hood — the mandate primitive                                      */
 /* -------------------------------------------------------------------------- */
-/* A chapter divider: everything after it (up to the sponsors) is one chapter
+/* A chapter divider: everything after it (to the end of <main>) is one chapter
    about the primitive, so those sections use h3 headings a step lighter. */
 const UNDER_THE_HOOD = [
   { href: "#problem", label: "Why a tree" },
@@ -809,18 +1134,18 @@ const UNDER_THE_HOOD = [
 
 function UnderTheHood() {
   return (
-    <section className="section under-hood" id="under-the-hood" aria-labelledby="under-the-hood-h">
+    <section className="section under-hood" id="under-the-hood" data-nav="under-the-hood" aria-labelledby="under-the-hood-h">
       <div className="container">
         <Reveal className="uth">
           <div className="uth-copy">
             <span className="overline">Under the hood · the mandate primitive</span>
-            <h2 className="h2 uth-h" id="under-the-hood-h">
+            <h2 tabIndex={-1} className="h2 uth-h" id="under-the-hood-h">
               One data structure <span className="hl">carries out all four</span>.
             </h2>
             <p className="uth-lede">
-              The allocator decides; an attenuating delegation tree carries each decision out. A mandate's budget and
-              scope can only narrow as it is passed down, any node can be revoked, and every write is audited. It started
-              as spend control for agents that pay each other, and those payments run on the same tree.
+              The allocator decides; an attenuating delegation tree carries each decision out: a mandate's budget and scope
+              can only narrow as it is passed down, any node can be revoked, and every write is audited. It started as spend
+              control for agents that pay each other, and those payments run on the same tree.
             </p>
           </div>
           <nav className="uth-index" aria-label="In this chapter">
@@ -846,7 +1171,7 @@ function UnderTheHood() {
 /* -------------------------------------------------------------------------- */
 function Problem() {
   return (
-    <section className="section section-alt" id="problem">
+    <section className="section section-alt" id="problem" data-nav="under-the-hood">
       <div className="container">
         <Reveal>
           <span className="overline">Why a tree · agents that pay agents</span>
@@ -855,8 +1180,7 @@ function Problem() {
             pays an API.
           </h3>
           <p className="lede">
-            Money now flows through chains of agents. Today you get two terrible options —
-            and nothing in between.
+            Money now flows through chains of agents, and today there are two bad options with nothing in between.
           </p>
         </Reveal>
         <div className="card-2">
@@ -902,7 +1226,7 @@ function Attenuation() {
     { name: "scraper.researcher.alice.eth", lbl: "scraper", amt: "10", pct: 0.1, scope: "arxiv (a strict subset)" },
   ];
   return (
-    <section className="section" id="how">
+    <section className="section" id="how" data-nav="under-the-hood">
       <div className="container">
         <Reveal>
           <span className="overline">How it works · attenuation</span>
@@ -910,9 +1234,8 @@ function Attenuation() {
             Money only ever flows <span className="hl">down and narrower</span>.
           </h3>
           <p className="lede">
-            A child's budget is always a slice of its parent's <em>remaining</em> balance —
-            and its allowlist can only be a subset. Try to broaden it and the delegation is
-            rejected before the child is ever created.
+            A child's budget is always a slice of its parent's <em>remaining</em> balance, and its allowlist can only be a
+            subset. Try to broaden either and the delegation is rejected before the child exists.
           </p>
         </Reveal>
 
@@ -966,22 +1289,21 @@ function Attenuation() {
 }
 
 /* -------------------------------------------------------------------------- */
-/* ENS wow                                                                     */
+/* ENS names are the tree                                                      */
 /* -------------------------------------------------------------------------- */
 function EnsWow() {
   return (
-    <section className="section section-alt" id="ens">
+    <section className="section section-alt" id="ens" data-nav="under-the-hood">
       <div className="container wow">
         <Reveal>
           <div>
-            <span className="overline">The wow</span>
+            <span className="overline">ENS names are the tree</span>
             <h3 className="h2 h2-sub">
-              ENSv2's name hierarchy <span className="hl">is</span> the delegation tree.
+              ENS's name hierarchy <span className="hl">is</span> the delegation tree.
             </h3>
             <p className="lede">
-              A name already encodes who-is-boss-of-whom. We store each agent's mandate —
-              budget, scope, expiry — as resolver records on its subname. The naming tree and
-              the authority tree are the same tree.
+              Every mandate is named down the tree, so a name already says who delegated to whom. The payment demo mirrors
+              each mandate into an in-memory ENSv2 registry mock as subname text records; nothing is registered on a chain.
             </p>
           </div>
         </Reveal>
@@ -1011,20 +1333,21 @@ function EnsWow() {
 /* -------------------------------------------------------------------------- */
 function Pipeline() {
   const steps = [
-    { n: "01", h: "Verify identity", tag: "World ID", block: false, p: "Every node — and every ancestor — must present a valid agent credential. Expired or rogue agents are denied before anything moves." },
+    { n: "01", h: "Verify identity", tag: "World ID · mock", block: false, p: "Every node, and every ancestor, must present a valid agent credential. Expired or unknown agents are denied before anything moves." },
     { n: "02", h: "Check the mandate", tag: "Attenuation", block: true, p: "Not revoked, not expired, within the node's available balance, merchant and purpose on the allowlist. Over-budget spends stop here." },
-    { n: "03", h: "Screen the payment", tag: "Intercepta · x402", block: true, p: "A screening call runs before the payment is signed. A flagged counterparty is blocked even when the mandate allows it." },
-    { n: "04", h: "Settle in any token", tag: "1inch Aqua", block: false, p: "Pay in USDC, the merchant receives their token — swapped through Aqua/SwapVM as part of settlement." },
-    { n: "05", h: "Enforce on-chain", tag: "Uniswap v4 hook", block: false, p: "A v4 hook mirrors the same cap on-chain: a swap that exceeds the node's remaining allowance reverts." },
+    { n: "03", h: "Screen the payment", tag: "Intercepta · mock", block: true, p: "A screening call runs before the payment is signed. A flagged counterparty is blocked even when the mandate allows it." },
+    { n: "04", h: "Settle in any token", tag: "1inch Aqua · mock", block: false, p: "Pay in USDC while the merchant receives their token. The mock swaps at a fixed 1:1 rate; the Aqua/SwapVM client is a stub." },
+    { n: "05", h: "Enforce on-chain", tag: "Uniswap v4 hook · not deployed", block: false, p: "A v4-style hook carries the same cap into the swap: one that exceeds the node's remaining allowance reverts. Contract and tests only; it is not deployed." },
   ];
   return (
-    <section className="section" id="pipeline">
+    <section className="section" id="pipeline" data-nav="under-the-hood">
       <div className="container">
         <Reveal>
           <span className="overline">The payment pipeline</span>
           <h3 className="h2 h2-sub">
             Five gates before a single cent <span className="hl">moves</span>.
           </h3>
+          <p className="lede">Each payment clears identity, the mandate, a screen and settlement in that order; the tags say what runs here.</p>
         </Reveal>
         <div className="pipeline">
           {steps.map((s, i) => (
@@ -1046,39 +1369,6 @@ function Pipeline() {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Sponsors marquee                                                            */
-/* -------------------------------------------------------------------------- */
-function Sponsors() {
-  const items = [
-    ["ENS", "$6k"],
-    ["World ID", "$10k"],
-    ["Intercepta", "$2k"],
-    ["1inch Aqua", "$5k"],
-    ["Uniswap v4", "$6k"],
-    ["Curvegrid", "$3k"],
-    ["Sui", "$5k"],
-  ];
-  const track = (
-    <div className="marquee-track" aria-hidden="true">
-      {items.map(([name, amt], i) => (
-        <span className="sponsor" key={`${name}-${i}`}>
-          {name} <span className="amt">{amt}</span>
-          <span className="sep">·</span>
-        </span>
-      ))}
-    </div>
-  );
-  return (
-    <div className="sponsors">
-      <div className="marquee">
-        {track}
-        {track}
-      </div>
-    </div>
-  );
-}
-
-/* -------------------------------------------------------------------------- */
 /* Footer                                                                       */
 /* -------------------------------------------------------------------------- */
 function SiteFooter() {
@@ -1088,13 +1378,16 @@ function SiteFooter() {
         <div>
           <div className="footer-brand">◈ Allowance</div>
           <div className="footer-tag">
-            The allocation and risk layer for capital run by AI agents, built on attenuating
-            delegation. Built at ETHGlobal. Fund results shown are from simulated virtual worlds.
+            The allocation and risk layer for capital run by AI agents, built on attenuating delegation. Built at ETHGlobal.
+            Every fund result on this page is simulated (virtual worlds and synthetic prices); the worked example's research
+            notes cite real sources, but its prices are synthetic.
           </div>
         </div>
-        <div className="footer-note">
-          ENS · World ID · Intercepta · 1inch Aqua · Uniswap v4 · Curvegrid · Sui
-        </div>
+        <nav className="footer-links" aria-label="Sources">
+          <a href={REPO_TREE} target="_blank" rel="noreferrer">Code ↗</a>
+          <a href={repoFile(LEDGER_FILE)} target="_blank" rel="noreferrer">Sealed-loop ledger ↗</a>
+          <a href="#integrations">Integration status</a>
+        </nav>
       </div>
     </footer>
   );

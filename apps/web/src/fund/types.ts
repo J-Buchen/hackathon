@@ -101,8 +101,17 @@ export interface RiskSummary {
   centerMaxDDBefore: number;
   centerMaxDDAfter: number;
   guardrailsMaxDD: number;
+  /**
+   * The center book's mean max drawdown after the change with its returns
+   * scaled to the guardrails book's volatility (its drawdown per unit of risk).
+   * Null when the loop did not record it. Shown NEXT TO `centerMaxDDAfter`,
+   * never instead of it.
+   */
+  centerMaxDDAtGuardrailsVolAfter: number | null;
   /** Paired change with its 90% interval; null when the loop did not record it. */
   pairedChange: { mean: number; lo: number; hi: number } | null;
+  /** Tiger-track loops: the overlay's max drawdown before → after, buy-and-hold's, and the paired change. */
+  tiger: { before: number; after: number; buyHold: number; pairedChange: { mean: number; lo: number; hi: number } | null } | null;
   note: string | null;
 }
 
@@ -133,6 +142,8 @@ export interface LoopEvidence {
   blockB: { allocator: Uplift; tiger: Uplift } | null;
   /** Block-B uplift re-measured after a post-push correction, vs the commit named in `vs`. */
   correctedB: { uplift: Uplift; vs: string | null } | null;
+  /** Block A's re-measured gain after a correction; null when none (absent in older snapshots). */
+  correctedA: { uplift: Uplift; vs: string | null } | null;
   riskSummary: RiskSummary | null;
   rejections: Rejection[];
   booksB: SealedBooks | null;
@@ -302,7 +313,18 @@ function riskSummary(v: unknown, path: string): void {
   str(r.block, `${path}.block`);
   str(r.seeds, `${path}.seeds`);
   for (const k of ["centerMaxDDBefore", "centerMaxDDAfter", "guardrailsMaxDD"]) fraction(r[k], `${path}.${k}`);
+  // Nullable, and absent from snapshots written before it existed: missing
+  // reads as null ("not recorded"), anything else must be a drawdown in [0, 1].
+  if (r.centerMaxDDAtGuardrailsVolAfter === undefined) r.centerMaxDDAtGuardrailsVolAfter = null;
+  else if (r.centerMaxDDAtGuardrailsVolAfter !== null) fraction(r.centerMaxDDAtGuardrailsVolAfter, `${path}.centerMaxDDAtGuardrailsVolAfter`);
   if (r.pairedChange !== null) interval(r.pairedChange, `${path}.pairedChange`, ["mean", "lo", "hi"]);
+  // Absent from snapshots written before tiger-track loops: missing reads as null.
+  if (r.tiger === undefined) r.tiger = null;
+  else if (r.tiger !== null) {
+    const t = obj(r.tiger, `${path}.tiger`);
+    for (const k of ["before", "after", "buyHold"]) fraction(t[k], `${path}.tiger.${k}`);
+    if (t.pairedChange !== null) interval(t.pairedChange, `${path}.tiger.pairedChange`, ["mean", "lo", "hi"]);
+  }
   if (r.note !== null) str(r.note, `${path}.note`);
 }
 
@@ -466,6 +488,12 @@ export function parseFundSnapshot(raw: unknown): FundSnapshot {
     bool(l.confirmed, `${p}.confirmed`);
     uplift(l.blockA, `${p}.blockA`);
     uplift(l.blockB, `${p}.blockB`);
+    if (l.correctedA === undefined) l.correctedA = null;
+    else if (l.correctedA !== null) {
+      const c = obj(l.correctedA, `${p}.correctedA`);
+      interval(c.uplift, `${p}.correctedA.uplift`, ["mean", "lo", "hi", "wins"]);
+      if (c.vs !== null) str(c.vs, `${p}.correctedA.vs`);
+    }
     if (l.correctedB !== null) {
       const c = obj(l.correctedB, `${p}.correctedB`);
       interval(c.uplift, `${p}.correctedB.uplift`, ["mean", "lo", "hi", "wins"]);
