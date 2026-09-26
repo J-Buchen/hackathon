@@ -253,7 +253,13 @@ Still negative: a single volatile name is expensive for a γ = 3 investor.
 where the Tiger panel's primary is the crowded name (+5.5 to +8.3 pp there, about 0 elsewhere),
 and the arena picks that primary as the world's most volatile stock over the whole year, crash
 included. The gate itself is point-in-time, and the bias affects the baseline too, but it inflates
-how often the gate matters. The arena is fixed before loop 5 and the overlay re-measured there.
+how often the gate matters. **Fixed and re-measured.** The arena now picks the Tiger primary by variance over the 60 days
+before the overlay trades (`TIGER_START`). Re-measured with the corrected arena on both sides,
+loop 4's merged change is worth about half its first estimate: block B **+1.56 pp [+0.19, +2.92]**
+(better in 59% of worlds), block A +1.30 pp [−0.32, +2.91]; the overlay's max drawdown still falls
+by 1.7–1.9 pp on both blocks. The change stays merged; the corrected numbers are the ones that
+stand. With the corrected arena, on research seeds 1–200 the overlay's certainty equivalent is
+−6.1% vs −18.9% for buy-and-hold (max drawdown 23.9% vs 39.1%).
 
 | candidate | review | sealed block A (vs current code) | outcome |
 |---|---|---|---|

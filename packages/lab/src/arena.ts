@@ -252,15 +252,20 @@ export async function scoreAllocator(world: World, policy: CenterBookPolicy = de
   };
 }
 
+/** The Tiger overlay trades from this day; the primary is chosen before it. */
+export const TIGER_START = 60;
+
 /**
  * Single-name view of a world for the Tiger overlay: the most volatile stock
- * is the primary, an equal-weight index of the others is the hedge, prints
+ * OVER THE DAYS BEFORE THE OVERLAY TRADES is the primary (point-in-time; until
+ * loop 5 it was picked on the whole year, crash included, which over-picked
+ * the crowded name), an equal-weight index of the others is the hedge, prints
  * come from its catalyst schedule, cash earns 4%.
  */
 export function tigerPanel(world: World): { panel: Panel; events: PanelEvent[] } {
   const m = world.market;
   const vol = (s: string) => {
-    const r = m.ticks.map((t) => t.returns[s]!);
+    const r = m.ticks.slice(0, TIGER_START).map((t) => t.returns[s]!);
     const mu = r.reduce((a, b) => a + b, 0) / r.length;
     return r.reduce((a, b) => a + (b - mu) ** 2, 0);
   };
@@ -297,7 +302,7 @@ export interface TigerScore {
 export function scoreTiger(world: World, params: TigerParams = RECOMMENDED_TIGER): TigerScore {
   const { panel, events } = tigerPanel(world);
   const hedged = { ...params, hedgeSymbol: params.hedgeSymbol ? "VIDX" : null };
-  const range = { from: 60, to: panel.dates.length - 1 };
+  const range = { from: TIGER_START, to: panel.dates.length - 1 };
   const o = runTiger(panel, events, hedged, range);
   const b = runTiger(panel, events, BUY_AND_HOLD, range);
   const po = performance(o.ret, o.rf);

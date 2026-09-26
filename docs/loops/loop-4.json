@@ -1,7 +1,7 @@
 {
  "loop": 4,
  "title": "The Tiger overlay hedges its full shrunk beta and halves a crowded long",
- "note": "Both tiger-track changes; the allocator is untouched. The crowding gate's gain is concentrated in worlds where the arena's Tiger panel picked the crowded name as its primary, and the arena picks that primary by whole-year variance (crash included): a hindsight bias in the yardstick, fixed before loop 5 and re-measured there.",
+ "note": "Both tiger-track changes; the allocator is untouched. Re-measured after the arena's hindsight bias was fixed (the Tiger primary is now picked on the days before the overlay trades), the gain is about half: block B +1.56 pp [+0.19, +2.92], block A +1.30 pp [-0.32, +2.91]; the overlay's max drawdown still falls about 1.7-1.9 pp.",
  "riskSummary": {
   "block": "B",
   "seeds": "14500-14699",
@@ -588,5 +588,78 @@
    ],
    "note": "ramp applied plainly on the tiger composition"
   }
- ]
+ ],
+ "remeasuredAfterArenaFix": {
+  "what": "loop 4's merged tiger changes vs the code before them, both with the corrected arena (Tiger primary picked on days 0-59 only), measured after the merge for the record",
+  "blockA": {
+   "tiger": {
+    "mean": 0.012950605272027849,
+    "lo": -0.0032223455339878346,
+    "hi": 0.029123556078043532,
+    "wins": 0.59
+   },
+   "tigerRisk": {
+    "maxDD": {
+     "mean": -0.019049127505310938,
+     "lo": -0.023298040217315234,
+     "hi": -0.014800214793306642,
+     "wins": 0.285
+    },
+    "sharpe": {
+     "mean": 0.023096356609551304,
+     "lo": -0.018061617418201246,
+     "hi": 0.06425433063730385,
+     "wins": 0.505
+    }
+   },
+   "overlay": {
+    "worlds": 200,
+    "utility": -0.06186549270989939,
+    "baseline": -0.19376116212040032,
+    "uplift": 0.13189566941050093,
+    "upliftLo": 0.08978354442075628,
+    "upliftHi": 0.17400779440024558,
+    "winRate": 0.77,
+    "sharpe": -0.2649244297299242,
+    "baselineSharpe": -0.19734396552954347,
+    "maxDD": 0.24186390112434078,
+    "baselineMaxDD": 0.40492072846097904
+   }
+  },
+  "blockB": {
+   "tiger": {
+    "mean": 0.015582423183050581,
+    "lo": 0.0019286061675262787,
+    "hi": 0.029236240198574882,
+    "wins": 0.59
+   },
+   "tigerRisk": {
+    "maxDD": {
+     "mean": -0.017062985770789286,
+     "lo": -0.02108186986414622,
+     "hi": -0.013044101677432352,
+     "wins": 0.305
+    },
+    "sharpe": {
+     "mean": 0.018736744672327558,
+     "lo": -0.023151826714760192,
+     "hi": 0.060625316059415305,
+     "wins": 0.525
+    }
+   },
+   "overlay": {
+    "worlds": 200,
+    "utility": -0.0638311124073572,
+    "baseline": -0.18380589283374443,
+    "uplift": 0.11997478042638747,
+    "upliftLo": 0.08779171642066655,
+    "upliftHi": 0.1521578444321084,
+    "winRate": 0.79,
+    "sharpe": -0.23550691049924702,
+    "baselineSharpe": -0.13326919090338593,
+    "maxDD": 0.23756774993497703,
+    "baselineMaxDD": 0.38725953352988607
+   }
+  }
+ }
 }
