@@ -25,12 +25,21 @@ export function TableScroll({ label, className = "", children }: { label: string
     return () => ro.disconnect();
   }, []);
   return (
-    <div
-      ref={ref}
-      className={`table-scroll ${className}`.trim()}
-      {...(overflows ? { tabIndex: 0, role: "region", "aria-label": label } : {})}
-    >
-      {children}
-    </div>
+    <>
+      <div
+        ref={ref}
+        className={`table-scroll ${className}`.trim()}
+        {...(overflows ? { tabIndex: 0, role: "region", "aria-label": label } : {})}
+      >
+        {children}
+      </div>
+      {/* A visible cue that there are more columns: the scrollbar alone is
+          hidden on most phones. */}
+      {overflows && (
+        <p className="table-scroll-hint" aria-hidden="true">
+          Scroll sideways for more columns →
+        </p>
+      )}
+    </>
   );
 }

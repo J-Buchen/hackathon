@@ -382,7 +382,7 @@ Tiger overlay −7.35% vs −21.89% for buy-and-hold, max drawdown 24.6% vs 41.9
 **Limits, from the reviews.** The log is not signed. `recordEvent` is public, so a direct write
 paired with a forged matching event passes the check (a test documents this). Replay holds in
 memory only: snapshot JSON (`serializeEvent`) does not carry the new `grant` and prior-budget
-fields, so a persisted snapshot cannot be replayed. The audit runs three times a tick and makes the
+fields, so a persisted snapshot cannot be replayed (loop 7 lifted this). The audit runs three times a tick and makes the
 arena about 25% slower.
 
 Full numbers: [`docs/loops/loop-6.json`](loops/loop-6.json); diffs: [`docs/loops/loop-6/`](loops/loop-6/).
@@ -401,9 +401,11 @@ below them); the Tiger overlay −8.13% vs −20.07% for buy-and-hold, max drawd
   event is reported. Older snapshots still parse; they just cannot be verified.
 - **Hash chain.** Every recorded event carries SHA-256(previous hash + its fields), in a small
   pure-TypeScript SHA-256 (tested against standard vectors, browser-safe, no new dependency).
-  An edited, deleted, inserted or reordered past event breaks the chain at that point. It does
-  **not** stop someone with API access from appending a forged event: the log is chained, not
-  signed.
+  An edited, deleted, inserted or reordered past event breaks the chain at that point. The
+  chain is not signed or keyed, so three things are **not** caught without a trusted copy of the
+  latest hash (`verifySnapshot`'s `head` option): someone with API access appending a forged
+  event, someone rewriting a past event and recomputing every later hash, and events cut off the
+  end of the log.
 - The fund console's snapshot shows the log without its RESIZE events, so that view drops the
   hash links (a filtered chain would read as tampering). The full chain is checked against the
   live tree inside the run. `demo-snapshot.json` verifies with 0 discrepancies. The committed
@@ -419,7 +421,7 @@ below them); the Tiger overlay −8.13% vs −20.07% for buy-and-hold, max drawd
 **What the null results found.** Seventeen variants that real multi-manager funds use (a book
 volatility cap from the agents' own covariance, tighter concentration, a Sharpe hurdle, per-agent
 loss budgets, ex-ante vol budgets, realized-vol limits, operator-level share caps, Sortino
-ranking) all bought less drawdown per unit of utility given up (0.38–0.93 pp per pp) than the
+ranking) all bought less drawdown per unit of utility given up (0.38–1.09 pp per pp) than the
 1.3 bar, and most bought less than simply deploying less capital (0.64–0.70). The reasons: in
 these worlds trailing volatility barely predicts the next month's (correlation 0.23) and predicts
 slightly *higher* returns, so volatility targeting de-risks in good states; and the agents behind

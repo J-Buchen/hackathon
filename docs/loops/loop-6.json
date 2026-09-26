@@ -1,7 +1,7 @@
 {
  "loop": 6,
  "title": "Every stop-out goes on the operator's record, and the mandate tree is audited against its own log",
- "note": "Both structural, no utility claimed: bit-identical on both sealed blocks (every paired change exactly 0). A stop-out now files a 'stop-out' incident (a loss, never misconduct, never a slash) against the agent's operator, and new grants and hires for an operator over its stop-out limit are refused. The book rebuilds the tree from its own event log at every audit, so a write that bypassed the API is caught even when it keeps every invariant. Limits: the log is not signed (a forged event can hide a write), replay holds in memory only (snapshot JSON does not carry the grant and prior-budget fields), and the audit makes the arena about 25% slower. The wildcard researcher returned nothing.",
+ "note": "Both structural, no utility claimed: bit-identical on both sealed blocks (every paired change exactly 0). A stop-out now files a 'stop-out' incident (a loss, never misconduct, never a slash) against the agent's operator, and new grants and hires for an operator over its stop-out limit are refused. The book rebuilds the tree from its own event log at every audit, so a write that bypassed the API is caught even when it keeps every invariant. Limits: the log is not signed (a forged event can hide a write), replay held in memory only (snapshot JSON did not carry the grant and prior-budget fields; loop 7 lifted this), and the audit makes the arena about 25% slower. The wildcard researcher returned nothing.",
  "riskSummary": {
   "block": "B",
   "seeds": "16500-16699",

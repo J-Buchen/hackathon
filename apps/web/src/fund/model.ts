@@ -569,9 +569,12 @@ export function showcaseContext(s: FundSnapshot): ShowcaseContext {
       },
     },
   ];
-  const gapWorld = c.utility - g.utility;
+  // Gaps are taken between the numbers as shown (one decimal of a percent), so
+  // the text agrees with what a reader subtracts from the tiles above it.
+  const shown = (x: number) => Math.round(x * 1000) / 1000;
+  const gapWorld = shown(c.utility) - shown(g.utility);
   if (!l || !b) return { rows, gapWorld, sealed: null };
-  const gap = b.center.utility - b.guardrails.utility;
+  const gap = shown(b.center.utility) - shown(b.guardrails.utility);
   // Only a vol-matched number measured on these very books: block B, and the
   // risk summary's raw "after" drawdown is the books' (to the ledger's rounding).
   const r = l.riskSummary;

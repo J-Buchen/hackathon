@@ -1,7 +1,7 @@
 {
  "loop": 7,
  "title": "The audit survives persistence: snapshots replay, and the event log is hash-chained",
- "note": "Structural, no utility claimed: bit-identical on both sealed blocks. Snapshot JSON now carries what replay needs, replaySnapshot/verifySnapshot rebuild and check a tree from the JSON alone, and every event links to the one before it by SHA-256, so an edited, deleted, inserted or reordered past event shows. It does not stop someone with API access from appending a forged event. The fund console shows a filtered log (no RESIZE events), so that view drops the hash links rather than carry a chain that cannot verify. Both drawdown researchers returned explicit null results: 17 variants, none beat plain deleveraging, and the center book's excess raw drawdown stays a scale effect (lower at the guardrails' volatility).",
+ "note": "Structural, no utility claimed: bit-identical on both sealed blocks. Snapshot JSON now carries what replay needs, replaySnapshot/verifySnapshot rebuild and check a tree from the JSON alone, and every event links to the one before it by SHA-256, so an edited, deleted, inserted or reordered past event shows. The chain is not signed or keyed: without a trusted copy of the latest hash it does not catch an appended forged event, a rewrite that recomputes every later hash, or events cut off the end. The fund console shows a filtered log (no RESIZE events), so that view drops the hash links rather than carry a chain that cannot verify. Both drawdown researchers returned explicit null results: 17 variants, none beat plain deleveraging, and the center book's excess raw drawdown stays a scale effect (lower at the guardrails' volatility).",
  "riskSummary": {
   "block": "B",
   "seeds": "17500-17699",
@@ -23,7 +23,7 @@
   },
   {
    "title": "Risk budgets in volatility terms (wildcard)",
-   "reason": "null result, no diff: eleven variants (ex-ante book vol budget, record-length concentration cap, operator-level share cap, Sortino ranking, per-agent realized-vol limits, a vol-regime score) met neither the allocator bar nor the risk bar"
+   "reason": "null result, no diff: eleven variants (ex-ante book vol budget, record-length concentration cap, operator-level share cap, Sortino ranking, per-agent realized-vol limits, a vol-regime score) met neither the allocator bar nor the risk bar; the best, a per-agent realized-vol limit, reached 1.09 pp of max drawdown per pp of utility on its check block, still below the 1.3 bar"
   }
  ],
  "head": "c8b0aebff63a223fd7b91032b0e6c7bca06ad419",

@@ -441,7 +441,7 @@ export function Evidence({ loops }: { loops: LoopEvidence[] }) {
                 </p>
               )}
               <p className="fc-loop-meta">
-                {l.candidates} candidate changes reviewed ·{" "}
+                {l.candidates} candidate change{l.candidates === 1 ? "" : "s"} ·{" "}
                 {Object.entries(l.statuses)
                   .map(([k, v]) => `${v} ${STATUS_LABEL[k] ?? k.replace(/-/g, " ")}`)
                   .join(" · ")}

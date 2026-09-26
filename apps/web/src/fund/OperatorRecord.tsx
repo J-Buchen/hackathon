@@ -48,7 +48,7 @@ export function OperatorRecord({ snapshot }: { snapshot: FundSnapshot }) {
           operators
         </span>
         <span>
-          <strong>0</strong> misconduct incidents
+          <strong>{rows.reduce((n, o) => n + o.misconduct, 0)}</strong> misconduct incidents
         </span>
         <span>
           a new grant would be refused to <strong>{sum.refused}</strong> operator{sum.refused === 1 ? "" : "s"}
@@ -205,7 +205,10 @@ export function AuditTrail({ snapshot }: { snapshot: FundSnapshot }) {
           At the start, the trade and the end of every trading day ({snapshot.world.ticks} days × 3), the book replays the
           tree's event log ({a.events.toLocaleString("en-US")} events in this run) into a fresh tree and compares it with the
           live one: every budget, spend and revocation must be one the log explains, or the run stops. <strong>Limit:</strong>{" "}
-          the log is not signed, so this shows the tree is the one its own log built, not that nobody rewrote the log.
+          each event is hash-chained to the one before it (loop 7), so an edit to a past event breaks the chain, but the chain is not
+          signed or keyed: without a trusted copy of its latest hash, someone who rewrites the log and recomputes every hash, or
+          cuts events off its end, is not caught. So this shows the tree is the one its own log built, not that nobody rewrote
+          the log.
         </p>
       </details>
     </div>

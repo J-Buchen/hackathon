@@ -1,3 +1,4 @@
+import { TableScroll } from "../components/TableScroll";
 import { useMemo } from "react";
 import { LineChart, type Series } from "./LineChart";
 import type { Decision, Question, ScorecardRow, SwarmSnapshot } from "./types";
@@ -206,7 +207,7 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
             Per unit of capital, so they're attributable. Twin = the agent whose returns most resemble this one.
           </p>
         </div>
-        <div className="table-scroll" tabIndex={0} role="region" aria-label="Agent track records">
+        <TableScroll label="Agent track records">
           <table className="cb-table">
             <thead>
               <tr>
@@ -244,7 +245,7 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
               ))}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       </div>
 
       <div className="grid cb-grid">
@@ -279,7 +280,7 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
               Components switched off one at a time, averaged over {snapshot.sweep.seeds} seeds. Reported as-is.
             </p>
           </div>
-          <div className="table-scroll" tabIndex={0} role="region" aria-label="Ablation">
+          <TableScroll label="Ablation">
             <table className="cb-table">
               <thead>
                 <tr>
@@ -305,7 +306,7 @@ export default function CenterBook({ snapshot }: { snapshot: SwarmSnapshot }) {
                 ))}
               </tbody>
             </table>
-          </div>
+          </TableScroll>
         </div>
       </div>
     </div>
@@ -362,7 +363,7 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
           ))}
         </ul>
 
-        <div className="table-scroll" tabIndex={0} role="region" aria-label="Three-question scorecard">
+        <TableScroll label="Three-question scorecard">
           <table className="cb-table cb-scorecard">
             <thead>
               <tr>
@@ -393,7 +394,7 @@ function Thesis({ thesis }: { thesis: NonNullable<SwarmSnapshot["thesis"]> }) {
               })}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
 
         {longRow && (
           <div className="cb-pick">

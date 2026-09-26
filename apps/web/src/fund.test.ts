@@ -480,8 +480,11 @@ test("showcase context: the latest sealed loop, whatever its result, is reported
   assert.equal(ctx.sealed.drawdownAbove, b.center.maxDrawdown > b.guardrails.maxDrawdown);
   assert.equal(ctx.sealed.utilityAbove, b.center.utility > b.guardrails.utility);
   assert.equal(ctx.rows[2]!.sealed!.better === "guardrails", b.center.maxDrawdown > b.guardrails.maxDrawdown + 0.00005);
-  assert.equal(ctx.gapWorld, c.utility - g.utility);
-  assert.equal(ctx.sealed.gap, b.center.utility - b.guardrails.utility);
+  // Gaps are between the numbers as shown (one decimal of a percent), so the
+  // text agrees with what a reader subtracts from the tiles.
+  const shown = (x: number) => Math.round(x * 1000) / 1000;
+  assert.equal(ctx.gapWorld, shown(c.utility) - shown(g.utility));
+  assert.equal(ctx.sealed.gap, shown(b.center.utility) - shown(b.guardrails.utility));
   assert.equal(ctx.sealed.favourable, ctx.gapWorld > ctx.sealed.gap);
 
   // A drawdown result that goes the other way is reported that way too.

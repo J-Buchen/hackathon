@@ -2677,3 +2677,12 @@ a { color: inherit; }
   .fc-grant { white-space: normal; }
 }
 .fc-nw { white-space: nowrap; }
+
+/* A sideways-scrolling table says so (phones hide the scrollbar). Shown only
+   while the table is wider than its box (TableScroll). */
+.table-scroll-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--text-dim);
+  text-align: right;
+}
