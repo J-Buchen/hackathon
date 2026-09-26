@@ -15,9 +15,15 @@ import { Evidence } from "./fund/Evidence";
 import EvidencePanel from "./fund/EvidencePanel";
 import FundConsole from "./fund/FundConsole";
 import { DecisionLog } from "./fund/DecisionLog";
+import { AuditTrail, OperatorRecord } from "./fund/OperatorRecord";
 import { SealedContext } from "./fund/Context";
 import {
+  auditLine,
   buildLog,
+  freedLabel,
+  grantStatus,
+  operatorRecordSummary,
+  unallocatedSince,
   drawdownRows,
   entryAgents,
   evidenceBlocksLine,
@@ -858,4 +864,175 @@ test("an agent sized to zero reads unallocated, not a cut that cannot explain ×
   const html = flatten(renderToStaticMarkup(createElement(FundConsole, { snapshot: s })));
   assert.doesNotMatch(html, /allocated nothing/);
   for (const a of zero) assert.match(html, new RegExp(`${a.label} .*unallocated 0 `));
+});
+
+/* -------------------------------------------------------------------------- */
+/* Operator record + log replay check                                          */
+/* -------------------------------------------------------------------------- */
+
+type RecordRows = Array<{ id: string; agents: string[]; stopOuts: Array<Record<string, unknown>>; [k: string]: unknown }>;
+const rowsOf = (r: Record<string, unknown>) => r.operatorRecord as RecordRows;
+const auditOf = (r: Record<string, unknown>) => r.audit as Record<string, unknown>;
+/** The committed snapshot, parsed, with the record and the check known present. */
+function loadFull() {
+  const s = load();
+  assert.ok(s.operatorRecord && s.operatorRecordLimits && s.audit, "the committed snapshot carries both");
+  return { ...s, operatorRecord: s.operatorRecord, operatorRecordLimits: s.operatorRecordLimits, audit: s.audit };
+}
+
+test("the committed snapshot carries the operator record and the log replay check", () => {
+  const s = loadFull();
+  assert.deepEqual(s.operatorRecordLimits, { maxStopOuts: 2, maxMisconduct: 0 });
+  assert.deepEqual(s.operatorRecord.map((o) => o.id), s.world.operators.map((o) => o.id));
+  assert.deepEqual(s.operatorRecord.map((o) => o.agents), s.world.operators.map((o) => o.agents));
+  const filed = s.operatorRecord.flatMap((o) => o.stopOuts);
+  assert.equal(filed.length, s.stopOuts.length, "one stop-out on record per stop-out in the book");
+  for (const x of s.stopOuts) {
+    assert.equal(filed.filter((f) => f.agent === x.name && f.tick === x.t && f.freed === x.freed && f.label === x.agent).length, 1, x.agent);
+  }
+  for (const o of s.operatorRecord) {
+    assert.equal(o.misconduct, 0);
+    assert.equal(o.wouldRefuseNewGrant, o.stopOuts.length > s.operatorRecordLimits.maxStopOuts);
+  }
+  assert.equal(s.audit.checks, 3 * s.world.ticks, "start, trade and end of every tick");
+  assert.equal(s.audit.discrepancies, 0);
+  assert.ok(s.audit.events > 0);
+});
+
+test("parseFundSnapshot rejects a malformed operator record or log replay check with the JSON path", () => {
+  const cases: Array<[string, (r: Record<string, unknown>) => void, RegExp]> = [
+    ["a record without its limits", (r) => void delete r.operatorRecordLimits, /operatorRecordLimits: expected object, got undefined/],
+    ["limits without a record", (r) => void delete r.operatorRecord, /operatorRecord: expected array, got undefined/],
+    ["negative checks", (r) => void (auditOf(r).checks = -1), /audit\.checks: expected whole number ≥ 0, got -1/],
+    ["no checks on a finished run", (r) => void (auditOf(r).checks = 0), /audit\.checks: expected \d+ \(start, trade and end of each of \d+ ticks\), got 0/],
+    ["differences on a finished run", (r) => void (auditOf(r).discrepancies = 3), /audit\.discrepancies: expected 0 \(the book stops on the first difference\), got 3/],
+    ["an empty log", (r) => void (auditOf(r).events = 0), /audit\.events: expected whole number ≥ 1, got 0/],
+    ["fractional events", (r) => void (auditOf(r).events = 1.5), /audit\.events: expected whole number/],
+    ["a misconduct limit", (r) => void ((r.operatorRecordLimits as Record<string, unknown>).maxMisconduct = 5), /operatorRecordLimits\.maxMisconduct: expected 0/],
+    ["a row dropped", (r) => void rowsOf(r).pop(), /operatorRecord: expected one row per world operator/],
+    ["rows reordered", (r) => void rowsOf(r).reverse(), /operatorRecord\[0\]\.id: expected op-0 \(world order\)/],
+    [
+      "a row that claims another operator's agent",
+      (r) => {
+        const rows = rowsOf(r);
+        const herd1 = rows.find((o) => o.agents.includes("herd-1"))!;
+        rows[0]!.agents = [...rows[0]!.agents, "herd-1"];
+        rows[0]!.stopOuts.push(herd1.stopOuts.pop()!);
+      },
+      /operatorRecord\[0\]\.agents: expected trend-0 \(world\.operators\[0\]\), got trend-0, herd-1/,
+    ],
+    ["misconduct on a stop-out record", (r) => void (rowsOf(r)[0]!.misconduct = 1), /operatorRecord\[0\]\.misconduct: expected 0/],
+    ["a chip that disagrees with the count", (r) => void (rowsOf(r)[0]!.wouldRefuseNewGrant = true), /operatorRecord\[0\]\.wouldRefuseNewGrant: true with 1 stop-out\(s\) and a limit of 2/],
+    ["a stop-out the book never made", (r) => void (rowsOf(r)[0]!.stopOuts[0]!.tick = 1), /operatorRecord\[0\]\.stopOuts\[0\]: no stop-out of .* on tick 1/],
+    ["a stop-out filed under another operator", (r) => void rowsOf(r)[1]!.stopOuts.push(rowsOf(r)[0]!.stopOuts[0]!), /operatorRecord\[1\]\.stopOuts\[0\]\.label: trend-0 is not an agent of op-1/],
+    [
+      "another agent's stop-out under this agent's label",
+      (r) => void (rowsOf(r)[0]!.stopOuts[0]!.agent = rowsOf(r)[2]!.stopOuts[0]!.agent),
+      /operatorRecord\[0\]\.stopOuts\[0\]\.label: trend-2\.\S+ is trend-2 in stopOuts, got trend-0/,
+    ],
+    [
+      "one stop-out filed twice and another dropped",
+      (r) => {
+        const rows = rowsOf(r);
+        rows[0]!.stopOuts.push({ ...rows[0]!.stopOuts[0]! });
+        rows[2]!.stopOuts = [];
+      },
+      /operatorRecord\[0\]\.stopOuts\[1\]: the stop-out of trend-0\.\S+ on tick 63 is filed twice/,
+    ],
+    ["a stop-out missing from the record", (r) => void (rowsOf(r)[0]!.stopOuts = []), /operatorRecord: the stop-out of trend-0\.\S+ on tick 63 is not on record/],
+    ["freed that disagrees with the book", (r) => void (rowsOf(r)[0]!.stopOuts[0]!.freed = 1e9), /operatorRecord\[0\]\.stopOuts\[0\]\.freed: stopOuts says 0, got 1000000000/],
+    ["negative freed", (r) => void (rowsOf(r)[0]!.stopOuts[0]!.freed = -5), /operatorRecord\[0\]\.stopOuts\[0\]\.freed: expected whole number ≥ 0, got -5/],
+    ["a drawdown in percent", (r) => void (rowsOf(r)[0]!.stopOuts[0]!.drawdown = 22.6), /stopOuts\[0\]\.drawdown: expected number in \[0, 1\], got 22\.6/],
+  ];
+  for (const [what, mutate, re] of cases) {
+    const r = raw();
+    mutate(r);
+    assert.throws(() => parseFundSnapshot(r), re, what);
+  }
+});
+
+test("an older snapshot without the record or the check still loads, and only those panels give way to a note", () => {
+  const r = raw();
+  delete r.operatorRecord;
+  delete r.operatorRecordLimits;
+  delete r.audit;
+  const s = parseFundSnapshot(r);
+  assert.equal(s.operatorRecord, null);
+  assert.equal(s.operatorRecordLimits, null);
+  assert.equal(s.audit, null);
+  const ops = renderToStaticMarkup(createElement(OperatorRecord, { snapshot: s }));
+  assert.match(ops, /written before the operator record existed/);
+  const audit = renderToStaticMarkup(createElement(AuditTrail, { snapshot: s }));
+  assert.match(audit, /written before the log replay check was recorded/);
+  const html = renderToStaticMarkup(createElement(FundConsole, { snapshot: s }));
+  assert.match(html, /id="fc-agents"/, "the rest of the console still renders");
+});
+
+test("grant status and stop-out wording: a what-if answer, a per-unit drawdown, never a slash", () => {
+  const stop = { agent: "a.x.eth", label: "a", tick: 3, freed: 0, drawdown: 0.3 };
+  assert.deepEqual(grantStatus({ stopOuts: [stop, stop], wouldRefuseNewGrant: false }, 2), { refused: false, label: "eligible" });
+  assert.deepEqual(grantStatus({ stopOuts: [stop, stop, stop], wouldRefuseNewGrant: true }, 2), { refused: true, label: "refused: 3 stop-outs (limit 2)" });
+  assert.equal(freedLabel(0), "freed 0 (already unallocated)");
+  assert.equal(freedLabel(0, 50), "no fund capital at risk since Day 51");
+  assert.equal(freedLabel(298_287), "freed 298K USDC");
+  assert.equal(
+    auditLine({ checks: 780, discrepancies: 0, events: 937 }),
+    "the mandate tree was compared with a rebuild from its own event log 780 times in this run; 0 differences (a self-consistency check: the log is not signed)",
+  );
+  const s = loadFull();
+  const sum = operatorRecordSummary(s);
+  assert.equal(sum.filed, s.stopOuts.length);
+  assert.equal(sum.operators, s.world.operators.length);
+  assert.equal(sum.refused, s.operatorRecord.filter((o) => o.wouldRefuseNewGrant).length);
+  // Every stop-out of an agent the allocator had already cut to zero names the day the fund stopped having capital at risk.
+  for (const x of s.stopOuts) {
+    const since = unallocatedSince(s, x.name, x.t);
+    if (x.freed > 0) assert.equal(since, null, x.agent);
+    else {
+      assert.ok(since !== null && since <= x.t, x.agent);
+      const a = s.agents.find((y) => y.name === x.name)!;
+      for (let t = since; t <= x.t; t++) assert.equal(a.capital[t], 0, `${x.agent} day ${t + 1}`);
+      assert.ok(since === 0 || a.capital[since - 1]! > 0, `${x.agent}: the first idle day`);
+    }
+  }
+});
+
+test("the operator record panel: filed operators get a row, the rest share one, losses not misconduct, and a refused operator reads as refused", () => {
+  const s = loadFull();
+  const html = renderToStaticMarkup(createElement(OperatorRecord, { snapshot: s }));
+  for (const o of s.operatorRecord) assert.ok(html.includes(`>${o.id}<`), o.id);
+  const clean = s.operatorRecord.filter((o) => o.stopOuts.length === 0).length;
+  assert.equal((html.match(/<tr role="row"/g) ?? []).length, 1 + s.operatorRecord.length - clean + (clean > 0 ? 1 : 0), "header, one row per filed operator, one shared row");
+  assert.match(html, new RegExp(`>${clean} operators<`));
+  assert.match(html, /record of <strong>losses<\/strong>,\s*not misconduct/);
+  assert.match(html, /nothing is slashed/);
+  assert.match(html, /on its own record \(per unit\)/);
+  assert.match(html, /no fund capital at risk since Day \d+/);
+  assert.match(html, /OperatorGrantScreen/);
+  assert.match(html, /<em>would<\/em> answer/);
+  assert.match(html, /A new grant would be…/);
+  assert.match(html, /World ID is a mock/);
+  assert.match(html, /virtual world/i);
+  assert.doesNotMatch(html.replace(/nothing is slashed/g, ""), /slash/i, "the only 'slash' is the denial");
+  assert.doesNotMatch(html, /tabindex/i, "a table that fits is no tab stop (TableScroll adds one only on overflow)");
+  const three = JSON.parse(JSON.stringify(s)) as typeof s;
+  const row = three.operatorRecord.find((o) => o.stopOuts.length > 0)!;
+  row.stopOuts = [row.stopOuts[0]!, { ...row.stopOuts[0]!, tick: 100 }, { ...row.stopOuts[0]!, tick: 200 }];
+  row.wouldRefuseNewGrant = true;
+  const refused = renderToStaticMarkup(createElement(OperatorRecord, { snapshot: three }));
+  assert.match(refused, /fc-grant is-refused/);
+  assert.match(refused, /refused: 3 stop-outs \(limit 2\)/);
+  assert.match(refused, /a new grant would be refused to <strong>1<\/strong> operator</);
+});
+
+test("the log replay check states the count, the differences and its limit on the visible line", () => {
+  const s = loadFull();
+  const html = renderToStaticMarkup(createElement(AuditTrail, { snapshot: s }));
+  const line = html.slice(0, html.indexOf("<details"));
+  assert.ok(line.includes(`log ${s.audit.checks.toLocaleString("en-US")} times in this run; 0 differences`));
+  assert.match(line, /Log replay check/);
+  assert.match(line, /the log is not signed/, "the limit is never behind the disclosure");
+  assert.match(line, /class="fc-vw">virtual world/);
+  assert.doesNotMatch(html, /Audit trail/);
+  assert.match(html, /<details/);
 });

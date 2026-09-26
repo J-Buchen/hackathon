@@ -1126,6 +1126,16 @@ function Guarantees() {
             </Reveal>
           ))}
         </div>
+        {/* Accountability sits under the four cards, not inside (G) or (C): it cuts nothing and closes nothing. */}
+        <Reveal>
+          <p className="guarantees-acct">
+            <span className="guarantees-acct-k">Accountability</span> Every stop-out also goes on its operator's record, as a
+            loss, not misconduct. A new grant made through the record's grant screen (<code>OperatorGrantScreen</code>) is
+            refused above two stop-outs; the showcase book makes no grants after the start, so the fund console shows what
+            that screen would answer. The mandate tree is also compared with a rebuild from its own event log three times a
+            trading day (the log is not signed). <a className="guarantee-see" href="#fc-operators">See the operator record →</a>
+          </p>
+        </Reveal>
       </div>
     </section>
   );

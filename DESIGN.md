@@ -640,6 +640,29 @@ fetch (App.tsx `useFundSnapshot`, one request for both) with its own skeleton
 (`fund/EvidencePanel`); it still renders the ledger when the console is empty.
 The panel keeps the `#fc-evidence` id, so older deep links land on it.
 
+Under the decision log the console shows the log replay check (one line,
+tagged virtual world: how many times the book compared the tree with a rebuild
+from its own event log, the differences, and its limit on the same visible
+line: a self-consistency check, the log is not signed; a disclosure explains
+what is compared) and the operator record (`fund/OperatorRecord.tsx`). The
+record is worded as a record of losses: a stop-out is never called misconduct
+or a slash, each drawdown is "on its own record (per unit)", and a stop-out of
+an agent the allocator had already cut to zero says since when the fund had no
+capital at risk with it. The only consequence shown is the what-if answer of the
+grant screen for a new grant (column "A new grant would be…"): the book makes
+no grants after the start. Operators with no stop-outs share one row.
+`parseFundSnapshot` refuses a record whose status chip disagrees with its own
+count and limit, a row whose agents differ from `world.operators`, a stop-out
+that is not in `stopOuts`, is filed twice, is missing, carries another agent's
+label or a different amount freed, or is filed under an operator that does not
+run the agent, any misconduct count or limit other than 0, and a check count
+other than 3 × ticks or any difference. A snapshot written before either field
+existed still loads: that panel alone becomes a one-line note. Below 640 px each
+operator's row restyles as a card (explicit table roles keep the semantics),
+with the grant answer right-aligned on its last line. Tables that fit are not
+tab stops (`components/TableScroll`: focusable, named regions only while they
+overflow). The skeleton reserves both (`--fcs-audit`, `--fcs-ops`).
+
 The showcase world's KPI tiles are never shown without
 the context card below them (`fund/Context.tsx`, always rendered): "Across N
 sealed worlds" with the latest confirmed loop's block-B means, including where

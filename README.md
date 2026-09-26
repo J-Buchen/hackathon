@@ -30,6 +30,18 @@ the decisions, and each one lands as one operation on one mandate tree:
   operation (since loop 2). The AgentHire demo shows a close on a live subtree
   that was still paying for work.
 
+**Accountability** (not a fifth guarantee: it cuts nothing and closes nothing).
+Every stop-out is also filed, once, as a `stop-out` incident on its operator's
+record (`RunBookOptions.incidents` → `StopOutIncidentSink`). A stop-out is a
+loss, not misconduct: nothing is slashed and nothing already granted is taken
+back. A new grant made through the record's grant screen (`OperatorGrantScreen`)
+is refused above two stop-outs; the center book's own grants do not go through
+that screen, and the showcase book makes no grants after the start, so the
+console shows what the screen *would* answer. The book also compares the live
+tree with a rebuild from its own event log (`DelegationTree.verifyAgainstLog`)
+at the start, the trade and the end of every tick: a self-consistency check,
+since the log itself is not signed.
+
 `npm run demo:fund` builds the fund console's data from one showcase **virtual
 world** (simulated prices, agents and operators; no market data). The mechanism
 underneath is the attenuating-delegation primitive described next.
@@ -43,9 +55,11 @@ the evidence. The showcase world is more favourable than the sealed average.
 
 ![Hero: "A multi-manager fund where the PMs are AI agents", with an illustrated mandate tree in which two agents holding overlapping positions (one trade under two names) are cut together, flagged because they also share an operator, and one agent is stopped out. The allocator groups the cut by overlapping positions only.](docs/img/hero.png)
 
-![The four guarantees: (R) reserved at grant with delegate, (A) resized by risk-adjusted record with resize, (G) one trade, one cut with a group resize, and (C) a stop-out closes the subtree with close.](docs/img/guarantees.png)
+![The four guarantees: (R) reserved at grant with delegate, (A) resized by risk-adjusted record with resize, (G) one trade, one cut with a group resize, and (C) a stop-out closes the subtree with close; under them, one accountability line: every stop-out goes on its operator's record as a loss, the grant screen's answer is a what-if, and the tree is compared with a rebuild from its own unsigned event log.](docs/img/guarantees.png)
 
 ![Fund console, virtual world: the mandate tree replayed to Day 34 with picker-0 and desk-0 ringed, next to the decision log filtered to one-trade cuts whose members share an operator (flagged).](docs/img/fund-console.png)
+
+![Operator record and log replay check, virtual world: the mandate tree was compared with a rebuild from its own event log 780 times in the run with 0 differences (a self-consistency check: the log is not signed); one row per simulated operator with a stop-out (a record of losses, not misconduct; each drawdown is on the agent's own per-unit record, and five of the six hit agents that already had no fund capital), the four operators with none sharing one row, misconduct 0, and what the grant screen would answer a new grant: "eligible" (refused above 2 stop-outs).](docs/img/operator-record.png)
 
 ![Sealed evidence, virtual worlds: the paired uplift in certainty-equivalent return of each loop's merged change with 90% intervals (loop 4's rows measure the Tiger overlay, not the fund); superseded results are hollow and dashed.](docs/img/sealed-evidence.png)
 
@@ -130,7 +144,18 @@ npm run dev:web      # opens the dashboard that renders the snapshot
   with per-agent series, the decision log, group cuts (one-trade vs book-wide,
   with shared operators flagged), stop-outs (one `close` each, with the amount freed),
   the mandate tree at every decision tick and a summary of the sealed loop
-  results in `docs/loops/` (only merged, confirmed changes are plotted).
+  results in `docs/loops/` (only merged, confirmed changes are plotted). The
+  showcase run carries an operator record (`operatorRecord`: per operator, its
+  agents, the stop-outs filed against it with day, amount freed and drawdown,
+  misconduct 0, and whether `OperatorGrantScreen` would refuse it a new grant
+  under the default limit of 2 stop-outs: a what-if, since the book makes no
+  grants after the start) and a log replay check (`audit`: how many times the
+  book compared the tree with a replay of its event log, 3 per tick, the
+  differences found, 0, and the log's length). The sink changes nothing the
+  book does: every other field of the snapshot is byte-identical with or without
+  it. The console shows both under the decision log; in the showcase world no
+  operator reaches the limit (at most one stop-out each), so every answer reads
+  "eligible".
 - `npm run demo:swarm` runs the **center book** (below): a Tiger-Cub fund of
   agents, head-to-head vs per-agent guardrails, a 20-seed sweep and an
   ablation. It writes `apps/web/public/swarm-snapshot.json`.

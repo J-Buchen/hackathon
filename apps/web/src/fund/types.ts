@@ -77,6 +77,42 @@ export interface StopOut {
   detail: string;
 }
 
+/** One stop-out filed against an operator: a LOSS on the agent's own record, never misconduct. */
+export interface OperatorStopOut {
+  /** Full mandate-tree node name. */
+  agent: string;
+  label: string;
+  tick: number;
+  /** Whole USDC the close took back. */
+  freed: number;
+  /** The agent's drawdown when it was stopped out (a fraction). */
+  drawdown: number;
+}
+
+/**
+ * One operator's record after the showcase run: the stop-outs the book filed
+ * against it (runBook's IncidentSink → the adapters' StopOutIncidentSink), and
+ * whether the adapters' OperatorGrantScreen would refuse it a NEW grant under
+ * its default limits. Nothing already granted is taken back; nothing is slashed.
+ */
+export interface OperatorRecordRow {
+  id: string;
+  agents: string[];
+  stopOuts: OperatorStopOut[];
+  /** Misconduct incidents: the book files none (a stop-out is a loss). */
+  misconduct: 0;
+  wouldRefuseNewGrant: boolean;
+  /** OperatorGrantScreen's own words. */
+  reason: string;
+}
+
+/** The mandate tree checked against a replay of its own event log during the run (DelegationTree.verifyAgainstLog). */
+export interface AuditTrail {
+  checks: number;
+  discrepancies: number;
+  events: number;
+}
+
 export interface TreeState {
   t: number;
   budget: number[];
@@ -195,6 +231,11 @@ export interface FundSnapshot {
   treeNodes: string[];
   treeAtGrant: TreeState;
   treeStates: TreeState[];
+  /** null in a snapshot written before the operator record existed. */
+  operatorRecord: OperatorRecordRow[] | null;
+  operatorRecordLimits: { maxStopOuts: number; maxMisconduct: 0 } | null;
+  /** null in a snapshot written before the log replay check was recorded. */
+  audit: AuditTrail | null;
   evidence: { source: string; loops: LoopEvidence[] };
 }
 
@@ -274,6 +315,105 @@ function treeState(v: unknown, path: string, nodes: number, ticks: number): void
     if (a.length !== nodes) throw new FundSnapshotError(`fund-snapshot.json ${path}.${k}: expected ${nodes} entries, got ${a.length}`);
     a.forEach((x, i) => bool(x, `${path}.${k}[${i}]`));
   }
+}
+
+function count(v: unknown, path: string): number {
+  const x = num(v, path);
+  if (!Number.isInteger(x) || x < 0) outOfRange(path, "whole number ≥ 0", x);
+  return x;
+}
+
+/**
+ * The operator record: one row per operator of the world, in the world's
+ * order, listing exactly the agents the world gives that operator; the filed
+ * stop-outs are exactly the book's stop-outs (each once, under the operator
+ * that runs the agent, with the label and amount freed the book reports); and
+ * the new-grant answer is the one the stated limit gives (the chip the console
+ * shows can never disagree with the count next to it). Absent from snapshots
+ * written before it existed: both keys missing read as null (the console then
+ * hides the panel with a note); one without the other is refused.
+ */
+function operatorRecord(s: Obj, ticks: number): void {
+  if (s.operatorRecord === undefined && s.operatorRecordLimits === undefined) {
+    s.operatorRecord = null;
+    s.operatorRecordLimits = null;
+    return;
+  }
+  const lim = obj(s.operatorRecordLimits, "operatorRecordLimits");
+  const maxStopOuts = count(lim.maxStopOuts, "operatorRecordLimits.maxStopOuts");
+  // The book files stop-outs only, and the adapters' default refuses any misconduct.
+  if (lim.maxMisconduct !== 0) {
+    if (typeof lim.maxMisconduct === "number") outOfRange("operatorRecordLimits.maxMisconduct", "0", lim.maxMisconduct);
+    fail("operatorRecordLimits.maxMisconduct", "0", lim.maxMisconduct);
+  }
+  const operators = (obj(s.world, "world").operators as Array<{ id: string; agents: string[] }>) ?? [];
+  const stops = s.stopOuts as Array<{ t: number; name: string; agent: string; freed: number }>;
+  const key = (name: string, t: number) => `${name}@${t}`;
+  const rows = arr(s.operatorRecord, "operatorRecord");
+  if (rows.length !== operators.length) {
+    throw new FundSnapshotError(`fund-snapshot.json operatorRecord: expected one row per world operator (${operators.length}), got ${rows.length}`);
+  }
+  const filed = new Set<string>();
+  rows.forEach((v, i) => {
+    const p = `operatorRecord[${i}]`;
+    const r = obj(v, p);
+    const op = operators[i]!;
+    const id = str(r.id, `${p}.id`);
+    if (id !== op.id) throw new FundSnapshotError(`fund-snapshot.json ${p}.id: expected ${op.id} (world order), got ${id}`);
+    const agents = strs(r.agents, `${p}.agents`);
+    if (agents.length !== op.agents.length || agents.some((a, k) => a !== op.agents[k])) {
+      throw new FundSnapshotError(`fund-snapshot.json ${p}.agents: expected ${op.agents.join(", ")} (world.operators[${i}]), got ${agents.join(", ")}`);
+    }
+    arr(r.stopOuts, `${p}.stopOuts`).forEach((x, j) => {
+      const q = `${p}.stopOuts[${j}]`;
+      const so = obj(x, q);
+      const agent = str(so.agent, `${q}.agent`);
+      const label = str(so.label, `${q}.label`);
+      const tick = count(so.tick, `${q}.tick`);
+      if (tick >= ticks) outOfRange(`${q}.tick`, `integer in [0, ${ticks - 1}]`, tick);
+      const freed = count(so.freed, `${q}.freed`);
+      fraction(so.drawdown, `${q}.drawdown`);
+      if (!agents.includes(label)) throw new FundSnapshotError(`fund-snapshot.json ${q}.label: ${label} is not an agent of ${id}`);
+      const st = stops.find((st) => st.name === agent && st.t === tick);
+      if (!st) throw new FundSnapshotError(`fund-snapshot.json ${q}: no stop-out of ${agent} on tick ${tick} in stopOuts`);
+      if (st.agent !== label) throw new FundSnapshotError(`fund-snapshot.json ${q}.label: ${agent} is ${st.agent} in stopOuts, got ${label}`);
+      if (freed !== st.freed) throw new FundSnapshotError(`fund-snapshot.json ${q}.freed: stopOuts says ${st.freed}, got ${freed}`);
+      const k = key(agent, tick);
+      if (filed.has(k)) throw new FundSnapshotError(`fund-snapshot.json ${q}: the stop-out of ${agent} on tick ${tick} is filed twice`);
+      filed.add(k);
+    });
+    if (r.misconduct !== 0) fail(`${p}.misconduct`, "0 (the book files stop-outs only)", r.misconduct);
+    const refused = bool(r.wouldRefuseNewGrant, `${p}.wouldRefuseNewGrant`);
+    const n = (r.stopOuts as unknown[]).length;
+    if (refused !== n > maxStopOuts) {
+      throw new FundSnapshotError(`fund-snapshot.json ${p}.wouldRefuseNewGrant: ${refused} with ${n} stop-out(s) and a limit of ${maxStopOuts}`);
+    }
+    str(r.reason, `${p}.reason`);
+  });
+  const missing = stops.find((st) => !filed.has(key(st.name, st.t)));
+  if (missing) {
+    throw new FundSnapshotError(`fund-snapshot.json operatorRecord: the stop-out of ${missing.name} on tick ${missing.t} is not on record`);
+  }
+}
+
+/**
+ * The log replay check: runBook compares the tree with a replay of its own log
+ * at the start, the trade and the end of every tick and stops on the first
+ * difference, so a finished run has exactly 3 × ticks checks and 0 differences.
+ * Absent from snapshots written before it existed: missing reads as null.
+ */
+function auditTrail(s: Obj, ticks: number): void {
+  if (s.audit === undefined) {
+    s.audit = null;
+    return;
+  }
+  const a = obj(s.audit, "audit");
+  const checks = count(a.checks, "audit.checks");
+  if (checks !== 3 * ticks) outOfRange("audit.checks", `${3 * ticks} (start, trade and end of each of ${ticks} ticks)`, checks);
+  const diffs = count(a.discrepancies, "audit.discrepancies");
+  if (diffs !== 0) outOfRange("audit.discrepancies", "0 (the book stops on the first difference)", diffs);
+  const events = count(a.events, "audit.events");
+  if (events < 1) outOfRange("audit.events", "whole number ≥ 1", events);
 }
 
 function uplift(v: unknown, path: string): void {
@@ -463,6 +603,9 @@ export function parseFundSnapshot(raw: unknown): FundSnapshot {
     if (t <= last) throw new FundSnapshotError(`fund-snapshot.json treeStates[${i}].t: ticks must increase`);
     last = t;
   });
+
+  operatorRecord(s, ticks);
+  auditTrail(s, ticks);
 
   const ev = obj(s.evidence, "evidence");
   str(ev.source, "evidence.source");

@@ -5,6 +5,8 @@ import { MandateTree } from "./MandateTree";
 import { DecisionLog, entryKind } from "./DecisionLog";
 import { SealedContext } from "./Context";
 import { parseConsoleHash } from "./hash";
+import { AuditTrail, OperatorRecord } from "./OperatorRecord";
+import { TableScroll } from "../components/TableScroll";
 import {
   day,
   entryAgents,
@@ -22,8 +24,9 @@ import {
 
 /**
  * Fund console v1: one virtual world, the allocator vs per-agent guardrails.
- * (a) fund NAV, (b) the mandate tree with replay, (c) the decision log, (d) the
- * agent table. The sealed-loop evidence is its own section right after it
+ * (a) fund NAV, (b) the mandate tree with replay, (c) the decision log, then
+ * the audit trail and the operator record (OperatorRecord.tsx), (d) the agent
+ * table. The sealed-loop evidence is its own section right after it
  * (EvidencePanel.tsx). Lazy-loaded (see App.tsx).
  */
 
@@ -302,6 +305,9 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
         </div>
       </div>
 
+      <AuditTrail snapshot={snapshot} />
+      <OperatorRecord snapshot={snapshot} />
+
       <div className="panel" id="fc-agents">
         <div className="panel-head">
           <h3>
@@ -312,7 +318,7 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
             actually gave the agent.
           </p>
         </div>
-        <div className="table-scroll fc-table-scroll" tabIndex={0} role="region" aria-label="Agents">
+        <TableScroll label="Agents" className="fc-table-scroll">
           <table className="cb-table fc-table fc-sticky">
             <thead>
               <tr>
@@ -368,7 +374,7 @@ export default function FundConsole({ snapshot }: { snapshot: FundSnapshot }) {
               })}
             </tbody>
           </table>
-        </div>
+        </TableScroll>
       </div>
 
     </div>
