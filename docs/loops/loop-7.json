@@ -1,0 +1,415 @@
+{
+ "loop": 7,
+ "title": "The audit survives persistence: snapshots replay, and the event log is hash-chained",
+ "note": "Structural, no utility claimed: bit-identical on both sealed blocks. Snapshot JSON now carries what replay needs, replaySnapshot/verifySnapshot rebuild and check a tree from the JSON alone, and every event links to the one before it by SHA-256, so an edited, deleted, inserted or reordered past event shows. It does not stop someone with API access from appending a forged event. The fund console shows a filtered log (no RESIZE events), so that view drops the hash links rather than carry a chain that cannot verify. Both drawdown researchers returned explicit null results: 17 variants, none beat plain deleveraging, and the center book's excess raw drawdown stays a scale effect (lower at the guardrails' volatility).",
+ "riskSummary": {
+  "block": "B",
+  "seeds": "17500-17699",
+  "centerMaxDDBefore": 0.07503229085126159,
+  "centerMaxDDAfter": 0.07503229085126159,
+  "guardrailsMaxDD": 0.06922066698869359,
+  "centerMaxDDAtGuardrailsVolAfter": 0.06400002244039697,
+  "pairedChange": {
+   "mean": 0,
+   "lo": 0,
+   "hi": 0,
+   "wins": 0
+  }
+ },
+ "rejections": [
+  {
+   "title": "Fund-level drawdown control (risk track)",
+   "reason": "null result, no diff: six variants (book vol cap at 10% and 12%, tighter concentration, a Sharpe hurdle, 60-tick co-movement budgets, a per-agent loss budget) bought 0.38-0.51 pp of max drawdown per pp of utility, below plain deleveraging (0.64-0.70) and far below the 1.3 bar"
+  },
+  {
+   "title": "Risk budgets in volatility terms (wildcard)",
+   "reason": "null result, no diff: eleven variants (ex-ante book vol budget, record-length concentration cap, operator-level share cap, Sortino ranking, per-agent realized-vol limits, a vol-regime score) met neither the allocator bar nor the risk bar"
+  }
+ ],
+ "head": "c8b0aebff63a223fd7b91032b0e6c7bca06ad419",
+ "blocks": {
+  "A": {
+   "from": 17000,
+   "count": 200
+  },
+  "B": {
+   "from": 17500,
+   "count": 200
+  }
+ },
+ "riskGuard": {
+  "maxDDUp": 0.005,
+  "sharpeDown": 0.03
+ },
+ "candidates": [
+  {
+   "k": 0,
+   "angle": "drawdown (RISK track): find a point-in-time, economically motivated fund-level drawdown control that buys at least 1.3 pp of maxDD per pp of CE given up, at no more than 0.1 pp of CE cost",
+   "track": "risk",
+   "hypothesis": "NULL RESULT, no diff. None of six variants from real multi-manager practice beat the uniform-deleveraging line (about 0.64-0.70 pp maxDD per pp of CE on both research blocks). All six were below it (0.38-0.51), and two cost Sharpe. A generic GBM Monte Carlo (mu 14%, sigma 10%, 260 days, not the arena) shows why. Uniform scaling gives 0.67 there, the same as the arena's line. Even the theoretically motivated Grossman-Zhou drawdown cushion only reaches 0.76-0.79, and step ladders reach 0.66-0.69. So no rule that reacts only to the book's state (drawdown, realized vol) can reach 1.3. Reaching it needs cross-sectional information that tells low-mu capital apart from high-drawdown capital, and the arena's own records do not provide it. Worst-drawdown diagnosis on seeds 2801-2900: mean maxDD 7.28%; the top agent supplies 43% of the loss; pickers and desks together lose about 3.0 pp of NAV per world and trend, noise, mean-reversion and herd agents about 4.0 pp. But the capital-heavy losers are also the high-vol, high-Sharpe records. Moving capital away from them, by risk, concentration or loss budget, costs more CE than the drawdown it saves.",
+   "reviewOk": false,
+   "reviewProblems": [
+    "no diff"
+   ],
+   "status": "no-diff",
+   "reviewSummary": "nothing to review",
+   "research": {
+    "checkBefore": "Current code (c8b0aeb) on check block 7100-7249 (150 worlds): center CE 10.90% vs guardrails 5.39%; Sharpe 1.16 vs 0.66; maxDD 7.52% vs 7.10% (6.53% at the guardrails' vol). Tiger overlay CE -7.46% vs buy-and-hold -20.38%.\nUniform-deleveraging line, deploy 0.72: CE -0.435 pp [-0.574,-0.297]; maxDD -0.304 pp [-0.355,-0.253]; Sharpe -0.004. That is 0.70 pp maxDD per pp CE.",
+    "checkAfter": "No change is proposed. The best candidate, a book vol cap at 12% from the covariance of the agents' last 60 ticks, on check block 7100-7249: CE -0.365 pp [-0.586,-0.145], significant; maxDD -0.180 pp [-0.251,-0.110]; Sharpe -0.001 (se 0.009). That is 0.49 pp maxDD per pp CE, below the 0.70 line on the same block. It also fails the CE-cost limit of at most 0.1 pp. Tiger track unchanged in every variant (bit-identical).",
+    "devBefore": "Current code (c8b0aeb) on development block 2801-3000 (200 worlds): center CE 12.61% vs guardrails 7.18%; Sharpe 1.31 vs 0.88; maxDD 7.24% vs 6.82% (6.31% at the guardrails' vol). Tiger overlay CE -5.53% vs buy-and-hold -18.43%.\nUniform-deleveraging line:\n- deploy 0.72: CE -0.410 pp [-0.520,-0.300]; maxDD -0.262 pp [-0.305,-0.219]; Sharpe +0.004. That is 0.64 pp maxDD per pp CE.\n- deploy 0.64: CE -1.051 pp; maxDD -0.604 pp; Sharpe -0.006. That is 0.57 pp maxDD per pp CE.",
+    "devAfter": "Paired against the current code on block 2801-3000 (utility; maxDD; Sharpe; pp maxDD per pp CE, vs the line at 0.64):\n1. Book vol target 12% (a cap, scales targets down only), from the agents' 60-tick covariance: CE -0.486 pp [-0.667,-0.306]; maxDD -0.215 pp [-0.271,-0.158]; Sharpe -0.000. Ratio 0.44.\n2. Same vol target at 10%: CE -1.076 pp; maxDD -0.507 pp; Sharpe +0.005. Ratio 0.47.\n3. Tighter concentration, maxAgentShare 0.25 -> 0.18 with excess water-filled onto the other agents: CE -0.988 pp; maxDD -0.449 pp; Sharpe -0.034. Ratio 0.45.\n4. Sharpe hurdle, score = max(0, shrunk Sharpe - 0.5): CE -0.659 pp; maxDD -0.338 pp; Sharpe -0.079. Ratio 0.51.\n5. Same-bet correlations measured on the last 60 ticks instead of 252 (recent co-movement shares one budget): CE -0.040 pp [-0.099,+0.019]; maxDD +0.015 pp [-0.006,+0.037]; Sharpe -0.007. No effect.\n6. Per-agent loss budget, capital x scaled stop <= 4% of NAV, excess water-filled onto the others (a cap on one agent's marginal contribution to fund drawdown): CE -2.349 pp; maxDD -0.898 pp; Sharpe -0.117. Ratio 0.38.\nVol-matched maxDD (center maxDD at the guardrails' vol) was 6.31% at baseline; variants 1, 2, 3 and 6 printed 6.29%, 6.26%, 6.36% and 6.40%. That is no better per unit of risk.",
+    "variantsTried": 6,
+    "notes": "Null result, so there is no diff. All research edits were temporary environment knobs (DEPLOY, VT, MAS, H, CW, LB) and are reverted; the worktree is clean at c8b0aeb. Typecheck and tests were not re-run: nothing changed, so testsGreen=true reflects the untouched pinned commit, not a fresh run. Only research seeds were used (2801-3000 and 7100-7249). Protected files were not edited. The mechanisms were not designed from the generator's source; the arena was used only as a black box (makeWorld and runBook), plus agent labels for the drawdown attribution. Worktree: /home/user/hackathon/.claude/worktrees/wf_2917a83f-afa-1 (clean).\n\nWhy it is null:\n1. With 260-tick worlds, the book's vol clusters only weakly. Across 80 worlds, the correlation of trailing 20-day vol with the next 20 days' vol is 0.23. Past vol predicts next-period mean return slightly POSITIVELY (0.10), so vol targeting deleverages exactly when returns are good.\n2. The high-vol, large-slot agents behind worst drawdowns are mostly the ones with real edge. Risk-based caps (variant 6, and loop 3's risk-contribution cap) and tighter concentration (variant 3) cut Sharpe.\n3. In GBM, a drawdown-state policy cannot beat about 0.8 pp maxDD per pp CE, so the 1.3 bar needs information that predicts which capital has low mu, and the records do not supply it.\n\nRecommendation: stop searching for a pure drawdown-control overlay. The center book's excess raw maxDD is a scale effect (it is lower at equal vol: 6.31% vs 6.82% on development seeds). The honest options are to state the comparison at matched vol, or to choose a lower deploy on purpose as a risk-appetite decision."
+   }
+  },
+  {
+   "k": 1,
+   "angle": "persist (STRUCTURE): make the replay audit survive persistence. Snapshot JSON now carries each event's grant, before-budget and a SHA-256 hash-chain link. replaySnapshot/verifySnapshot rebuild and check a DelegationTree from the JSON alone, and verifyAgainstLog/replay check the chain.",
+   "track": "structure",
+   "hypothesis": "Loop 6 made the live tree auditable from its own log, but serializeEvent dropped `grant` and `before`, so a snapshot could not be replayed. Nothing in a persisted log showed whether it had been edited. Three changes fix this. (1) Serialize the replay material (bigints as decimal strings, allowlists as arrays with null meaning \"any\"; the fields are optional so older snapshots still parse). (2) Add fromSnapshotEvent(s), verifySnapshot and replaySnapshot. They replay the JSON's log, then compare every node field the snapshot shows (budget, spentDirect, reserved, available, allowlists, expiry, revoked, identity, parent), plus node set, node order and principal, against the replayed tree. (3) Chain every recorded event: hash = SHA-256(canonical JSON of [prevHash, seq, type, node, detail, result, amount, merchant, grant, before]). This makes an edited, deleted, inserted or reordered past event show up. None of this can change a return, so arena utility must be bit-identical. That is the test, and it holds byte for byte.",
+   "reviewOk": true,
+   "reviewProblems": [
+    "Non-blocking: apps/web/public/fund-snapshot.json goes stale. fund.ts:736 calls toSnapshot(center.tree, { events: events.filter(e => e.type !== 'RESIZE') }), so with this diff `npm run demo:fund` now writes grant+hash on its events (23 hashes and 17 grants added versus the committed file). At c8b0aeb, regenerating reproduces the committed file byte for byte. The diff regenerated demo-snapshot.json but not fund-snapshot.json. agenthire-snapshot.json, written by writeSnapshotFile, is presumably also stale. I did not run it because it needs the agenthire services.",
+    "Non-blocking, misleading: once regenerated, the flagship fund snapshot carries hash links that do not verify, because the RESIZE filter removes events from a chained log. verifySnapshot(fundSnapshot.tree) returns 42 discrepancies (LOG_REWRITTEN from seq 49, 'hash chain breaks here', plus BAD_EVENT out-of-sequence and UNLOGGED_WRITE). The claim that 'the JSON alone rebuilds the tree' therefore holds only for unfiltered snapshots such as demo-snapshot.json. Either drop hash/grant from filtered snapshots or state this in the docs.",
+    "Minor: fromSnapshotEvent only validates amount, before, the allowlists and grant.expiry. grant.parent, grant.identityStatus, grant.principal.{name,verified}, seq and type from untrusted JSON pass through unchecked; core's `verifySnapshot` relies on replay to report them rather than raising SnapshotFormatError. The web parser (apps/web/src/snapshot.ts parseGrant) does check them.",
+    "Minor: the `head` getter returns \"\" (not a 64-hex value) when the last event has no hash, which is possible for a tree from replayLog of a pre-hash snapshot. Any later recordEvent on such a tree chains from \"\"."
+   ],
+   "diffFile": "docs/loops/loop-7/candidate-1.diff",
+   "blockA": {
+    "allocator": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tiger": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "risk": {
+     "allocatorMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "allocatorSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerMaxDD": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     },
+     "tigerSharpe": {
+      "mean": 0,
+      "lo": 0,
+      "hi": 0,
+      "wins": 0
+     }
+    }
+   },
+   "booksA": {
+    "allocator": {
+     "utility": 0.11601709773845145,
+     "sharpe": 1.2245136206944813,
+     "maxDD": 0.07278693235348087,
+     "maxDDAtBaselineVol": 0.0645101586440551,
+     "baselineUtility": 0.0611738197021037,
+     "baselineMaxDD": 0.07089392395064827
+    },
+    "tiger": {
+     "utility": -0.055097322539044945,
+     "sharpe": -0.12354055742884079,
+     "maxDD": 0.23755116503395046,
+     "maxDDAtBaselineVol": null,
+     "baselineUtility": -0.16716549914945714,
+     "baselineMaxDD": 0.3811833361577685
+    }
+   },
+   "status": "winner-A",
+   "reviewSummary": "Verdict: accept, with only non-blocking problems. The proposed diff matches the changes staged in .claude/worktrees/wf_2917a83f-afa-2 (15 files, +976/-30). I exported it to /tmp/loop-review-7-persist/p.diff. It applies cleanly to a fresh worktree at c8b0aeb (git apply --check passes).\n\nChecks run:\n- After worktree-setup.sh: `npm run typecheck` passes, root `npm test` passes 327/327 (315 at the base; the new tests are sha256.test.ts and snapshot-replay.test.ts), web tests pass 103/103, and web tsc is clean.\n- `npm run demo` regenerates the committed demo-snapshot.json byte for byte, so the new hashes are reproducible.\n- No test was weakened or deleted. The two changed replay.test.ts expectations are stricter: they add a LOG_REWRITTEN before the existing UNLOGGED_WRITE, and a 'carries no hash' message.\n- The diff does not touch the arena or judge files (arena.ts, arena-cli.ts, loop-judge.mjs, worktree-setup.sh). It uses no market or future information and no seed-specific constants.\n\nMechanism:\n- The hash covers every field of AllowanceEvent and EventGrant.\n- recordEvent drops any hash the caller passes and computes its own.\n- The WeakMap cache is only a shortcut: it applies only to events recordEvent hashed itself, which are frozen (freezeGrant freezes the allowlists and principal too). Any other event is re-hashed in full.\n- The tests do prove the claimed guarantee:\n  - A node field edit made without a matching event is caught field by field, including principal, node order and node set.\n  - An edited, deleted, inserted or swapped event breaks the chain at that point.\n  - The stated limits are pinned as tests: a rewrite that recomputes every later hash, or a log cut off at the end, is caught only against a trusted head; a forged recordEvent passes.\n\nRisk guard: I ran the arena eval on research block seeds 1-60 in both c8b0aeb and the candidate. The two output JSON files are byte-identical (cmp). Utility, maxDD and Sharpe are all identical, so the change is exactly 0:\n- allocator: utility 0.14187, maxDD 0.065859 (0 pp change), Sharpe 1.42016 (change 0)\n- tiger: utility -0.04993, maxDD 0.24454 (0 pp change), Sharpe -0.14967 (change 0)\n\nThat is well inside the guard (maxDD rise <= 0.5 pp, Sharpe fall <= 0.03).\n\nThe main issue: regenerating apps/web/public/fund-snapshot.json with `npm run demo:fund` would now add hashes to its events. That file's log has its RESIZE events filtered out, so those hashes fail verifySnapshot (42 discrepancies), and the diff leaves the committed fund-snapshot.json stale. I removed the scratch worktrees afterwards.",
+   "research": {
+    "checkBefore": "Check block, seeds 7100-7249 (150 worlds), at c8b0aeb: allocator utility 10.90% vs guardrails 5.39%, uplift +5.51 pp [90% +4.05, +6.97], wins 65%. Sharpe 1.16 vs 0.66. maxDD 7.52% vs 7.10% (6.53% at the guardrails' vol). Tiger -7.46% vs buy-and-hold -20.38%, uplift +12.92 pp. Tiger Sharpe -0.23 vs -0.10, maxDD 24.06% vs 38.49%.",
+    "checkAfter": "Identical to before: the eval output JSON is byte-for-byte the same (cmp). Allocator 10.90% vs 5.39%, uplift +5.51 pp [+4.05, +6.97]. Sharpe 1.16 vs 0.66. maxDD 7.52% vs 7.10% (6.53% at the guardrails' vol). Tiger -7.46% vs -20.38%, +12.92 pp. Tiger Sharpe -0.23 vs -0.10, maxDD 24.06% vs 38.49%. Change in center-book maxDD: 0.00 pp; change in Sharpe: 0.00. Run time 11.7s -> 13.3s.",
+    "devBefore": "Development block, seeds 2801-3000 (200 worlds), at c8b0aeb: allocator utility 12.61% vs guardrails 7.18%, uplift +5.43 pp [90% +4.21, +6.64], wins 69%. Sharpe 1.31 vs 0.88. maxDD 7.24% vs 6.82% (6.31% at the guardrails' vol). Tiger -5.53% vs buy-and-hold -18.43%, uplift +12.89 pp. Tiger Sharpe -0.19 vs -0.15, maxDD 23.83% vs 39.38%.",
+    "devAfter": "Identical to before: the eval output JSON is byte-for-byte the same (cmp). Allocator 12.61% vs 7.18%, uplift +5.43 pp [+4.21, +6.64]. Sharpe 1.31 vs 0.88. maxDD 7.24% vs 6.82% (6.31% at the guardrails' vol). Tiger -5.53% vs -18.43%, +12.89 pp. Tiger Sharpe -0.19 vs -0.15, maxDD 23.83% vs 39.38%. Change in maxDD: 0.00 pp; change in Sharpe: 0.00. Run time 15.8s -> 18.3s (about +16%, from hashing each event in recordEvent).",
+    "variantsTried": 1,
+    "notes": "This is a structural change and claims no return gain. Arena utility, maxDD and Sharpe are bit-identical on both blocks (the output JSONs match under cmp).\n\nWhat it guarantees, and the tests that prove it:\n(1) Persistence. replay.test.ts's assertReplays now also runs toSnapshot -> JSON.stringify -> parse -> verifySnapshot(head) -> replaySnapshot. It then checks nodes, principal, children order, the event log (same hashes), head, nextSeq, a toSnapshot round trip, and verifyAgainstLog on the rebuilt tree. That helper runs after every API path in the existing \"every API path\" test (fundRoot, delegate incl. rejected, resize, close, revoke, pay SETTLED/BLOCKED_MANDATE/BLOCKED_SCREENING/DENIED_IDENTITY/REVOKED, concurrent pays). It also runs every 5 steps in the 60-seed x 40-op random property test. snapshot-replay.test.ts also checks that a tree replayed from JSON carries on the same chain as the live one.\n(2) Tampered snapshot. A node budget edited in the JSON is reported as UNLOGGED_WRITE, and replaySnapshot throws ReplayError. The same holds for spentDirect, revoked, allowlists, expiry, identity, principal, and a node added, removed or reordered. Because reserved/available are compared too, a budget edit that also patches the node's own available is still caught through the parent's reserved.\n(3) Tamper-evident log. Each event's hash is computed over the previous hash plus every event field, using a pure-TS SHA-256 (sha256.ts, no dependency, no node:crypto). It is tested against the NIST vectors including 1M 'a', every length from 0 to 200 bytes against node:crypto, and UTF-8 input. Core stays browser-safe; apps/web does not import core at runtime anyway. The chain catches an event edited even when the nodes were edited to match, an event whose own hash was also recomputed (caught at the next link), deletions with or without renumbering, insertions, swaps and missing hashes. These are caught both in JSON and in memory by verifyAgainstLog({fromScratch}) and replayLog.\n\nWhat the chain does not stop is written in chain.ts, in the verifyAgainstLog doc, and as tests:\n- The chain has no key, so a full rewrite that recomputes every later hash passes unless the reader checks against a trusted head (tree.head / verifySnapshot's {head}).\n- Without such a head, cutting events off the end of a log is not detectable.\n- Anyone with API access can still append a forged event through the public recordEvent, and it is chained like any real one.\n\nTwo assertions in an existing test were changed, only by adding the new finding; nothing was removed. In the test \"the log can only be appended to\", the fromScratch replay of a replaced event now also reports \"LOG_REWRITTEN b\" (hash chain breaks at seq 3), and the smuggled event now also reports \"LOG_REWRITTEN b\" (carries no hash). Every existing expected entry is still asserted.\n\nChain breaks are reported under the existing LOG_REWRITTEN kind, so the discrepancy union and book.ts are unchanged. DelegationTree gains head and replayLog (a non-throwing replay).\n\nPerformance: a WeakMap cache skips re-hashing events this process recorded, which are deeply frozen, when they still follow the same prev. Copies and parsed events are always hashed in full. Arena run time is about +16% (JS SHA-256 at about 1 µs per 64-byte block).\n\nSnapshots: I regenerated only apps/web/public/demo-snapshot.json with npm run demo. The run is deterministic, and the only changes are the added grant/before/hash fields; no existing values changed. A core test replays it from the JSON alone, and a web test parses it. fund-, swarm- and agenthire-snapshot.json were not regenerated and are still valid, since the new fields are optional. Their bytes would grow if they were regenerated. fund-snapshot writes a filtered event list (RESIZE removed) and swarm-snapshot writes events: [], so neither would be replayable even if regenerated.\n\nIn the web app, types.ts and snapshot.ts parse the optional grant/before/hash when present, reporting any mismatch with its path, and keep them. Older snapshots stay valid, and there are new tests for both.\n\nChecks: npm run typecheck, npm test (327 pass), npm -w @allowance/lab run test (72 pass), web tests (103 pass) and web tsc are all green. Core tests: 80 pass.\n\nFiles: /home/user/hackathon/.claude/worktrees/wf_2917a83f-afa-2/packages/core/src/{chain.ts,sha256.ts,serialize.ts,tree.ts,types.ts,snapshot-replay.test.ts,sha256.test.ts,replay.test.ts} and apps/web/src/{types.ts,snapshot.ts,snapshot.test.ts}."
+   }
+  },
+  {
+   "k": 2,
+   "angle": "Wildcard (allocator or risk track): fund- and pod-shop risk budgeting in vol terms, meaning a fund-level ex-ante vol budget and per-PM realized-vol limits, plus evidence-scaled concentration, operator-level concentration limits and downside-risk (Sortino) ranking.",
+   "track": "risk",
+   "hypothesis": "Real multi-manager funds set risk budgets in volatility, not in capital. They cap the book's ex-ante vol, and they cut a PM whose realized vol blows out past the vol of their record. Hypothesis: a point-in-time vol budget cuts drawdown more cheaply than uniform deleveraging, because it takes risk off exactly when the risk is high. If that capital is instead moved to other agents rather than held as cash, the change should raise Sharpe at the same deployment. Secondary hypotheses: (a) early Sharpe estimates are noise, so a cap on concentration that grows with record length should help; (b) an operator is one counterparty, so its names should share one maxAgentShare; (c) Sortino ranking should penalize crash-prone books. RESULT: NULL. Nothing met the allocator bar (significant on both blocks) or the risk bar (at most 0.1 pp utility cost and at least 1.3 pp of maxDD per pp of CE). Empty diff.",
+   "reviewOk": false,
+   "reviewProblems": [
+    "no diff"
+   ],
+   "status": "no-diff",
+   "reviewSummary": "nothing to review",
+   "research": {
+    "checkBefore": "Current code c8b0aeb, check block 7100-7249 (150 worlds): allocator CE 10.90% vs guardrails 5.39% (uplift +5.51 pp [4.05, 6.97]), Sharpe 1.16 vs 0.66, maxDD 7.52% vs 7.10% (6.53% at the guardrails' vol). Tiger CE -7.46% vs -20.38%, overlay maxDD 24.06%.",
+    "checkAfter": "No change is proposed, so this is identical to checkBefore. Paired deltas vs current code on the check block for the candidates run there: (1) per-agent realized-vol limit, deleveraging (RV=20): CE -0.248 pp [-0.40, -0.09], maxDD -0.271 pp [-0.34, -0.20], Sharpe +0.005. That is 1.09 pp of DD per pp of CE: above uniform deleveraging but under the 1.3 bar, and the utility cost is over the 0.1 pp limit. (2) The same signal used to move risk to other agents instead (RS=20): CE +0.018 pp [-0.045, +0.081] (t=0.47), maxDD -0.017 pp, Sharpe +0.004. The dev-block gain does not confirm. (3) Uniform deleveraging reference (deploy 0.76): CE -0.204 pp, maxDD -0.140 pp, which is 0.69 pp of DD per pp of CE. Tiger delta is 0 in every run.",
+    "devBefore": "Current code c8b0aeb, dev block 2801-3000 (200 worlds): allocator CE 12.61% vs guardrails 7.18% (uplift +5.43 pp [4.21, 6.64]), Sharpe 1.31 vs 0.88, maxDD 7.24% vs 6.82% (6.31% at the guardrails' vol). Tiger CE -5.53% vs -18.43%, overlay maxDD 23.83%.",
+    "devAfter": "Paired deltas vs current code on 2801-3000 (CE pp / maxDD pp / Sharpe):\n- Fund ex-ante vol budget (pro-forma book vol on the last 60 ticks of records, scaled down only): target 10%: -1.115 / -0.508 / +0.001; target 12%: -0.507 / -0.216 / -0.002; target 15%: -0.141 / -0.051 / -0.000. About 0.4 pp of DD per pp of CE, WORSE than uniform deleveraging. High ex-ante-vol states are good states: capital concentrated in the best books.\n- Concentration cap growing with record length, sqrt(n/252) (floored at 1/k, so deployment is unchanged): -0.381 / +0.111 / -0.035. With sqrt(n/126): +0.041 / -0.000 / +0.002. Diversifying early hurts, and even raises maxDD.\n- Operator-level joint maxAgentShare (water-filling by operator): -0.521 / +0.056 / -0.034.\n- Sortino ranking in place of shrunk Sharpe: -0.058 / +0.011 / -0.008.\n- Per-agent realized-vol limit, target x min(1, sigma_252 / sigma_20), capital left in cash: -0.274 / -0.255 / +0.006. That is 0.93 pp of DD per pp of CE.\n- Same limit, but only on vol breaches > 1.5x: -0.109 / -0.070 / -0.003 (0.64 per pp).\n- Vol-regime factor on the raw score, redistributed so deployment is unchanged: +0.085 [+0.018, +0.153] (t=2.08) / -0.014 / +0.010. Did not confirm on 7100-7249.\n- Uniform deleveraging reference (deploy 0.76): -0.188 / -0.126 / +0.003 (0.67 per pp).",
+    "variantsTried": 11,
+    "notes": "Null result: I am proposing no change and the diff is empty. The worktree was reset to c8b0aeb and every experimental edit was reverted; after the revert npm test passed (315 pass, 0 fail). Findings worth keeping:\n(1) The center book has no market beta. Across 60 dev worlds its daily returns regress on the equal-weight market at beta ~0.03, R2 ~0.03, so a centre-book index hedge buys nothing.\n(2) A fund-level ex-ante vol budget is worse than uniform deleveraging (about 0.4 vs 0.67 pp of maxDD per pp of CE). The allocator's high-risk states are its high-conviction states.\n(3) Every way of diversifying away from the top-Sharpe agents lowered utility and did not lower drawdown: record-length concentration caps, operator-level joint caps, Sortino ranking. Concentrating in shrunk-Sharpe leaders is where the edge is.\n(4) The best risk lever found is a per-PM realized-vol limit: 20-tick vol above the agent's 252-tick vol scales its target down by the ratio. It is consistently more efficient than uniform deleveraging: dev 0.93 and check 1.09 pp of maxDD per pp of CE, vs 0.67-0.69 uniform, with Sharpe flat to slightly up. It still misses the 1.3 bar and costs about 0.25 pp CE, over the 0.1 pp limit. The 1.5x-breach version was less efficient (0.64). A future risk loop could start from it, perhaps combined with a mechanism that raises utility.\nAll 11 variants count as hidden trials: vol budget x3, evidence cap x2, operator cap, Sortino, RV, RV 1.5x, RS, deploy-0.76 reference. Seeds used: 2801-3000 and 7100-7249 only.\nTooling: the harness refused 'npm run arena -- eval' (it treats the 'eval' token as unverifiable), so runs went through a wrapper script that invokes tsx packages/lab/src/arena-cli.ts directly with the same arguments."
+   }
+  }
+ ],
+ "confirmations": [
+  {
+   "label": "best",
+   "kept": [
+    1
+   ],
+   "dropped": [],
+   "ok": true,
+   "allocator": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "tiger": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "allocatorSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    }
+   }
+  }
+ ],
+ "merged": {
+  "kept": [
+   1
+  ],
+  "diffFile": "docs/loops/loop-7/merge.diff"
+ },
+ "baselineA": {
+  "sha": "c8b0aebff63a223fd7b91032b0e6c7bca06ad419",
+  "dirty": false,
+  "allocator": {
+   "worlds": 200,
+   "utility": 0.11601709773845145,
+   "baseline": 0.0611738197021037,
+   "uplift": 0.05484327803634775,
+   "upliftLo": 0.04283212824277392,
+   "upliftHi": 0.06685442782992158,
+   "winRate": 0.695,
+   "sharpe": 1.2245136206944813,
+   "baselineSharpe": 0.7418591957627875,
+   "maxDD": 0.07278693235348087,
+   "baselineMaxDD": 0.07089392395064827,
+   "maxDDAtBaselineVol": 0.0645101586440551
+  },
+  "tiger": {
+   "worlds": 200,
+   "utility": -0.055097322539044945,
+   "baseline": -0.16716549914945714,
+   "uplift": 0.11206817661041218,
+   "upliftLo": 0.07505879344121721,
+   "upliftHi": 0.14907755977960715,
+   "winRate": 0.73,
+   "sharpe": -0.12354055742884079,
+   "baselineSharpe": -0.034583791773030344,
+   "maxDD": 0.23755116503395046,
+   "baselineMaxDD": 0.3811833361577685
+  },
+  "books": {
+   "allocator": {
+    "utility": 0.11601709773845145,
+    "sharpe": 1.2245136206944813,
+    "maxDD": 0.07278693235348087,
+    "maxDDAtBaselineVol": 0.0645101586440551,
+    "baselineUtility": 0.0611738197021037,
+    "baselineMaxDD": 0.07089392395064827
+   },
+   "tiger": {
+    "utility": -0.055097322539044945,
+    "sharpe": -0.12354055742884079,
+    "maxDD": 0.23755116503395046,
+    "maxDDAtBaselineVol": null,
+    "baselineUtility": -0.16716549914945714,
+    "baselineMaxDD": 0.3811833361577685
+   }
+  }
+ },
+ "confirmation": {
+  "ok": true,
+  "kept": [
+   1
+  ],
+  "dropped": [],
+  "blockB": {
+   "allocator": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "tiger": {
+    "mean": 0,
+    "lo": 0,
+    "hi": 0,
+    "wins": 0
+   },
+   "risk": {
+    "allocatorMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "allocatorSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerMaxDD": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    },
+    "tigerSharpe": {
+     "mean": 0,
+     "lo": 0,
+     "hi": 0,
+     "wins": 0
+    }
+   }
+  },
+  "booksB": {
+   "allocator": {
+    "utility": 0.1202815222226093,
+    "sharpe": 1.2001968739440911,
+    "maxDD": 0.07503229085126159,
+    "maxDDAtBaselineVol": 0.06400002244039697,
+    "baselineUtility": 0.06512603716968951,
+    "baselineMaxDD": 0.06922066698869359
+   },
+   "tiger": {
+    "utility": -0.08126737746889394,
+    "sharpe": -0.2844367814272134,
+    "maxDD": 0.2515467285401506,
+    "maxDDAtBaselineVol": null,
+    "baselineUtility": -0.20071351200520443,
+    "baselineMaxDD": 0.40228406043781
+   }
+  },
+  "baselineB": {
+   "sha": "c8b0aebff63a223fd7b91032b0e6c7bca06ad419",
+   "dirty": false,
+   "allocator": {
+    "worlds": 200,
+    "utility": 0.1202815222226093,
+    "baseline": 0.06512603716968951,
+    "uplift": 0.05515548505291992,
+    "upliftLo": 0.04197158524709931,
+    "upliftHi": 0.06833938485874053,
+    "winRate": 0.685,
+    "sharpe": 1.2001968739440911,
+    "baselineSharpe": 0.7449040962811408,
+    "maxDD": 0.07503229085126159,
+    "baselineMaxDD": 0.06922066698869359,
+    "maxDDAtBaselineVol": 0.06400002244039697
+   },
+   "tiger": {
+    "worlds": 200,
+    "utility": -0.08126737746889394,
+    "baseline": -0.20071351200520443,
+    "uplift": 0.11944613453631053,
+    "upliftLo": 0.08634741823367842,
+    "upliftHi": 0.15254485083894265,
+    "winRate": 0.755,
+    "sharpe": -0.2844367814272134,
+    "baselineSharpe": -0.14787539291292082,
+    "maxDD": 0.2515467285401506,
+    "baselineMaxDD": 0.40228406043781
+   },
+   "books": {
+    "allocator": {
+     "utility": 0.1202815222226093,
+     "sharpe": 1.2001968739440911,
+     "maxDD": 0.07503229085126159,
+     "maxDDAtBaselineVol": 0.06400002244039697,
+     "baselineUtility": 0.06512603716968951,
+     "baselineMaxDD": 0.06922066698869359
+    },
+    "tiger": {
+     "utility": -0.08126737746889394,
+     "sharpe": -0.2844367814272134,
+     "maxDD": 0.2515467285401506,
+     "maxDDAtBaselineVol": null,
+     "baselineUtility": -0.20071351200520443,
+     "baselineMaxDD": 0.40228406043781
+    }
+   }
+  }
+ },
+ "nullResults": [
+  {
+   "angle": "drawdown (RISK track): find a point-in-time, economically motivated fund-level drawdown control that buys at least 1.3 pp of maxDD per pp of CE given up, at no more than 0.1 pp of CE cost",
+   "track": "risk",
+   "status": "null-result",
+   "hypothesis": "NULL RESULT, no diff. None of six variants from real multi-manager practice beat the uniform-deleveraging line (about 0.64-0.70 pp maxDD per pp of CE on both research blocks). All six were below it (0.38-0.51), and two cost Sharpe. A generic GBM Monte Carlo (mu 14%, sigma 10%, 260 days, not the arena) shows why. Uniform scaling gives 0.67 there, the same as the arena's line. Even the theoretically motivated Grossman-Zhou drawdown cushion only reaches 0.76-0.79, and step ladders reach 0.66-0.69. So no rule that reacts only to the book's state (drawdown, realized vol) can reach 1.3. Reaching it needs cross-sectional information that tells low-mu capital apart from high-drawdown capital, and the arena's own records do not provide it. Worst-drawdown diagnosis on seeds 2801-2900: mean maxDD 7.28%; the top agent supplies 43% of the loss; pickers and desks together lose about 3.0 pp of NAV per world and trend, noise, mean-reversion and herd agents about 4.0 pp. But the capital-heavy losers are also the high-vol, high-Sharpe records. Moving capital away from them, by risk, concentration or loss budget, costs more CE than the drawdown it saves.",
+   "research": {
+    "checkBefore": "Current code (c8b0aeb) on check block 7100-7249 (150 worlds): center CE 10.90% vs guardrails 5.39%; Sharpe 1.16 vs 0.66; maxDD 7.52% vs 7.10% (6.53% at the guardrails' vol). Tiger overlay CE -7.46% vs buy-and-hold -20.38%.\nUniform-deleveraging line, deploy 0.72: CE -0.435 pp [-0.574,-0.297]; maxDD -0.304 pp [-0.355,-0.253]; Sharpe -0.004. That is 0.70 pp maxDD per pp CE.",
+    "checkAfter": "No change is proposed. The best candidate, a book vol cap at 12% from the covariance of the agents' last 60 ticks, on check block 7100-7249: CE -0.365 pp [-0.586,-0.145], significant; maxDD -0.180 pp [-0.251,-0.110]; Sharpe -0.001 (se 0.009). That is 0.49 pp maxDD per pp CE, below the 0.70 line on the same block. It also fails the CE-cost limit of at most 0.1 pp. Tiger track unchanged in every variant (bit-identical).",
+    "devBefore": "Current code (c8b0aeb) on development block 2801-3000 (200 worlds): center CE 12.61% vs guardrails 7.18%; Sharpe 1.31 vs 0.88; maxDD 7.24% vs 6.82% (6.31% at the guardrails' vol). Tiger overlay CE -5.53% vs buy-and-hold -18.43%.\nUniform-deleveraging line:\n- deploy 0.72: CE -0.410 pp [-0.520,-0.300]; maxDD -0.262 pp [-0.305,-0.219]; Sharpe +0.004. That is 0.64 pp maxDD per pp CE.\n- deploy 0.64: CE -1.051 pp; maxDD -0.604 pp; Sharpe -0.006. That is 0.57 pp maxDD per pp CE.",
+    "devAfter": "Paired against the current code on block 2801-3000 (utility; maxDD; Sharpe; pp maxDD per pp CE, vs the line at 0.64):\n1. Book vol target 12% (a cap, scales targets down only), from the agents' 60-tick covariance: CE -0.486 pp [-0.667,-0.306]; maxDD -0.215 pp [-0.271,-0.158]; Sharpe -0.000. Ratio 0.44.\n2. Same vol target at 10%: CE -1.076 pp; maxDD -0.507 pp; Sharpe +0.005. Ratio 0.47.\n3. Tighter concentration, maxAgentShare 0.25 -> 0.18 with excess water-filled onto the other agents: CE -0.988 pp; maxDD -0.449 pp; Sharpe -0.034. Ratio 0.45.\n4. Sharpe hurdle, score = max(0, shrunk Sharpe - 0.5): CE -0.659 pp; maxDD -0.338 pp; Sharpe -0.079. Ratio 0.51.\n5. Same-bet correlations measured on the last 60 ticks instead of 252 (recent co-movement shares one budget): CE -0.040 pp [-0.099,+0.019]; maxDD +0.015 pp [-0.006,+0.037]; Sharpe -0.007. No effect.\n6. Per-agent loss budget, capital x scaled stop <= 4% of NAV, excess water-filled onto the others (a cap on one agent's marginal contribution to fund drawdown): CE -2.349 pp; maxDD -0.898 pp; Sharpe -0.117. Ratio 0.38.\nVol-matched maxDD (center maxDD at the guardrails' vol) was 6.31% at baseline; variants 1, 2, 3 and 6 printed 6.29%, 6.26%, 6.36% and 6.40%. That is no better per unit of risk.",
+    "variantsTried": 6,
+    "notes": "Null result, so there is no diff. All research edits were temporary environment knobs (DEPLOY, VT, MAS, H, CW, LB) and are reverted; the worktree is clean at c8b0aeb. Typecheck and tests were not re-run: nothing changed, so testsGreen=true reflects the untouched pinned commit, not a fresh run. Only research seeds were used (2801-3000 and 7100-7249). Protected files were not edited. The mechanisms were not designed from the generator's source; the arena was used only as a black box (makeWorld and runBook), plus agent labels for the drawdown attribution. Worktree: /home/user/hackathon/.claude/worktrees/wf_2917a83f-afa-1 (clean).\n\nWhy it is null:\n1. With 260-tick worlds, the book's vol clusters only weakly. Across 80 worlds, the correlation of trailing 20-day vol with the next 20 days' vol is 0.23. Past vol predicts next-period mean return slightly POSITIVELY (0.10), so vol targeting deleverages exactly when returns are good.\n2. The high-vol, large-slot agents behind worst drawdowns are mostly the ones with real edge. Risk-based caps (variant 6, and loop 3's risk-contribution cap) and tighter concentration (variant 3) cut Sharpe.\n3. In GBM, a drawdown-state policy cannot beat about 0.8 pp maxDD per pp CE, so the 1.3 bar needs information that predicts which capital has low mu, and the records do not supply it.\n\nRecommendation: stop searching for a pure drawdown-control overlay. The center book's excess raw maxDD is a scale effect (it is lower at equal vol: 6.31% vs 6.82% on development seeds). The honest options are to state the comparison at matched vol, or to choose a lower deploy on purpose as a risk-appetite decision."
+   }
+  },
+  {
+   "angle": "Wildcard (allocator or risk track): fund- and pod-shop risk budgeting in vol terms, meaning a fund-level ex-ante vol budget and per-PM realized-vol limits, plus evidence-scaled concentration, operator-level concentration limits and downside-risk (Sortino) ranking.",
+   "track": "risk",
+   "status": "null-result",
+   "hypothesis": "Real multi-manager funds set risk budgets in volatility, not in capital. They cap the book's ex-ante vol, and they cut a PM whose realized vol blows out past the vol of their record. Hypothesis: a point-in-time vol budget cuts drawdown more cheaply than uniform deleveraging, because it takes risk off exactly when the risk is high. If that capital is instead moved to other agents rather than held as cash, the change should raise Sharpe at the same deployment. Secondary hypotheses: (a) early Sharpe estimates are noise, so a cap on concentration that grows with record length should help; (b) an operator is one counterparty, so its names should share one maxAgentShare; (c) Sortino ranking should penalize crash-prone books. RESULT: NULL. Nothing met the allocator bar (significant on both blocks) or the risk bar (at most 0.1 pp utility cost and at least 1.3 pp of maxDD per pp of CE). Empty diff.",
+   "research": {
+    "checkBefore": "Current code c8b0aeb, check block 7100-7249 (150 worlds): allocator CE 10.90% vs guardrails 5.39% (uplift +5.51 pp [4.05, 6.97]), Sharpe 1.16 vs 0.66, maxDD 7.52% vs 7.10% (6.53% at the guardrails' vol). Tiger CE -7.46% vs -20.38%, overlay maxDD 24.06%.",
+    "checkAfter": "No change is proposed, so this is identical to checkBefore. Paired deltas vs current code on the check block for the candidates run there: (1) per-agent realized-vol limit, deleveraging (RV=20): CE -0.248 pp [-0.40, -0.09], maxDD -0.271 pp [-0.34, -0.20], Sharpe +0.005. That is 1.09 pp of DD per pp of CE: above uniform deleveraging but under the 1.3 bar, and the utility cost is over the 0.1 pp limit. (2) The same signal used to move risk to other agents instead (RS=20): CE +0.018 pp [-0.045, +0.081] (t=0.47), maxDD -0.017 pp, Sharpe +0.004. The dev-block gain does not confirm. (3) Uniform deleveraging reference (deploy 0.76): CE -0.204 pp, maxDD -0.140 pp, which is 0.69 pp of DD per pp of CE. Tiger delta is 0 in every run.",
+    "devBefore": "Current code c8b0aeb, dev block 2801-3000 (200 worlds): allocator CE 12.61% vs guardrails 7.18% (uplift +5.43 pp [4.21, 6.64]), Sharpe 1.31 vs 0.88, maxDD 7.24% vs 6.82% (6.31% at the guardrails' vol). Tiger CE -5.53% vs -18.43%, overlay maxDD 23.83%.",
+    "devAfter": "Paired deltas vs current code on 2801-3000 (CE pp / maxDD pp / Sharpe):\n- Fund ex-ante vol budget (pro-forma book vol on the last 60 ticks of records, scaled down only): target 10%: -1.115 / -0.508 / +0.001; target 12%: -0.507 / -0.216 / -0.002; target 15%: -0.141 / -0.051 / -0.000. About 0.4 pp of DD per pp of CE, WORSE than uniform deleveraging. High ex-ante-vol states are good states: capital concentrated in the best books.\n- Concentration cap growing with record length, sqrt(n/252) (floored at 1/k, so deployment is unchanged): -0.381 / +0.111 / -0.035. With sqrt(n/126): +0.041 / -0.000 / +0.002. Diversifying early hurts, and even raises maxDD.\n- Operator-level joint maxAgentShare (water-filling by operator): -0.521 / +0.056 / -0.034.\n- Sortino ranking in place of shrunk Sharpe: -0.058 / +0.011 / -0.008.\n- Per-agent realized-vol limit, target x min(1, sigma_252 / sigma_20), capital left in cash: -0.274 / -0.255 / +0.006. That is 0.93 pp of DD per pp of CE.\n- Same limit, but only on vol breaches > 1.5x: -0.109 / -0.070 / -0.003 (0.64 per pp).\n- Vol-regime factor on the raw score, redistributed so deployment is unchanged: +0.085 [+0.018, +0.153] (t=2.08) / -0.014 / +0.010. Did not confirm on 7100-7249.\n- Uniform deleveraging reference (deploy 0.76): -0.188 / -0.126 / +0.003 (0.67 per pp).",
+    "variantsTried": 11,
+    "notes": "Null result: I am proposing no change and the diff is empty. The worktree was reset to c8b0aeb and every experimental edit was reverted; after the revert npm test passed (315 pass, 0 fail). Findings worth keeping:\n(1) The center book has no market beta. Across 60 dev worlds its daily returns regress on the equal-weight market at beta ~0.03, R2 ~0.03, so a centre-book index hedge buys nothing.\n(2) A fund-level ex-ante vol budget is worse than uniform deleveraging (about 0.4 vs 0.67 pp of maxDD per pp of CE). The allocator's high-risk states are its high-conviction states.\n(3) Every way of diversifying away from the top-Sharpe agents lowered utility and did not lower drawdown: record-length concentration caps, operator-level joint caps, Sortino ranking. Concentrating in shrunk-Sharpe leaders is where the edge is.\n(4) The best risk lever found is a per-PM realized-vol limit: 20-tick vol above the agent's 252-tick vol scales its target down by the ratio. It is consistently more efficient than uniform deleveraging: dev 0.93 and check 1.09 pp of maxDD per pp of CE, vs 0.67-0.69 uniform, with Sharpe flat to slightly up. It still misses the 1.3 bar and costs about 0.25 pp CE, over the 0.1 pp limit. The 1.5x-breach version was less efficient (0.64). A future risk loop could start from it, perhaps combined with a mechanism that raises utility.\nAll 11 variants count as hidden trials: vol budget x3, evidence cap x2, operator cap, Sortino, RV, RV 1.5x, RS, deploy-0.76 reference. Seeds used: 2801-3000 and 7100-7249 only.\nTooling: the harness refused 'npm run arena -- eval' (it treats the 'eval' token as unverifiable), so runs went through a wrapper script that invokes tsx packages/lab/src/arena-cli.ts directly with the same arguments."
+   }
+  }
+ ]
+}

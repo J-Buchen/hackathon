@@ -177,3 +177,60 @@ test("event.amount of the wrong type throws at the amount path", () => {
   (bad.events[0] as unknown as Record<string, unknown>).amount = 100;
   assertRejects(bad, "snapshot.events[0].amount", "expected string | null, got number");
 });
+
+/* -------------------------------------------------------------------------- */
+/* Replay material (grant / before / hash): optional, checked when present     */
+/* -------------------------------------------------------------------------- */
+
+/** validSnapshot() with the fields core now serializes for replay. */
+function replayableSnapshot(): Snapshot {
+  const s = validSnapshot();
+  s.events[0] = {
+    ...s.events[0]!,
+    grant: {
+      parent: null,
+      identityStatus: "verified",
+      allowedMerchants: null,
+      allowedPurposes: null,
+      expiry: 4_000_000_000,
+      principal: { name: "alice.eth", verified: true },
+    },
+    hash: "a".repeat(64),
+  };
+  s.events[1] = { ...s.events[1]!, before: "30000000", hash: "b".repeat(64) };
+  return s;
+}
+
+test("snapshots with replay material round-trip; older ones without it stay valid", () => {
+  const input = replayableSnapshot();
+  assert.deepEqual(parseSnapshot(input), input);
+  const old = parseSnapshot(validSnapshot());
+  assert.ok(!("grant" in old.events[0]!) && !("hash" in old.events[0]!) && !("before" in old.events[1]!));
+});
+
+test("malformed replay material throws at its path", () => {
+  const badHash = replayableSnapshot();
+  (badHash.events[0] as unknown as Record<string, unknown>).hash = 7;
+  assertRejects(badHash, "snapshot.events[0].hash", "expected string, got number");
+
+  const badBefore = replayableSnapshot();
+  (badBefore.events[1] as unknown as Record<string, unknown>).before = null;
+  assertRejects(badBefore, "snapshot.events[1].before", "expected string, got null");
+
+  const badGrant = replayableSnapshot();
+  (badGrant.events[0]!.grant as unknown as Record<string, unknown>).allowedMerchants = "arxiv";
+  assertRejects(badGrant, "snapshot.events[0].grant.allowedMerchants");
+
+  const badPrincipal = replayableSnapshot();
+  (badPrincipal.events[0]!.grant!.principal as unknown as Record<string, unknown>).verified = "yes";
+  assertRejects(badPrincipal, "snapshot.events[0].grant.principal.verified", "expected boolean");
+});
+
+test("the committed demo snapshot parses with its replay material intact", async () => {
+  const { readFileSync } = await import("node:fs");
+  const raw: unknown = JSON.parse(readFileSync(new URL("../public/demo-snapshot.json", import.meta.url), "utf8"));
+  const parsed = parseSnapshot(raw);
+  assert.deepEqual(parsed, raw);
+  assert.ok(parsed.events.every((e) => typeof e.hash === "string" && e.hash.length === 64));
+  assert.ok(parsed.events.every((e) => !((e.type === "FUND" || e.type === "DELEGATE") && e.result === "OK") || e.grant !== undefined));
+});

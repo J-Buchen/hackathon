@@ -1,0 +1,1362 @@
+diff --git a/apps/web/public/demo-snapshot.json b/apps/web/public/demo-snapshot.json
+index d27ad98..9593e63 100644
+--- a/apps/web/public/demo-snapshot.json
++++ b/apps/web/public/demo-snapshot.json
+@@ -82,7 +82,19 @@
+       "detail": "principal \"alice\" funded root with budget 100000000",
+       "result": "OK",
+       "amount": "100000000",
+-      "merchant": null
++      "merchant": null,
++      "grant": {
++        "parent": null,
++        "identityStatus": "verified",
++        "allowedMerchants": null,
++        "allowedPurposes": null,
++        "expiry": 1792929600,
++        "principal": {
++          "name": "alice",
++          "verified": true
++        }
++      },
++      "hash": "a1376460f56af198f37ce334784b17b8532780ca96a70688751cb54334129998"
+     },
+     {
+       "seq": 1,
+@@ -91,7 +103,19 @@
+       "detail": "alice.eth delegated budget 30000000 to researcher",
+       "result": "OK",
+       "amount": "30000000",
+-      "merchant": null
++      "merchant": null,
++      "grant": {
++        "parent": "alice.eth",
++        "identityStatus": "verified",
++        "allowedMerchants": [
++          "arxiv",
++          "openai",
++          "sanctioned-vendor"
++        ],
++        "allowedPurposes": null,
++        "expiry": 1792929600
++      },
++      "hash": "61a2c6a48eaaf6162d1bdc7a224d1264cb1d5e08b0eb5ac38e8caa68e9c9b69a"
+     },
+     {
+       "seq": 2,
+@@ -100,7 +124,17 @@
+       "detail": "researcher.alice.eth delegated budget 10000000 to scraper",
+       "result": "OK",
+       "amount": "10000000",
+-      "merchant": null
++      "merchant": null,
++      "grant": {
++        "parent": "researcher.alice.eth",
++        "identityStatus": "verified",
++        "allowedMerchants": [
++          "arxiv"
++        ],
++        "allowedPurposes": null,
++        "expiry": 1792929600
++      },
++      "hash": "e76f9436028f4b3cb0a8d04ad0233812d98fe8415474d5863942f2d5d772b05e"
+     },
+     {
+       "seq": 3,
+@@ -109,7 +143,8 @@
+       "detail": "attenuation rejected (BUDGET_EXCEEDS_AVAILABLE): proposed budget 999000000 exceeds parent available 20000000",
+       "result": "ATTENUATION_REJECTED",
+       "amount": "999000000",
+-      "merchant": null
++      "merchant": null,
++      "hash": "b9f4f9407fa97e93ceb46c930bf0b005fde87fb602cd16ccab54bfa833befab8"
+     },
+     {
+       "seq": 4,
+@@ -118,7 +153,8 @@
+       "detail": "payment of 15000000 to arxiv -> BLOCKED_MANDATE: amount 15000000 exceeds available 10000000",
+       "result": "BLOCKED_MANDATE",
+       "amount": "15000000",
+-      "merchant": "arxiv"
++      "merchant": "arxiv",
++      "hash": "46d231cff98aee98fb359b7f5040b5ccfd9d14525d4f1b12a3156a0c51ac317f"
+     },
+     {
+       "seq": 5,
+@@ -127,7 +163,8 @@
+       "detail": "payment of 5000000 to sanctioned-vendor -> BLOCKED_SCREENING: merchant \"sanctioned-vendor\" matched a sanctions/denylist screen",
+       "result": "BLOCKED_SCREENING",
+       "amount": "5000000",
+-      "merchant": "sanctioned-vendor"
++      "merchant": "sanctioned-vendor",
++      "hash": "e81e542fca58199959b711ec14629f99deed30c961c220cac3df659e6e1a481c"
+     },
+     {
+       "seq": 6,
+@@ -136,7 +173,8 @@
+       "detail": "paid 8000000 to openai",
+       "result": "SETTLED",
+       "amount": "8000000",
+-      "merchant": "openai"
++      "merchant": "openai",
++      "hash": "4eed6d285c04fa4bc7adcd7ecca3af6ca177b6bde5714ef6482f68e386a8b6b6"
+     },
+     {
+       "seq": 7,
+@@ -145,7 +183,15 @@
+       "detail": "alice.eth delegated budget 5000000 to ghost",
+       "result": "OK",
+       "amount": "5000000",
+-      "merchant": null
++      "merchant": null,
++      "grant": {
++        "parent": "alice.eth",
++        "identityStatus": "expired",
++        "allowedMerchants": null,
++        "allowedPurposes": null,
++        "expiry": 1792929600
++      },
++      "hash": "5b22263beb23da7ed04ceb2ecc4884cecb01d7b4bb3f09237ee59e103c160c1c"
+     },
+     {
+       "seq": 8,
+@@ -154,7 +200,8 @@
+       "detail": "payment of 3000000 to arxiv -> DENIED_IDENTITY: ghost.alice.eth failed World ID (rogue/unregistered agent)",
+       "result": "DENIED_IDENTITY",
+       "amount": "3000000",
+-      "merchant": "arxiv"
++      "merchant": "arxiv",
++      "hash": "01c7c5bdac4fe9e0056fd2f02420297c99800f982cd9dd0baa830661f5f33c86"
+     },
+     {
+       "seq": 9,
+@@ -163,7 +210,8 @@
+       "detail": "mandate for \"researcher.alice.eth\" revoked; all descendants disabled",
+       "result": "REVOKED",
+       "amount": null,
+-      "merchant": null
++      "merchant": null,
++      "hash": "07e35fe7d6c9e1a995594ad1b41d68041c3c39a310f999fdc0eee39cd0e74606"
+     },
+     {
+       "seq": 10,
+@@ -172,7 +220,8 @@
+       "detail": "payment of 5000000 to arxiv -> REVOKED: node or an ancestor is revoked",
+       "result": "REVOKED",
+       "amount": "5000000",
+-      "merchant": "arxiv"
++      "merchant": "arxiv",
++      "hash": "4195be85cbd7c5c725c26b461928338910e57f615dd60c183c57e14dd10d8646"
+     }
+   ]
+ }
+diff --git a/apps/web/src/snapshot.test.ts b/apps/web/src/snapshot.test.ts
+index f975ab1..272f0f2 100644
+--- a/apps/web/src/snapshot.test.ts
++++ b/apps/web/src/snapshot.test.ts
+@@ -177,3 +177,60 @@ test("event.amount of the wrong type throws at the amount path", () => {
+   (bad.events[0] as unknown as Record<string, unknown>).amount = 100;
+   assertRejects(bad, "snapshot.events[0].amount", "expected string | null, got number");
+ });
++
++/* -------------------------------------------------------------------------- */
++/* Replay material (grant / before / hash): optional, checked when present     */
++/* -------------------------------------------------------------------------- */
++
++/** validSnapshot() with the fields core now serializes for replay. */
++function replayableSnapshot(): Snapshot {
++  const s = validSnapshot();
++  s.events[0] = {
++    ...s.events[0]!,
++    grant: {
++      parent: null,
++      identityStatus: "verified",
++      allowedMerchants: null,
++      allowedPurposes: null,
++      expiry: 4_000_000_000,
++      principal: { name: "alice.eth", verified: true },
++    },
++    hash: "a".repeat(64),
++  };
++  s.events[1] = { ...s.events[1]!, before: "30000000", hash: "b".repeat(64) };
++  return s;
++}
++
++test("snapshots with replay material round-trip; older ones without it stay valid", () => {
++  const input = replayableSnapshot();
++  assert.deepEqual(parseSnapshot(input), input);
++  const old = parseSnapshot(validSnapshot());
++  assert.ok(!("grant" in old.events[0]!) && !("hash" in old.events[0]!) && !("before" in old.events[1]!));
++});
++
++test("malformed replay material throws at its path", () => {
++  const badHash = replayableSnapshot();
++  (badHash.events[0] as unknown as Record<string, unknown>).hash = 7;
++  assertRejects(badHash, "snapshot.events[0].hash", "expected string, got number");
++
++  const badBefore = replayableSnapshot();
++  (badBefore.events[1] as unknown as Record<string, unknown>).before = null;
++  assertRejects(badBefore, "snapshot.events[1].before", "expected string, got null");
++
++  const badGrant = replayableSnapshot();
++  (badGrant.events[0]!.grant as unknown as Record<string, unknown>).allowedMerchants = "arxiv";
++  assertRejects(badGrant, "snapshot.events[0].grant.allowedMerchants");
++
++  const badPrincipal = replayableSnapshot();
++  (badPrincipal.events[0]!.grant!.principal as unknown as Record<string, unknown>).verified = "yes";
++  assertRejects(badPrincipal, "snapshot.events[0].grant.principal.verified", "expected boolean");
++});
++
++test("the committed demo snapshot parses with its replay material intact", async () => {
++  const { readFileSync } = await import("node:fs");
++  const raw: unknown = JSON.parse(readFileSync(new URL("../public/demo-snapshot.json", import.meta.url), "utf8"));
++  const parsed = parseSnapshot(raw);
++  assert.deepEqual(parsed, raw);
++  assert.ok(parsed.events.every((e) => typeof e.hash === "string" && e.hash.length === 64));
++  assert.ok(parsed.events.every((e) => !((e.type === "FUND" || e.type === "DELEGATE") && e.result === "OK") || e.grant !== undefined));
++});
+diff --git a/apps/web/src/snapshot.ts b/apps/web/src/snapshot.ts
+index 19429dd..6da1ac1 100644
+--- a/apps/web/src/snapshot.ts
++++ b/apps/web/src/snapshot.ts
+@@ -17,6 +17,7 @@ import type {
+   Snapshot,
+   SnapshotNode,
+   SnapshotEvent,
++  SnapshotGrant,
+   SnapshotMandate,
+   IdentityStatus,
+   EventType,
+@@ -162,7 +163,7 @@ function isSnapshotEvent(v: unknown, path: string): SnapshotEvent {
+       e.result,
+     );
+   }
+-  return {
++  const out: SnapshotEvent = {
+     seq: asNumber(e.seq, `${path}.seq`),
+     type: e.type,
+     node: asString(e.node, `${path}.node`),
+@@ -171,6 +172,33 @@ function isSnapshotEvent(v: unknown, path: string): SnapshotEvent {
+     amount: asStringOrNull(e.amount, `${path}.amount`),
+     merchant: asStringOrNull(e.merchant, `${path}.merchant`),
+   };
++  // Optional replay material: absent in older snapshots, checked when present.
++  if (e.grant !== undefined) out.grant = parseGrant(e.grant, `${path}.grant`);
++  if (e.before !== undefined) out.before = asString(e.before, `${path}.before`);
++  if (e.hash !== undefined) out.hash = asString(e.hash, `${path}.hash`);
++  return out;
++}
++
++function parseGrant(v: unknown, path: string): SnapshotGrant {
++  const g = asObject(v, path);
++  if (!isIdentityStatus(g.identityStatus)) {
++    fail(`${path}.identityStatus`, `'verified' | 'expired' | 'none'`, g.identityStatus);
++  }
++  const out: SnapshotGrant = {
++    parent: asStringOrNull(g.parent, `${path}.parent`),
++    identityStatus: g.identityStatus,
++    allowedMerchants: asStringArrayOrNull(g.allowedMerchants, `${path}.allowedMerchants`),
++    allowedPurposes: asStringArrayOrNull(g.allowedPurposes, `${path}.allowedPurposes`),
++    expiry: asNumber(g.expiry, `${path}.expiry`),
++  };
++  if (g.principal !== undefined) {
++    const p = asObject(g.principal, `${path}.principal`);
++    out.principal = {
++      name: asString(p.name, `${path}.principal.name`),
++      verified: asBoolean(p.verified, `${path}.principal.verified`),
++    };
++  }
++  return out;
+ }
+ 
+ /* -------------------------------------------------------------------------- */
+diff --git a/apps/web/src/types.ts b/apps/web/src/types.ts
+index 508fad4..38c1805 100644
+--- a/apps/web/src/types.ts
++++ b/apps/web/src/types.ts
+@@ -58,6 +58,27 @@ export interface SnapshotEvent {
+   /** Smallest-unit string, or null for non-monetary events. */
+   amount: string | null;
+   merchant: string | null;
++  /*
++   * Replay material and the hash-chain link (core's `SnapshotEvent`). Optional:
++   * snapshots written before they were serialized carry none of them, and the
++   * dashboard does not need them to render.
++   */
++  /** FUND / DELEGATE OK: the node as created. */
++  grant?: SnapshotGrant;
++  /** RESIZE OK: the budget before, smallest-unit string. */
++  before?: string;
++  /** SHA-256 hex chaining this event to the one before it. */
++  hash?: string;
++}
++
++export interface SnapshotGrant {
++  parent: string | null;
++  identityStatus: IdentityStatus;
++  allowedMerchants: string[] | null;
++  allowedPurposes: string[] | null;
++  expiry: number;
++  /** FUND only. */
++  principal?: { name: string; verified: boolean };
+ }
+ 
+ export interface Snapshot {
+diff --git a/package.json b/package.json
+index 082605c..4f9583e 100644
+--- a/package.json
++++ b/package.json
+@@ -14,7 +14,7 @@
+     "demo": "tsx services/orchestrator/src/demo.ts",
+     "snapshot": "npm run demo",
+     "typecheck": "tsc -b tsconfig.json",
+-    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/core/src/replay.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/operator-sizing.test.ts packages/lab/src/arena-operator-sizing.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts packages/swarm/src/incidents.test.ts packages/adapters/src/operator-record.test.ts packages/lab/src/arena-incidents.test.ts",
++    "test": "node --import tsx --test packages/core/src/attenuation.test.ts packages/core/src/tree.test.ts packages/core/src/payment.test.ts packages/core/src/amount.test.ts packages/core/src/serialize.test.ts packages/core/src/replay.test.ts packages/core/src/sha256.test.ts packages/core/src/snapshot-replay.test.ts packages/adapters/src/adapters.test.ts packages/adapters/src/agenthire.test.ts packages/adapters/src/agenthire-audit.test.ts packages/swarm/src/allocator.test.ts packages/swarm/src/tigercub.test.ts packages/swarm/src/book.test.ts packages/swarm/src/close.test.ts packages/swarm/src/example.test.ts packages/lab/src/series.test.ts packages/lab/src/metrics.test.ts packages/lab/src/strategy.test.ts packages/lab/src/research.test.ts packages/lab/src/arena-close.test.ts services/orchestrator/src/flow.test.ts services/orchestrator/src/fund.test.ts packages/swarm/src/counterparty.test.ts packages/lab/src/arena-counterparty.test.ts packages/swarm/src/operator-sizing.test.ts packages/lab/src/arena-operator-sizing.test.ts packages/swarm/src/reserve.test.ts packages/lab/src/arena-reserve.test.ts packages/swarm/src/incidents.test.ts packages/adapters/src/operator-record.test.ts packages/lab/src/arena-incidents.test.ts",
+     "test:core": "npm -w @allowance/core run test",
+     "dev:web": "npm -w allowance-web run dev",
+     "build:web": "npm -w allowance-web run build",
+diff --git a/packages/core/package.json b/packages/core/package.json
+index 3d84bbc..e4bddc6 100644
+--- a/packages/core/package.json
++++ b/packages/core/package.json
+@@ -10,6 +10,6 @@
+   "types": "./src/index.ts",
+   "scripts": {
+     "typecheck": "tsc -b",
+-    "test": "node --import tsx --test src/attenuation.test.ts src/tree.test.ts src/payment.test.ts src/amount.test.ts src/serialize.test.ts src/replay.test.ts"
++    "test": "node --import tsx --test src/attenuation.test.ts src/tree.test.ts src/payment.test.ts src/amount.test.ts src/serialize.test.ts src/replay.test.ts src/sha256.test.ts src/snapshot-replay.test.ts"
+   }
+ }
+diff --git a/packages/core/src/chain.ts b/packages/core/src/chain.ts
+new file mode 100644
+index 0000000..96d12c7
+--- /dev/null
++++ b/packages/core/src/chain.ts
+@@ -0,0 +1,67 @@
++/**
++ * The event log's hash chain.
++ *
++ * Every event `recordEvent` appends carries `hash = SHA-256(canonical(prev,
++ * event))`, where `prev` is the hash of the event before it (`GENESIS_HASH`
++ * for the first) and `canonical` is a fixed-order JSON array of every field
++ * the event carries: seq, type, node, detail, result, amount, merchant, the
++ * grant (parent, identity, allowlists, expiry, principal) and the budget
++ * before a resize. Bigints enter as decimal strings and an absent field as
++ * null, so the hash of an event read back from snapshot JSON is the hash of
++ * the event the tree recorded.
++ *
++ * What it makes evident: an event edited, removed, inserted or reordered
++ * anywhere before the end of a log breaks the chain at that point
++ * (`DelegationTree.verifyAgainstLog`, `DelegationTree.replay`,
++ * `verifySnapshot`), unless every hash after it is recomputed too.
++ *
++ * What it does NOT stop:
++ *  - it is unkeyed: anyone holding the log can recompute the whole chain
++ *    after an edit. It is tamper-evident only against a head hash
++ *    (`DelegationTree.head`) the reader already trusts, e.g. one published
++ *    or countersigned when the log was written (`verifySnapshot`'s `head`);
++ *  - without such an anchor, dropping events from the END of a log leaves a
++ *    valid (shorter) chain;
++ *  - anyone with API access can still append a forged event through the
++ *    public `recordEvent`: it is chained like any other, so the chain proves
++ *    the order and integrity of what was recorded, not who recorded it or
++ *    that it was true (the replay still holds the tree to it, and `audit()`
++ *    still holds the tree to its invariants).
++ */
++
++import { sha256Hex } from "./sha256";
++import type { AllowanceEvent } from "./types";
++
++/** The `prev` of the first event in a log. */
++export const GENESIS_HASH = "0".repeat(64);
++
++/** The fields an event's hash covers, in a fixed order (see the module doc). */
++function canonical(prev: string, e: AllowanceEvent): string {
++  const g = e.grant;
++  return JSON.stringify([
++    prev,
++    e.seq,
++    e.type,
++    e.node,
++    e.detail,
++    e.result,
++    e.amount === null ? null : e.amount.toString(),
++    e.merchant,
++    g === undefined
++      ? null
++      : [
++          g.parent,
++          g.identityStatus,
++          g.allowedMerchants ?? null,
++          g.allowedPurposes ?? null,
++          g.expiry,
++          g.principal === undefined ? null : [g.principal.name, g.principal.verified],
++        ],
++    e.before === undefined ? null : e.before.toString(),
++  ]);
++}
++
++/** The hash an event recorded after an event hashed `prev` must carry. */
++export function eventHash(prev: string, e: AllowanceEvent): string {
++  return sha256Hex(canonical(prev, e));
++}
+diff --git a/packages/core/src/index.ts b/packages/core/src/index.ts
+index ff64217..5624175 100644
+--- a/packages/core/src/index.ts
++++ b/packages/core/src/index.ts
+@@ -7,7 +7,9 @@
+  *  - attenuation.ts pure "child may only narrow parent" validator
+  *  - tree.ts        DelegationTree (delegate/revoke/available/reserved/events)
+  *  - payment.ts     the pay() pipeline + injected adapter PORT interfaces
+- *  - serialize.ts   toSnapshot() -> the exact dashboard JSON
++ *  - serialize.ts   toSnapshot() -> the exact dashboard JSON; replaySnapshot()
++ *                   / verifySnapshot() rebuild and check a tree from it
++ *  - chain.ts       the event log's SHA-256 hash chain (sha256.ts: pure TS)
+  *  - results.ts     exhaustiveness-checked EventResult failure classifier
+  *  - assert.ts      assertNever() compile-time exhaustiveness helper
+  */
+@@ -18,5 +20,7 @@ export * from "./attenuation";
+ export * from "./tree";
+ export * from "./payment";
+ export * from "./serialize";
++export * from "./chain";
++export * from "./sha256";
+ export * from "./results";
+ export * from "./assert";
+diff --git a/packages/core/src/replay.test.ts b/packages/core/src/replay.test.ts
+index 5aabed1..02f9fb0 100644
+--- a/packages/core/src/replay.test.ts
++++ b/packages/core/src/replay.test.ts
+@@ -18,9 +18,9 @@ import { test } from "node:test";
+ import assert from "node:assert/strict";
+ import { AttenuationError } from "./attenuation";
+ import { pay, type PaymentAdapters } from "./payment";
+-import { toSnapshot } from "./serialize";
++import { replaySnapshot, toSnapshot, verifySnapshot } from "./serialize";
+ import { DelegationTree, ReplayError, type LogDiscrepancy } from "./tree";
+-import type { AgentNode, AllowanceEvent, PaymentOutcome } from "./types";
++import type { AgentNode, AllowanceEvent, PaymentOutcome, Snapshot } from "./types";
+ 
+ const FAR = 4_000_000_000;
+ const NOW = 1_000;
+@@ -82,6 +82,30 @@ function assertReplays(tree: DelegationTree, label = ""): void {
+   }
+   assert.deepEqual(toSnapshot(rebuilt, { asOf: 0 }), toSnapshot(tree, { asOf: 0 }), `${label}: snapshot`);
+   assert.equal(rebuilt.nextSeq, tree.nextSeq);
++  assertSnapshotReplays(tree, label);
++}
++
++/**
++ * The audit holds across persistence: toSnapshot -> JSON.stringify -> parse
++ * -> replaySnapshot gives the live tree (every node field, the principal, the
++ * children in order, the same log with the same hash chain), and the JSON
++ * verifies against the live tree's head.
++ */
++function assertSnapshotReplays(tree: DelegationTree, label = ""): void {
++  const snap = toSnapshot(tree, { asOf: 7 });
++  const json = JSON.parse(JSON.stringify(snap)) as Snapshot;
++  assert.deepEqual(verifySnapshot(json, { head: tree.head }), [], `${label}: snapshot verifies`);
++  const back = replaySnapshot(json, { head: tree.head });
++  assert.deepEqual(back.listNodes(), tree.listNodes(), `${label}: snapshot nodes`);
++  assert.deepEqual(back.principal, tree.principal, `${label}: snapshot principal`);
++  for (const n of tree.listNodes()) {
++    assert.deepEqual(back.childrenOf(n.name).map((c) => c.name), tree.childrenOf(n.name).map((c) => c.name), `${label}: snapshot children of ${n.name}`);
++  }
++  assert.deepEqual(back.events, tree.events, `${label}: snapshot log`);
++  assert.equal(back.head, tree.head, `${label}: snapshot head`);
++  assert.equal(back.nextSeq, tree.nextSeq, `${label}: snapshot seq`);
++  assert.deepEqual(toSnapshot(back, { asOf: 7 }), snap, `${label}: snapshot round trip`);
++  assert.deepEqual(back.verifyAgainstLog({ fromScratch: true }), [], `${label}: the replayed tree is its own log`);
+ }
+ 
+ const kinds = (d: readonly LogDiscrepancy[]) => d.map((x) => `${x.kind} ${x.node}`);
+@@ -374,8 +398,13 @@ test("the log can only be appended to: events are frozen, and a replaced, remove
+   assert.deepEqual(kinds(replaced.verifyAgainstLog()), ["LOG_REWRITTEN null"]);
+   replaced.resize(B, 150n);
+   assert.ok(kinds(replaced.verifyAgainstLog()).includes("LOG_REWRITTEN null"), "sticky");
+-  // A replay of the rewritten log alone disagrees with the tree it did not build.
+-  assert.deepEqual(kinds(replaced.verifyAgainstLog({ fromScratch: true })), [`UNLOGGED_WRITE ${B}`]);
++  // A replay of the rewritten log alone disagrees with the tree it did not
++  // build, and (since the hash chain) the edited event no longer carries the
++  // hash of its own fields.
++  const fromScratch = replaced.verifyAgainstLog({ fromScratch: true });
++  assert.deepEqual(kinds(fromScratch), [`LOG_REWRITTEN ${B}`, `UNLOGGED_WRITE ${B}`]);
++  assert.equal(fromScratch[0]!.seq, 3);
++  assert.match(fromScratch[0]!.message, /hash chain breaks/);
+ 
+   // Removed.
+   const truncated = await built();
+@@ -399,7 +428,9 @@ test("the log can only be appended to: events are frozen, and a replaced, remove
+     merchant: null,
+     before: 200n,
+   });
+-  assert.deepEqual(kinds(smuggled.verifyAgainstLog()), ["LOG_REWRITTEN null", `UNLOGGED_WRITE ${B}`]);
++  // (since the hash chain) it also carries no hash, which the replay names first.
++  assert.deepEqual(kinds(smuggled.verifyAgainstLog()), [`LOG_REWRITTEN ${B}`, "LOG_REWRITTEN null", `UNLOGGED_WRITE ${B}`]);
++  assert.match(smuggled.verifyAgainstLog()[0]!.message, /carries no hash/);
+ });
+ 
+ test("events the tree never records do not replay: BAD_EVENT, and DelegationTree.replay throws", async () => {
+diff --git a/packages/core/src/serialize.ts b/packages/core/src/serialize.ts
+index 052d2c1..d2e7f5b 100644
+--- a/packages/core/src/serialize.ts
++++ b/packages/core/src/serialize.ts
+@@ -5,13 +5,20 @@
+  * JSON the web dashboard consumes. Every bigint amount becomes a decimal STRING
+  * of smallest units, and derived fields (`reserved`, `available`) are computed
+  * from the tree so the dashboard never has to.
++ *
++ * Each event also carries what replay needs (`grant`, `before`) and its
++ * hash-chain link (`hash`), so the JSON alone rebuilds the tree:
++ * `replaySnapshot` / `verifySnapshot` replay the events, check the chain, and
++ * check that the nodes the snapshot shows are the nodes its log replays to.
+  */
+ 
+-import type { DelegationTree } from "./tree";
++import { DelegationTree, ReplayError, type LogDiscrepancy } from "./tree";
+ import type {
+   AllowanceEvent,
++  EventGrant,
+   Snapshot,
+   SnapshotEvent,
++  SnapshotGrant,
+   SnapshotNode,
+ } from "./types";
+ import { USDC_DECIMALS } from "./amount";
+@@ -25,8 +32,20 @@ export interface ToSnapshotOptions {
+   decimals?: number;
+ }
+ 
++function serializeGrant(g: EventGrant): SnapshotGrant {
++  const out: SnapshotGrant = {
++    parent: g.parent,
++    identityStatus: g.identityStatus,
++    allowedMerchants: g.allowedMerchants === undefined ? null : [...g.allowedMerchants],
++    allowedPurposes: g.allowedPurposes === undefined ? null : [...g.allowedPurposes],
++    expiry: g.expiry,
++  };
++  if (g.principal !== undefined) out.principal = { name: g.principal.name, verified: g.principal.verified };
++  return out;
++}
++
+ function serializeEvent(e: AllowanceEvent): SnapshotEvent {
+-  return {
++  const out: SnapshotEvent = {
+     seq: e.seq,
+     type: e.type,
+     node: e.node,
+@@ -35,6 +54,12 @@ function serializeEvent(e: AllowanceEvent): SnapshotEvent {
+     amount: e.amount === null ? null : e.amount.toString(),
+     merchant: e.merchant,
+   };
++  // Present only when the event has them, so events without them serialize
++  // exactly as before.
++  if (e.grant !== undefined) out.grant = serializeGrant(e.grant);
++  if (e.before !== undefined) out.before = e.before.toString();
++  if (e.hash !== undefined) out.hash = e.hash;
++  return out;
+ }
+ 
+ /** Build the snapshot JSON object from a tree. */
+@@ -100,3 +125,162 @@ export async function writeSnapshotFile(
+   await writeFile(filePath, snapshotToJSON(snapshot) + "\n", "utf8");
+   return snapshot;
+ }
++
++/* ------------------------------------------------------------------ */
++/* Reading a snapshot back: replay and verification                    */
++/* ------------------------------------------------------------------ */
++
++/** Thrown for a snapshot event whose fields are not the serialized shape. */
++export class SnapshotFormatError extends Error {
++  constructor(message: string) {
++    super(message);
++    this.name = "SnapshotFormatError";
++  }
++}
++
++const DECIMAL = /^-?\d+$/;
++
++function bigintField(v: unknown, path: string): bigint {
++  if (typeof v !== "string" || !DECIMAL.test(v)) throw new SnapshotFormatError(`${path}: expected a decimal string`);
++  return BigInt(v);
++}
++
++function listField(v: unknown, path: string): readonly string[] | undefined {
++  if (v === null || v === undefined) return undefined;
++  if (!Array.isArray(v) || v.some((x) => typeof x !== "string")) {
++    throw new SnapshotFormatError(`${path}: expected string[] | null`);
++  }
++  return [...(v as string[])];
++}
++
++/**
++ * One serialized event back to the in-memory event it was written from:
++ * decimal strings to bigints, `null` allowlists to "any" (undefined). Fields
++ * a snapshot does not carry stay absent, so replay reports what is missing.
++ *
++ * @throws SnapshotFormatError for a field that is not the serialized shape.
++ */
++export function fromSnapshotEvent(e: SnapshotEvent, path = "event"): AllowanceEvent {
++  const out: AllowanceEvent = {
++    seq: e.seq,
++    type: e.type,
++    node: e.node,
++    detail: e.detail,
++    result: e.result,
++    amount: e.amount === null ? null : bigintField(e.amount, `${path}.amount`),
++    merchant: e.merchant,
++  };
++  if (e.grant !== undefined) {
++    const g = e.grant;
++    if (typeof g !== "object" || g === null || typeof g.expiry !== "number") {
++      throw new SnapshotFormatError(`${path}.grant: expected a serialized grant`);
++    }
++    const grant: EventGrant = { parent: g.parent, identityStatus: g.identityStatus, expiry: g.expiry };
++    const merchants = listField(g.allowedMerchants, `${path}.grant.allowedMerchants`);
++    const purposes = listField(g.allowedPurposes, `${path}.grant.allowedPurposes`);
++    if (merchants !== undefined) grant.allowedMerchants = merchants;
++    if (purposes !== undefined) grant.allowedPurposes = purposes;
++    if (g.principal !== undefined) grant.principal = { name: g.principal.name, verified: g.principal.verified };
++    out.grant = grant;
++  }
++  if (e.before !== undefined) out.before = bigintField(e.before, `${path}.before`);
++  if (e.hash !== undefined) out.hash = e.hash;
++  return out;
++}
++
++/** `fromSnapshotEvent` over a snapshot's whole log. */
++export function fromSnapshotEvents(events: readonly SnapshotEvent[]): AllowanceEvent[] {
++  return events.map((e, i) => fromSnapshotEvent(e, `events[${i}]`));
++}
++
++export interface VerifySnapshotOptions {
++  /**
++   * A head hash the reader already trusts (`DelegationTree.head` when the
++   * log was written, published or countersigned elsewhere). Without it the
++   * chain cannot tell a log cut short at its end, or rewritten with every
++   * hash recomputed, from the original.
++   */
++  head?: string;
++}
++
++/**
++ * Replay a snapshot's log and report every way the snapshot departs from it:
++ *  - whatever replaying the events finds (BAD_EVENT for an event replay
++ *    cannot apply, e.g. from a snapshot written before `grant`/`before` were
++ *    serialized; LOG_REWRITTEN for a broken hash chain; see `LogDiscrepancy`);
++ *  - LOG_REWRITTEN if `opts.head` is given and the log does not end there;
++ *  - UNLOGGED_WRITE for any node field, node, node order or principal the
++ *    snapshot shows that its own log does not replay to (a budget edited in
++ *    the JSON, say, without a matching event).
++ * Empty when the snapshot is exactly what its log says.
++ *
++ * @throws SnapshotFormatError for an event field that is not the serialized shape.
++ */
++export function verifySnapshot(snapshot: Snapshot, opts: VerifySnapshotOptions = {}): LogDiscrepancy[] {
++  return replayAndCheck(snapshot, opts).discrepancies;
++}
++
++/**
++ * Rebuild the `DelegationTree` a snapshot's JSON describes, from its event
++ * log alone, after checking it as `verifySnapshot` does. The tree holds the
++ * snapshot's events (hashes included), so it can be carried on: the next
++ * event it records chains onto the snapshot's last.
++ *
++ * @throws ReplayError listing every discrepancy, if there is any.
++ */
++export function replaySnapshot(snapshot: Snapshot, opts: VerifySnapshotOptions = {}): DelegationTree {
++  const { tree, discrepancies } = replayAndCheck(snapshot, opts);
++  if (discrepancies.length > 0) throw new ReplayError(discrepancies);
++  return tree;
++}
++
++function replayAndCheck(
++  snapshot: Snapshot,
++  opts: VerifySnapshotOptions,
++): { tree: DelegationTree; discrepancies: LogDiscrepancy[] } {
++  const { tree, discrepancies: out } = DelegationTree.replayLog(fromSnapshotEvents(snapshot.events));
++  if (opts.head !== undefined && tree.head !== opts.head) {
++    out.push({
++      kind: "LOG_REWRITTEN",
++      node: null,
++      seq: null,
++      message: `the log ends at hash ${tree.head}, not at the trusted head ${opts.head}: it was cut short or rewritten`,
++    });
++  }
++
++  const unlogged = (node: string | null, message: string): void => {
++    out.push({ kind: "UNLOGGED_WRITE", node, seq: null, message });
++  };
++  const replayed = toSnapshot(tree, { asOf: snapshot.asOf, decimals: snapshot.decimals, events: [] });
++  const show = (p: { name: string; verified: boolean }) => `"${p.name}" (verified: ${p.verified})`;
++  if (snapshot.principal.name !== replayed.principal.name || snapshot.principal.verified !== replayed.principal.verified) {
++    unlogged(null, `the snapshot's principal is ${show(snapshot.principal)}, but its log says ${show(replayed.principal)}`);
++  }
++  const shown = new Map(snapshot.nodes.map((n) => [n.name, n]));
++  const logged = new Map(replayed.nodes.map((n) => [n.name, n]));
++  for (const name of shown.keys()) {
++    if (!logged.has(name)) unlogged(name, `the snapshot shows "${name}", but its log never created it`);
++  }
++  for (const name of logged.keys()) {
++    if (!shown.has(name)) unlogged(name, `the log created "${name}", but the snapshot does not show it`);
++  }
++  const shownOrder = snapshot.nodes.map((n) => n.name);
++  const logOrder = replayed.nodes.map((n) => n.name);
++  if (shownOrder.length === logOrder.length && shownOrder.some((n, i) => n !== logOrder[i])) {
++    unlogged(null, "the snapshot shows its nodes in another order than its log created them");
++  }
++  const text = (v: unknown): string => JSON.stringify(v);
++  for (const [name, is] of shown) {
++    const says = logged.get(name);
++    if (!says) continue;
++    const field = (what: string, a: unknown, b: unknown): void => {
++      if (text(a) !== text(b)) unlogged(name, `in the snapshot, ${what} of "${name}" is ${text(a)}, but its log says ${text(b)}`);
++    };
++    field("the parent", is.parent, says.parent);
++    field("the identity status", is.identityStatus, says.identityStatus);
++    for (const k of Object.keys(says.mandate) as (keyof SnapshotNode["mandate"])[]) {
++      field(k, is.mandate[k], says.mandate[k]);
++    }
++  }
++  return { tree, discrepancies: out };
++}
+diff --git a/packages/core/src/sha256.test.ts b/packages/core/src/sha256.test.ts
+new file mode 100644
+index 0000000..b8b803e
+--- /dev/null
++++ b/packages/core/src/sha256.test.ts
+@@ -0,0 +1,45 @@
++/**
++ * The pure-TS SHA-256 behind the event log's hash chain: the FIPS 180-4 /
++ * NIST example vectors, every padding boundary, UTF-8 input, and agreement
++ * with node:crypto over random inputs (node:crypto is used here only, in the
++ * test, never by core itself).
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { createHash } from "node:crypto";
++import { sha256, sha256Hex } from "./sha256";
++
++test("NIST vectors", () => {
++  assert.equal(sha256Hex(""), "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
++  assert.equal(sha256Hex("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
++  assert.equal(
++    sha256Hex("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq"),
++    "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1",
++  );
++  assert.equal(
++    sha256Hex(
++      "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu",
++    ),
++    "cf5b16a778af8380036ce59e7b0492370b249b11e8f07a51afac45037afee9d1",
++  );
++  assert.equal(sha256Hex("a".repeat(1_000_000)), "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
++});
++
++test("every length across the padding boundaries agrees with node:crypto", () => {
++  for (let len = 0; len <= 200; len++) {
++    const bytes = new Uint8Array(len).map((_, i) => (i * 31 + len) & 0xff);
++    assert.equal(sha256Hex(bytes), createHash("sha256").update(bytes).digest("hex"), `length ${len}`);
++  }
++});
++
++test("strings hash as UTF-8, and random strings agree with node:crypto", () => {
++  assert.equal(sha256Hex("é"), createHash("sha256").update("é", "utf8").digest("hex"));
++  assert.equal(sha256Hex("€ 𝄞 名"), createHash("sha256").update("€ 𝄞 名", "utf8").digest("hex"));
++  let x = 12345;
++  for (let i = 0; i < 300; i++) {
++    x = (x * 1103515245 + 12345) & 0x7fffffff;
++    const s = Array.from({ length: x % 300 }, (_, j) => String.fromCharCode(32 + ((x >> (j % 16)) + j) % 2000)).join("");
++    assert.equal(sha256Hex(s), createHash("sha256").update(s, "utf8").digest("hex"));
++  }
++  assert.equal(sha256("abc").length, 32);
++});
+diff --git a/packages/core/src/sha256.ts b/packages/core/src/sha256.ts
+new file mode 100644
+index 0000000..92988f3
+--- /dev/null
++++ b/packages/core/src/sha256.ts
+@@ -0,0 +1,88 @@
++/**
++ * SHA-256 (FIPS 180-4) in plain TypeScript: no dependency, no `node:crypto`,
++ * synchronous, so `@allowance/core` stays importable from a browser bundle.
++ * Used to hash-chain the event log (`chain.ts`); not tuned for bulk data.
++ * Checked against the NIST vectors and `node:crypto` in `sha256.test.ts`.
++ */
++
++const K = new Int32Array([
++  0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
++  0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
++  0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
++  0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
++  0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
++  0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
++  0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
++  0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
++]);
++
++const encoder = new TextEncoder();
++/** Message schedule, reused across calls (the function is synchronous). */
++const W = new Int32Array(64);
++const HEX: string[] = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, "0"));
++
++/** The eight state words after hashing `data` (a string is hashed as its UTF-8 bytes). */
++function digestWords(data: string | Uint8Array): Int32Array {
++  const msg = typeof data === "string" ? encoder.encode(data) : data;
++  // Pad: 0x80, zeros, then the bit length as a 64-bit big-endian integer.
++  const len = Math.ceil((msg.length + 9) / 64) * 64;
++  const buf = new Uint8Array(len);
++  buf.set(msg);
++  buf[msg.length] = 0x80;
++  const bits = msg.length * 8;
++  const hi = Math.floor(bits / 0x1_0000_0000);
++  const lo = bits >>> 0;
++  buf[len - 8] = hi >>> 24; buf[len - 7] = hi >>> 16; buf[len - 6] = hi >>> 8; buf[len - 5] = hi;
++  buf[len - 4] = lo >>> 24; buf[len - 3] = lo >>> 16; buf[len - 2] = lo >>> 8; buf[len - 1] = lo;
++
++  let h0 = 0x6a09e667, h1 = 0xbb67ae85 | 0, h2 = 0x3c6ef372, h3 = 0xa54ff53a | 0;
++  let h4 = 0x510e527f, h5 = 0x9b05688c | 0, h6 = 0x1f83d9ab, h7 = 0x5be0cd19;
++  for (let off = 0; off < len; off += 64) {
++    for (let i = 0; i < 16; i++) {
++      const j = off + i * 4;
++      W[i] = (buf[j]! << 24) | (buf[j + 1]! << 16) | (buf[j + 2]! << 8) | buf[j + 3]!;
++    }
++    for (let i = 16; i < 64; i++) {
++      const x = W[i - 15]!, y = W[i - 2]!;
++      const s0 = ((x >>> 7) | (x << 25)) ^ ((x >>> 18) | (x << 14)) ^ (x >>> 3);
++      const s1 = ((y >>> 17) | (y << 15)) ^ ((y >>> 19) | (y << 13)) ^ (y >>> 10);
++      W[i] = (W[i - 16]! + s0 + W[i - 7]! + s1) | 0;
++    }
++    let a = h0, b = h1, c = h2, d = h3, e = h4, f = h5, g = h6, h = h7;
++    for (let i = 0; i < 64; i++) {
++      const S1 = ((e >>> 6) | (e << 26)) ^ ((e >>> 11) | (e << 21)) ^ ((e >>> 25) | (e << 7));
++      const ch = (e & f) ^ (~e & g);
++      const t1 = (h + S1 + ch + K[i]! + W[i]!) | 0;
++      const S0 = ((a >>> 2) | (a << 30)) ^ ((a >>> 13) | (a << 19)) ^ ((a >>> 22) | (a << 10));
++      const maj = (a & b) ^ (a & c) ^ (b & c);
++      const t2 = (S0 + maj) | 0;
++      h = g; g = f; f = e; e = (d + t1) | 0;
++      d = c; c = b; b = a; a = (t1 + t2) | 0;
++    }
++    h0 = (h0 + a) | 0; h1 = (h1 + b) | 0; h2 = (h2 + c) | 0; h3 = (h3 + d) | 0;
++    h4 = (h4 + e) | 0; h5 = (h5 + f) | 0; h6 = (h6 + g) | 0; h7 = (h7 + h) | 0;
++  }
++  return Int32Array.of(h0, h1, h2, h3, h4, h5, h6, h7);
++}
++
++/** SHA-256 of `data` (a string is hashed as its UTF-8 bytes). */
++export function sha256(data: string | Uint8Array): Uint8Array {
++  const words = digestWords(data);
++  const out = new Uint8Array(32);
++  for (let i = 0; i < 8; i++) {
++    const x = words[i]!;
++    out[i * 4] = x >>> 24; out[i * 4 + 1] = x >>> 16; out[i * 4 + 2] = x >>> 8; out[i * 4 + 3] = x;
++  }
++  return out;
++}
++
++/** SHA-256 of `data` as 64 lowercase hex digits. */
++export function sha256Hex(data: string | Uint8Array): string {
++  const words = digestWords(data);
++  let hex = "";
++  for (let i = 0; i < 8; i++) {
++    const x = words[i]!;
++    hex += HEX[x >>> 24]! + HEX[(x >>> 16) & 0xff]! + HEX[(x >>> 8) & 0xff]! + HEX[x & 0xff]!;
++  }
++  return hex;
++}
+diff --git a/packages/core/src/snapshot-replay.test.ts b/packages/core/src/snapshot-replay.test.ts
+new file mode 100644
+index 0000000..131023b
+--- /dev/null
++++ b/packages/core/src/snapshot-replay.test.ts
+@@ -0,0 +1,291 @@
++/**
++ * The audit holds across persistence: a snapshot's JSON alone rebuilds the
++ * tree (`replaySnapshot`), and what was edited in it is reported
++ * (`verifySnapshot`). (That every API path and random operation sequences
++ * round-trip exactly is pinned in replay.test.ts, whose `assertReplays`
++ * replays the snapshot JSON too.) Each test here pins one side:
++ *  - the hash chain: every recorded event carries it, a caller cannot set it;
++ *  - a node edited in the JSON without a matching event is reported;
++ *  - an event edited, deleted or inserted in the JSON breaks the chain;
++ *  - what the chain does NOT stop, stated as tests: a rewrite that recomputes
++ *    every later hash, or a log cut short at its end, is caught only against
++ *    a trusted head; a forged event appended through recordEvent is not;
++ *  - older snapshots (no grant/before/hash) still parse, and are reported
++ *    as not replayable rather than crashing;
++ *  - the committed demo snapshot replays.
++ */
++import { test } from "node:test";
++import assert from "node:assert/strict";
++import { readFileSync } from "node:fs";
++import { fileURLToPath } from "node:url";
++import { GENESIS_HASH, eventHash } from "./chain";
++import { pay, type PaymentAdapters } from "./payment";
++import { SnapshotFormatError, fromSnapshotEvents, replaySnapshot, toSnapshot, verifySnapshot } from "./serialize";
++import { DelegationTree, ReplayError, type LogDiscrepancy } from "./tree";
++import type { Snapshot, SnapshotEvent } from "./types";
++
++const FAR = 4_000_000_000;
++const NOW = 1_000;
++const allowAll: PaymentAdapters = {
++  identity: { verify: async () => ({ ok: true }) },
++  screening: { screen: async () => ({ approved: true }) },
++  settlement: {
++    settle: async (req) => ({
++      settled: true,
++      swapped: false,
++      fromToken: req.payerToken,
++      toToken: req.merchantToken,
++      amountIn: req.amount,
++      amountOut: req.amount,
++    }),
++  },
++};
++const rejectScreening: PaymentAdapters = { ...allowAll, screening: { screen: async () => ({ approved: false }) } };
++
++const POD = "pod.fund.eth";
++const A = `a.${POD}`;
++const B = `b.${POD}`;
++const EXEC = `exec.${A}`;
++
++/** fundRoot, delegate, resize, close, revoke and settled/blocked payments. */
++async function built(): Promise<DelegationTree> {
++  const tree = new DelegationTree();
++  tree.fundRoot({ principal: "p", rootName: "fund.eth", mandate: { budget: 1_000n, allowedMerchants: ["X", "Y"], expiry: FAR } });
++  tree.delegate("fund.eth", "pod", { budget: 600n, allowedMerchants: ["X", "Y"], allowedPurposes: ["trade"], expiry: FAR });
++  tree.delegate(POD, "a", { budget: 300n, allowedMerchants: ["X", "Y"], allowedPurposes: ["trade"], expiry: FAR });
++  tree.delegate(POD, "b", { budget: 200n, allowedMerchants: ["X"], allowedPurposes: ["trade"], expiry: FAR }, { identityStatus: "expired" });
++  tree.delegate(A, "exec", { budget: 100n, allowedMerchants: ["X"], allowedPurposes: ["trade"], expiry: FAR });
++  assert.equal((await pay(tree, { node: A, merchant: "X", amount: 20n, purpose: "trade" }, allowAll, { now: NOW })).outcome, "SETTLED");
++  assert.equal((await pay(tree, { node: EXEC, merchant: "X", amount: 5n, purpose: "trade" }, allowAll, { now: NOW })).outcome, "SETTLED");
++  assert.equal((await pay(tree, { node: A, merchant: "X", amount: 5n, purpose: "trade" }, rejectScreening, { now: NOW })).outcome, "BLOCKED_SCREENING");
++  tree.resize(A, 250n);
++  tree.close(EXEC);
++  tree.revoke(B);
++  return tree;
++}
++
++/** The tree's snapshot as a reader gets it: parsed JSON, free to edit. */
++function jsonOf(tree: DelegationTree): Snapshot {
++  return JSON.parse(JSON.stringify(toSnapshot(tree, { asOf: 1 }))) as Snapshot;
++}
++
++const kinds = (d: readonly LogDiscrepancy[]) => d.map((x) => `${x.kind} ${x.node}`);
++
++/** Give A's budget `to` in the JSON's nodes, with pod's reserved and both availables to match. */
++function editBudgetOfA(snap: Snapshot, from: bigint, to: bigint): void {
++  const a = snap.nodes.find((n) => n.name === A)!.mandate;
++  const pod = snap.nodes.find((n) => n.name === POD)!.mandate;
++  a.budget = to.toString();
++  a.available = (BigInt(a.available) + to - from).toString();
++  pod.reserved = (BigInt(pod.reserved) + to - from).toString();
++  pod.available = (BigInt(pod.available) - to + from).toString();
++}
++
++/** Recompute the hashes of events `from` to `to` (default: the end), as someone rewriting the JSON would. */
++function rechain(snap: Snapshot, from = 0, to = snap.events.length): void {
++  const events = fromSnapshotEvents(snap.events);
++  let prev = from === 0 ? GENESIS_HASH : snap.events[from - 1]!.hash!;
++  for (let i = from; i < to; i++) {
++    const e = { ...events[i]! };
++    delete e.hash;
++    prev = eventHash(prev, e);
++    snap.events[i]!.hash = prev;
++  }
++}
++
++test("every recorded event carries its chain link; a caller cannot set it", async () => {
++  const tree = await built();
++  let prev = GENESIS_HASH;
++  for (const e of tree.events) {
++    const { hash, ...fields } = e;
++    assert.match(hash!, /^[0-9a-f]{64}$/);
++    assert.equal(hash, eventHash(prev, fields), `seq ${e.seq}`);
++    prev = hash!;
++  }
++  assert.equal(tree.head, prev);
++  assert.equal(new DelegationTree().head, GENESIS_HASH);
++
++  const forced = tree.recordEvent({ type: "DELEGATE", node: `x.${B}`, detail: "", result: "ATTENUATION_REJECTED", amount: 1n, merchant: null, hash: "f".repeat(64) } as never);
++  assert.notEqual(forced.hash, "f".repeat(64));
++  assert.deepEqual(tree.verifyAgainstLog({ fromScratch: true }), []);
++});
++
++test("the JSON replays to the live tree, and the replayed tree carries on the same chain", async () => {
++  const tree = await built();
++  const back = replaySnapshot(jsonOf(tree), { head: tree.head });
++  assert.deepEqual(back.listNodes(), tree.listNodes());
++  assert.deepEqual(back.events, tree.events);
++  for (const t of [tree, back]) {
++    t.resize(A, 200n);
++    t.delegate(POD, "c", { budget: 50n, allowedMerchants: ["Y"], allowedPurposes: ["trade"], expiry: FAR });
++  }
++  assert.equal(back.head, tree.head);
++  assert.deepEqual(jsonOf(back), jsonOf(tree));
++  assert.deepEqual(back.verifyAgainstLog(), []);
++});
++
++test("a node edited in the JSON without a matching event is reported, field by field", async () => {
++  const tree = await built();
++  const edits: [string, (s: Snapshot) => void, string[]][] = [
++    ["a budget", (s) => void (s.nodes.find((n) => n.name === A)!.mandate.budget = "900"), [`UNLOGGED_WRITE ${A}`]],
++    ["a budget with its available to match", (s) => {
++      const m = s.nodes.find((n) => n.name === A)!.mandate;
++      m.budget = "900";
++      m.available = (BigInt(m.available) + 650n).toString();
++    }, [`UNLOGGED_WRITE ${A}`, `UNLOGGED_WRITE ${A}`]],
++    ["a spend refunded", (s) => void (s.nodes.find((n) => n.name === A)!.mandate.spentDirect = "0"), [`UNLOGGED_WRITE ${A}`]],
++    ["a revoke undone", (s) => void (s.nodes.find((n) => n.name === B)!.mandate.revoked = false), [`UNLOGGED_WRITE ${B}`]],
++    ["a merchant added", (s) => void s.nodes.find((n) => n.name === EXEC)!.mandate.allowedMerchants!.push("Y"), [`UNLOGGED_WRITE ${EXEC}`]],
++    ["a purpose list dropped", (s) => void (s.nodes.find((n) => n.name === B)!.mandate.allowedPurposes = null), [`UNLOGGED_WRITE ${B}`]],
++    ["an identity upgraded", (s) => void (s.nodes.find((n) => n.name === B)!.identityStatus = "verified"), [`UNLOGGED_WRITE ${B}`]],
++    ["an expiry extended", (s) => void (s.nodes.find((n) => n.name === B)!.mandate.expiry = FAR + 1), [`UNLOGGED_WRITE ${B}`]],
++    ["the principal", (s) => void (s.principal.verified = false), ["UNLOGGED_WRITE null"]],
++    ["a node removed", (s) => void (s.nodes = s.nodes.filter((n) => n.name !== EXEC)), [`UNLOGGED_WRITE ${EXEC}`]],
++    ["a node added", (s) => void s.nodes.push({ ...structuredClone(s.nodes[4]!), name: `ghost.${POD}` }), [`UNLOGGED_WRITE ghost.${POD}`]],
++    ["two nodes swapped", (s) => void ([s.nodes[2], s.nodes[3]] = [s.nodes[3]!, s.nodes[2]!]), ["UNLOGGED_WRITE null"]],
++  ];
++  for (const [label, edit, expected] of edits) {
++    const snap = jsonOf(tree);
++    assert.deepEqual(verifySnapshot(snap, { head: tree.head }), [], `${label}: clean before the edit`);
++    edit(snap);
++    const found = verifySnapshot(snap, { head: tree.head });
++    assert.deepEqual(kinds(found), expected, label);
++    assert.throws(() => replaySnapshot(snap), ReplayError, label);
++  }
++  const snap = jsonOf(tree);
++  snap.nodes.find((n) => n.name === A)!.mandate.budget = "900";
++  assert.match(verifySnapshot(snap)[0]!.message, /in the snapshot, budget of "a.pod.fund.eth" is "900", but its log says "250"/);
++});
++
++test("an event edited, deleted, inserted or reordered in the JSON breaks the chain where it happened", async () => {
++  const tree = await built();
++  const chainBreaks = (d: readonly LogDiscrepancy[]) => d.filter((x) => x.kind === "LOG_REWRITTEN").map((x) => x.seq);
++
++  // Edited: a resize's amount (the node edited to match, so only the chain can tell).
++  const resizeAt = tree.events.findIndex((e) => e.type === "RESIZE" && e.node === A);
++  const edited = jsonOf(tree);
++  edited.events[resizeAt]!.amount = "290";
++  editBudgetOfA(edited, 250n, 290n);
++  assert.deepEqual(kinds(verifySnapshot(edited)), [`LOG_REWRITTEN ${A}`], "the nodes match the edited log: only the chain tells");
++  assert.deepEqual(chainBreaks(verifySnapshot(edited)), [resizeAt]);
++  assert.throws(() => replaySnapshot(edited), (err: unknown) => err instanceof ReplayError && /hash chain breaks/.test(err.message));
++
++  // Edited, and that event's own hash recomputed: the NEXT link breaks.
++  rechain(edited, resizeAt, resizeAt + 1);
++  assert.deepEqual(chainBreaks(verifySnapshot(edited)), [resizeAt + 1]);
++
++  // A settled payment deleted (and the spend edited out of the nodes).
++  const payAt = tree.events.findIndex((e) => e.type === "PAYMENT" && e.result === "SETTLED" && e.node === A);
++  const deleted = jsonOf(tree);
++  deleted.events.splice(payAt, 1);
++  const a = deleted.nodes.find((n) => n.name === A)!.mandate;
++  a.spentDirect = "0";
++  a.available = (BigInt(a.available) + 20n).toString();
++  // The event after the gap no longer links to the one now before it (it
++  // keeps its own seq, payAt + 1, which is also out of sequence).
++  assert.equal(chainBreaks(verifySnapshot(deleted))[0], payAt + 1);
++  assert.ok(verifySnapshot(deleted).some((d) => d.kind === "BAD_EVENT" && /out of sequence/.test(d.message)));
++  // ... and renumbered, so the sequence numbers no longer tell.
++  deleted.events.forEach((e, i) => (e.seq = i));
++  assert.deepEqual(chainBreaks(verifySnapshot(deleted)).slice(0, 1), [payAt]);
++
++  // An event inserted (a copy of the grant to a, re-sequenced).
++  const inserted = jsonOf(tree);
++  inserted.events.splice(3, 0, structuredClone(inserted.events[2]!));
++  inserted.events.forEach((e, i) => (e.seq = i));
++  assert.ok(chainBreaks(verifySnapshot(inserted)).includes(3));
++
++  // Two events swapped, with their sequence numbers.
++  const swapped = jsonOf(tree);
++  [swapped.events[5], swapped.events[6]] = [swapped.events[6]!, swapped.events[5]!];
++  swapped.events[5]!.seq = 5;
++  swapped.events[6]!.seq = 6;
++  assert.ok(chainBreaks(verifySnapshot(swapped)).includes(5));
++
++  // A hash deleted.
++  const unhashed = jsonOf(tree);
++  delete unhashed.events[4]!.hash;
++  assert.match(verifySnapshot(unhashed)[0]!.message, /carries no hash/);
++});
++
++test("what the chain does not stop: a full rewrite or a cut-off tail passes without a trusted head; a forged recordEvent passes", async () => {
++  const tree = await built();
++  const head = tree.head;
++
++  // Rewritten, every later hash recomputed, nodes edited to match: only the
++  // trusted head tells.
++  const resizeAt = tree.events.findIndex((e) => e.type === "RESIZE" && e.node === A);
++  const rewritten = jsonOf(tree);
++  rewritten.events[resizeAt]!.amount = "290";
++  editBudgetOfA(rewritten, 250n, 290n);
++  rechain(rewritten, resizeAt);
++  assert.deepEqual(verifySnapshot(rewritten), [], "an unkeyed chain can be recomputed");
++  assert.deepEqual(kinds(verifySnapshot(rewritten, { head })), ["LOG_REWRITTEN null"]);
++
++  // The last event (b's revoke) cut off, and the node edited to match.
++  const cut = jsonOf(tree);
++  cut.events.pop();
++  cut.nodes.find((n) => n.name === B)!.mandate.revoked = false;
++  assert.deepEqual(verifySnapshot(cut), [], "a shorter valid chain is still a valid chain");
++  assert.match(verifySnapshot(cut, { head })[0]!.message, /cut short or rewritten/);
++
++  // A forged event appended through the public API is chained like any other.
++  const forged = await built();
++  forged.requireNode(B).mandate.revoked = false;
++  forged.recordEvent({ type: "RESIZE", node: A, detail: "forged", result: "OK", amount: 260n, merchant: null, before: 250n });
++  forged.requireNode(A).mandate.budget = 260n;
++  assert.deepEqual(kinds(forged.verifyAgainstLog()), [`UNLOGGED_WRITE ${B}`], "the direct write is caught; the forged event is not");
++  assert.deepEqual(verifySnapshot(jsonOf(forged), { head: forged.head }).filter((d) => d.node === A), []);
++});
++
++test("in memory too: an edited or deleted past event is caught by the chain on a replay of the whole log", async () => {
++  const edited = await built();
++  const log = edited.events as import("./types").AllowanceEvent[];
++  log[2] = Object.freeze({ ...log[2]!, amount: 301n });
++  assert.ok(edited.verifyAgainstLog({ fromScratch: true }).some((d) => d.kind === "LOG_REWRITTEN" && d.seq === 2));
++
++  const deleted = await built();
++  const events = [...deleted.events];
++  events.splice(6, 1);
++  // The very event objects the tree recorded, one gone: the one after the
++  // gap follows another hash than the one it was chained to.
++  const gap = DelegationTree.replayLog(events).discrepancies.filter((d) => d.kind === "LOG_REWRITTEN");
++  assert.deepEqual(gap.map((d) => d.seq), [7]);
++  const renumbered = events.map((e, i) => Object.freeze({ ...e, seq: i }));
++  const { discrepancies } = DelegationTree.replayLog(renumbered);
++  assert.equal(discrepancies.find((d) => d.kind === "LOG_REWRITTEN")?.seq, 6);
++  assert.throws(() => DelegationTree.replay(renumbered), ReplayError);
++});
++
++test("older snapshots (no grant, before or hash) still read, and are reported as not replayable", async () => {
++  const tree = await built();
++  const old = jsonOf(tree);
++  for (const e of old.events as SnapshotEvent[]) {
++    delete e.grant;
++    delete e.before;
++    delete e.hash;
++  }
++  const events = fromSnapshotEvents(old.events);
++  assert.equal(events.length, tree.events.length);
++  const found = verifySnapshot(old);
++  assert.ok(found.some((d) => d.kind === "BAD_EVENT" && /no grant/.test(d.message)));
++  assert.ok(found.some((d) => d.kind === "LOG_REWRITTEN" && /carries no hash/.test(d.message)));
++  assert.throws(() => replaySnapshot(old), ReplayError);
++});
++
++test("a malformed serialized field is a SnapshotFormatError naming its path", async () => {
++  const snap = jsonOf(await built());
++  snap.events[0]!.amount = "1e3";
++  assert.throws(() => verifySnapshot(snap), (err: unknown) => err instanceof SnapshotFormatError && /events\[0\]\.amount/.test(err.message));
++  const snap2 = jsonOf(await built());
++  (snap2.events[1]!.grant as { allowedMerchants: unknown }).allowedMerchants = "X";
++  assert.throws(() => verifySnapshot(snap2), (err: unknown) => err instanceof SnapshotFormatError && /events\[1\]\.grant\.allowedMerchants/.test(err.message));
++});
++
++test("the committed demo snapshot (npm run demo) replays from its JSON alone", () => {
++  const path = fileURLToPath(new URL("../../../apps/web/public/demo-snapshot.json", import.meta.url));
++  const snap = JSON.parse(readFileSync(path, "utf8")) as Snapshot;
++  const tree = replaySnapshot(snap);
++  assert.equal(tree.events.length, snap.events.length);
++  assert.deepEqual(toSnapshot(tree, { asOf: snap.asOf, decimals: snap.decimals }), snap);
++});
+diff --git a/packages/core/src/tree.ts b/packages/core/src/tree.ts
+index 6281791..4d08a1a 100644
+--- a/packages/core/src/tree.ts
++++ b/packages/core/src/tree.ts
+@@ -15,6 +15,7 @@ import {
+   type AttenuationDecision,
+   type AttenuationRejectionReason,
+ } from "./attenuation";
++import { GENESIS_HASH, eventHash } from "./chain";
+ import type {
+   AgentNode,
+   AllowanceEvent,
+@@ -106,8 +107,12 @@ export interface TreeViolation {
+  *                    a node that does not exist (or, for a grant, already
+  *                    does), or a type/result pair the tree never records
+  *  - LOG_REWRITTEN   the log changed other than by `recordEvent` appending to
+- *                    it: an event already replayed was replaced or removed, or
+- *                    the log's length and the sequence counter disagree
++ *                    it: an event already replayed was replaced or removed,
++ *                    the log's length and the sequence counter disagree, or
++ *                    the hash chain breaks (an event carries no hash, or not
++ *                    the hash of its own fields chained to the event before
++ *                    it: it, or an event before it, was edited, removed,
++ *                    inserted or reordered; see `chain.ts`)
+  */
+ export type LogDiscrepancyKind = "UNLOGGED_WRITE" | "BAD_EVENT" | "LOG_REWRITTEN";
+ 
+@@ -128,6 +133,16 @@ export class ReplayError extends Error {
+   }
+ }
+ 
++/**
++ * A cache, not a trust anchor: each event `recordEvent` hashed itself, with
++ * the `prev` it hashed it after. Such an event is deeply frozen (its grant,
++ * allowlists and principal too, every other field a primitive), so its hash
++ * still matches its fields, and replay need not recompute it when it follows
++ * that same `prev`. Anything else (a copy, an event parsed from JSON, one
++ * that follows another event now) is hashed in full.
++ */
++const chainedAfter = new WeakMap<AllowanceEvent, string>();
++
+ /** A frozen copy of a grant, so nothing a caller or node holds can rewrite the log. */
+ function freezeGrant(g: EventGrant): EventGrant {
+   const copy: EventGrant = { parent: g.parent, identityStatus: g.identityStatus, expiry: g.expiry };
+@@ -216,6 +231,15 @@ export class DelegationTree {
+     return this.events_;
+   }
+ 
++  /**
++   * The hash of the last event in the log (`GENESIS_HASH` for an empty one):
++   * the value to publish or countersign so that a later reader can tell this
++   * log from one rewritten, chain and all, or cut short (see `chain.ts`).
++   */
++  get head(): string {
++    return this.events_.length === 0 ? GENESIS_HASH : (this.events_[this.events_.length - 1]!.hash ?? "");
++  }
++
+   /** All nodes in insertion order. */
+   listNodes(): AgentNode[] {
+     return [...this.nodes_.values()];
+@@ -717,13 +741,23 @@ export class DelegationTree {
+    *   an UNLOGGED_WRITE between two of its events; see `LogDiscrepancy`).
+    */
+   static replay(events: readonly AllowanceEvent[]): DelegationTree {
+-    const tree = new DelegationTree();
+-    const issues: LogDiscrepancy[] = [];
+-    for (const event of events) tree.applyLogged_(event, issues);
+-    if (issues.length > 0) throw new ReplayError(issues);
++    const { tree, discrepancies } = DelegationTree.replayLog(events);
++    if (discrepancies.length > 0) throw new ReplayError(discrepancies);
+     return tree;
+   }
+ 
++  /**
++   * `replay` that does not throw: the tree the log rebuilds as far as it
++   * replays, and every discrepancy found on the way (BAD_EVENT,
++   * UNLOGGED_WRITE between events, LOG_REWRITTEN for a broken hash chain).
++   */
++  static replayLog(events: readonly AllowanceEvent[]): { tree: DelegationTree; discrepancies: LogDiscrepancy[] } {
++    const tree = new DelegationTree();
++    const discrepancies: LogDiscrepancy[] = [];
++    for (const event of events) tree.applyLogged_(event, discrepancies);
++    return { tree, discrepancies };
++  }
++
+   /**
+    * Check that the tree is exactly what replaying its own event log gives,
+    * and return every discrepancy (empty when it is). This is what makes the
+@@ -746,9 +780,15 @@ export class DelegationTree {
+    * whole log gives (`fromScratch: true` does exactly that), plus a sticky
+    * LOG_REWRITTEN once the replayed part of the log has changed.
+    *
++   * Every event replayed is also checked against the hash chain (`chain.ts`),
++   * so a log edited after it left this process (a snapshot's JSON, say) is
++   * caught at the first event it changed.
++   *
+    * What it does not do: authenticate the log. `recordEvent` is public, so a
+    * caller that also forges a matching event makes its write part of the
+-   * history (still held to `audit()`), and a node revoked by a direct write
++   * history (chained like any other event, and still held to `audit()`); the
++   * chain is unkeyed, so a rewrite that recomputes every later hash is only
++   * caught against a head hash (`head`) kept elsewhere; and a node revoked by a direct write
+    * and then again by `revoke()` looks, after the fact, like the logged
+    * revoke alone (every check in between catches it).
+    */
+@@ -792,12 +832,20 @@ export class DelegationTree {
+    */
+   private applyLogged_(e: AllowanceEvent, issues: LogDiscrepancy[]): void {
+     const index = this.events_.length;
++    const prev = index === 0 ? GENESIS_HASH : (this.events_[index - 1]!.hash ?? "");
+     this.events_.push(e);
+     this.seq_ = this.events_.length;
+     const at = `seq ${e.seq} (${e.type} / ${e.result} "${e.node}")`;
+     const bad = (why: string): void => {
+       issues.push({ kind: "BAD_EVENT", node: e.node, seq: e.seq, message: `${at}: ${why}` });
+     };
++    const chain = (why: string): void => {
++      issues.push({ kind: "LOG_REWRITTEN", node: e.node, seq: e.seq, message: `${at}: ${why}` });
++    };
++    if (e.hash === undefined) chain("carries no hash, so recordEvent did not append it");
++    else if (chainedAfter.get(e) !== prev && e.hash !== eventHash(prev, e)) {
++      chain("the hash chain breaks here: this event, or the one before it, was edited, or events were removed, inserted or reordered");
++    }
+     if (e.seq !== index) bad(`out of sequence: it is event ${index} of the log`);
+     const node = this.nodes_.get(e.node);
+ 
+@@ -960,11 +1008,17 @@ export class DelegationTree {
+    * internally and by the payment pipeline; orchestrators may also use it to
+    * record custom events into the same ordered stream. The event is frozen
+    * (its `grant` copied and frozen too): the log can only be appended to.
++   * Its `hash` chains it to the event before it (`chain.ts`); a `hash` the
++   * caller passes is ignored.
+    */
+-  recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent {
++  recordEvent(event: Omit<AllowanceEvent, "seq" | "hash">): AllowanceEvent {
++    const prev = this.head;
+     const full: AllowanceEvent = { seq: this.seq_++, ...event };
+     if (event.grant !== undefined) full.grant = freezeGrant(event.grant);
++    delete full.hash;
++    full.hash = eventHash(prev, full);
+     Object.freeze(full);
++    chainedAfter.set(full, prev);
+     this.events_.push(full);
+     return full;
+   }
+diff --git a/packages/core/src/types.ts b/packages/core/src/types.ts
+index 1fd4ff7..0aa049b 100644
+--- a/packages/core/src/types.ts
++++ b/packages/core/src/types.ts
+@@ -162,6 +162,12 @@ export interface AllowanceEvent {
+    * resize overwrites it. The tree's own API always sets it.
+    */
+   before?: bigint;
++  /**
++   * SHA-256 (hex) over the hash of the event before it and every field
++   * above (see `chain.ts`). `recordEvent` always sets it; replay reports an
++   * event without it, or with one that does not match, as LOG_REWRITTEN.
++   */
++  hash?: string;
+ }
+ 
+ /* ------------------------------------------------------------------ */
+@@ -267,6 +273,17 @@ export interface SnapshotNode {
+   mandate: SnapshotMandate;
+ }
+ 
++/** `EventGrant` as serialized: allowlists as arrays, `null` meaning "any". */
++export interface SnapshotGrant {
++  parent: string | null;
++  identityStatus: IdentityStatus;
++  allowedMerchants: string[] | null;
++  allowedPurposes: string[] | null;
++  expiry: number;
++  /** FUND only. */
++  principal?: { name: string; verified: boolean };
++}
++
+ export interface SnapshotEvent {
+   seq: number;
+   type: EventType;
+@@ -275,6 +292,16 @@ export interface SnapshotEvent {
+   result: EventResult;
+   amount: string | null;
+   merchant: string | null;
++  /**
++   * What replay needs (see `AllowanceEvent`). Optional so that snapshots
++   * written before they were serialized still parse; such a snapshot shows
++   * its log but cannot be replayed (`verifySnapshot` reports it).
++   */
++  grant?: SnapshotGrant;
++  /** RESIZE / OK: the budget before, as a decimal string. */
++  before?: string;
++  /** The event's hash-chain link (see `chain.ts`). */
++  hash?: string;
+ }
+ 
+ export interface Snapshot {

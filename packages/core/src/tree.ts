@@ -15,6 +15,7 @@ import {
   type AttenuationDecision,
   type AttenuationRejectionReason,
 } from "./attenuation";
+import { GENESIS_HASH, eventHash } from "./chain";
 import type {
   AgentNode,
   AllowanceEvent,
@@ -106,8 +107,12 @@ export interface TreeViolation {
  *                    a node that does not exist (or, for a grant, already
  *                    does), or a type/result pair the tree never records
  *  - LOG_REWRITTEN   the log changed other than by `recordEvent` appending to
- *                    it: an event already replayed was replaced or removed, or
- *                    the log's length and the sequence counter disagree
+ *                    it: an event already replayed was replaced or removed,
+ *                    the log's length and the sequence counter disagree, or
+ *                    the hash chain breaks (an event carries no hash, or not
+ *                    the hash of its own fields chained to the event before
+ *                    it: it, or an event before it, was edited, removed,
+ *                    inserted or reordered; see `chain.ts`)
  */
 export type LogDiscrepancyKind = "UNLOGGED_WRITE" | "BAD_EVENT" | "LOG_REWRITTEN";
 
@@ -127,6 +132,16 @@ export class ReplayError extends Error {
     this.name = "ReplayError";
   }
 }
+
+/**
+ * A cache, not a trust anchor: each event `recordEvent` hashed itself, with
+ * the `prev` it hashed it after. Such an event is deeply frozen (its grant,
+ * allowlists and principal too, every other field a primitive), so its hash
+ * still matches its fields, and replay need not recompute it when it follows
+ * that same `prev`. Anything else (a copy, an event parsed from JSON, one
+ * that follows another event now) is hashed in full.
+ */
+const chainedAfter = new WeakMap<AllowanceEvent, string>();
 
 /** A frozen copy of a grant, so nothing a caller or node holds can rewrite the log. */
 function freezeGrant(g: EventGrant): EventGrant {
@@ -214,6 +229,15 @@ export class DelegationTree {
    */
   get events(): readonly AllowanceEvent[] {
     return this.events_;
+  }
+
+  /**
+   * The hash of the last event in the log (`GENESIS_HASH` for an empty one):
+   * the value to publish or countersign so that a later reader can tell this
+   * log from one rewritten, chain and all, or cut short (see `chain.ts`).
+   */
+  get head(): string {
+    return this.events_.length === 0 ? GENESIS_HASH : (this.events_[this.events_.length - 1]!.hash ?? "");
   }
 
   /** All nodes in insertion order. */
@@ -717,11 +741,21 @@ export class DelegationTree {
    *   an UNLOGGED_WRITE between two of its events; see `LogDiscrepancy`).
    */
   static replay(events: readonly AllowanceEvent[]): DelegationTree {
-    const tree = new DelegationTree();
-    const issues: LogDiscrepancy[] = [];
-    for (const event of events) tree.applyLogged_(event, issues);
-    if (issues.length > 0) throw new ReplayError(issues);
+    const { tree, discrepancies } = DelegationTree.replayLog(events);
+    if (discrepancies.length > 0) throw new ReplayError(discrepancies);
     return tree;
+  }
+
+  /**
+   * `replay` that does not throw: the tree the log rebuilds as far as it
+   * replays, and every discrepancy found on the way (BAD_EVENT,
+   * UNLOGGED_WRITE between events, LOG_REWRITTEN for a broken hash chain).
+   */
+  static replayLog(events: readonly AllowanceEvent[]): { tree: DelegationTree; discrepancies: LogDiscrepancy[] } {
+    const tree = new DelegationTree();
+    const discrepancies: LogDiscrepancy[] = [];
+    for (const event of events) tree.applyLogged_(event, discrepancies);
+    return { tree, discrepancies };
   }
 
   /**
@@ -746,9 +780,15 @@ export class DelegationTree {
    * whole log gives (`fromScratch: true` does exactly that), plus a sticky
    * LOG_REWRITTEN once the replayed part of the log has changed.
    *
+   * Every event replayed is also checked against the hash chain (`chain.ts`),
+   * so a log edited after it left this process (a snapshot's JSON, say) is
+   * caught at the first event it changed.
+   *
    * What it does not do: authenticate the log. `recordEvent` is public, so a
    * caller that also forges a matching event makes its write part of the
-   * history (still held to `audit()`), and a node revoked by a direct write
+   * history (chained like any other event, and still held to `audit()`); the
+   * chain is unkeyed, so a rewrite that recomputes every later hash is only
+   * caught against a head hash (`head`) kept elsewhere; and a node revoked by a direct write
    * and then again by `revoke()` looks, after the fact, like the logged
    * revoke alone (every check in between catches it).
    */
@@ -792,12 +832,20 @@ export class DelegationTree {
    */
   private applyLogged_(e: AllowanceEvent, issues: LogDiscrepancy[]): void {
     const index = this.events_.length;
+    const prev = index === 0 ? GENESIS_HASH : (this.events_[index - 1]!.hash ?? "");
     this.events_.push(e);
     this.seq_ = this.events_.length;
     const at = `seq ${e.seq} (${e.type} / ${e.result} "${e.node}")`;
     const bad = (why: string): void => {
       issues.push({ kind: "BAD_EVENT", node: e.node, seq: e.seq, message: `${at}: ${why}` });
     };
+    const chain = (why: string): void => {
+      issues.push({ kind: "LOG_REWRITTEN", node: e.node, seq: e.seq, message: `${at}: ${why}` });
+    };
+    if (e.hash === undefined) chain("carries no hash, so recordEvent did not append it");
+    else if (chainedAfter.get(e) !== prev && e.hash !== eventHash(prev, e)) {
+      chain("the hash chain breaks here: this event, or the one before it, was edited, or events were removed, inserted or reordered");
+    }
     if (e.seq !== index) bad(`out of sequence: it is event ${index} of the log`);
     const node = this.nodes_.get(e.node);
 
@@ -960,11 +1008,17 @@ export class DelegationTree {
    * internally and by the payment pipeline; orchestrators may also use it to
    * record custom events into the same ordered stream. The event is frozen
    * (its `grant` copied and frozen too): the log can only be appended to.
+   * Its `hash` chains it to the event before it (`chain.ts`); a `hash` the
+   * caller passes is ignored.
    */
-  recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent {
+  recordEvent(event: Omit<AllowanceEvent, "seq" | "hash">): AllowanceEvent {
+    const prev = this.head;
     const full: AllowanceEvent = { seq: this.seq_++, ...event };
     if (event.grant !== undefined) full.grant = freezeGrant(event.grant);
+    delete full.hash;
+    full.hash = eventHash(prev, full);
     Object.freeze(full);
+    chainedAfter.set(full, prev);
     this.events_.push(full);
     return full;
   }

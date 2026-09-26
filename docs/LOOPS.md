@@ -386,3 +386,47 @@ fields, so a persisted snapshot cannot be replayed. The audit runs three times a
 arena about 25% slower.
 
 Full numbers: [`docs/loops/loop-6.json`](loops/loop-6.json); diffs: [`docs/loops/loop-6/`](loops/loop-6/).
+
+## Loop 7
+
+**Merged: the audit survives persistence (R, C).** Structural; no utility is claimed. On both
+sealed blocks (A: seeds 17000–17199, B: 17500–17699) every paired change is exactly zero. On block
+B the center book returns a certainty equivalent of 12.03% vs 6.51% for per-agent guardrails, max
+drawdown 7.50% vs 6.92%, still above the guardrails' (scaled to their volatility it is 6.40%,
+below them); the Tiger overlay −8.13% vs −20.07% for buy-and-hold, max drawdown 25.2% vs 40.2%.
+
+- **Snapshots replay.** Snapshot JSON now carries what replay needs (each grant, and each
+  resize's prior budget). `replaySnapshot` / `verifySnapshot` rebuild a tree from the JSON alone
+  and compare every node the snapshot shows, so a budget edited in the file without a matching
+  event is reported. Older snapshots still parse; they just cannot be verified.
+- **Hash chain.** Every recorded event carries SHA-256(previous hash + its fields), in a small
+  pure-TypeScript SHA-256 (tested against standard vectors, browser-safe, no new dependency).
+  An edited, deleted, inserted or reordered past event breaks the chain at that point. It does
+  **not** stop someone with API access from appending a forged event: the log is chained, not
+  signed.
+- The fund console's snapshot shows the log without its RESIZE events, so that view drops the
+  hash links (a filtered chain would read as tampering). The full chain is checked against the
+  live tree inside the run. `demo-snapshot.json` verifies with 0 discrepancies. The committed
+  AgentHire recording predates this loop, so it has no hash links and cannot be verified;
+  recording it again (`npm run demo:agenthire`) adds them.
+
+| candidate | review | sealed block A (vs current code) | outcome |
+|---|---|---|---|
+| persist: replayable snapshots and a hash-chained log (structure) | passed | 0.00 pp, max DD 0.00 pp | winner on A; confirmed on B; **merged** |
+| fund-level drawdown control (risk) | — | no diff | null result: 6 variants |
+| risk budgets in volatility terms (wildcard) | — | no diff | null result: 11 variants |
+
+**What the null results found.** Seventeen variants that real multi-manager funds use (a book
+volatility cap from the agents' own covariance, tighter concentration, a Sharpe hurdle, per-agent
+loss budgets, ex-ante vol budgets, realized-vol limits, operator-level share caps, Sortino
+ranking) all bought less drawdown per unit of utility given up (0.38–0.93 pp per pp) than the
+1.3 bar, and most bought less than simply deploying less capital (0.64–0.70). The reasons: in
+these worlds trailing volatility barely predicts the next month's (correlation 0.23) and predicts
+slightly *higher* returns, so volatility targeting de-risks in good states; and the agents behind
+the worst drawdowns are mostly the ones with real edge. In a plain random-walk check even the
+theoretically best drawdown rule (Grossman–Zhou) reaches only about 0.8. The researcher's
+recommendation, which this ledger adopts: stop searching for a drawdown overlay. The center
+book's higher raw drawdown is a scale effect (it is lower at equal volatility); a fund that wants
+a lower raw drawdown should choose a lower deployment on purpose, as a risk-appetite decision.
+
+Full numbers: [`docs/loops/loop-7.json`](loops/loop-7.json); diffs: [`docs/loops/loop-7/`](loops/loop-7/).

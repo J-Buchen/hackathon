@@ -733,7 +733,13 @@ export async function buildFundSnapshot(opts: BuildOptions): Promise<FundSnapsho
 
   const decisionTicks = [...new Set([...center.decisions.map((d) => d.t), T - 1])].sort((a, b) => a - b);
   const asOf = tickToUnix(T);
-  const tree = toSnapshot(center.tree, { asOf, events: events.filter((e) => e.type !== "RESIZE") });
+  // The console shows the tree's log without its RESIZE events (the allocator
+  // makes hundreds). A filtered log cannot carry the hash chain: its links
+  // would name events that are not there and read as tampering. So the view
+  // drops the links; the full chain is checked against the live tree inside
+  // the run (runBook's audits call verifyAgainstLog), not from this file.
+  const view = toSnapshot(center.tree, { asOf, events: events.filter((e) => e.type !== "RESIZE") });
+  const tree = { ...view, events: view.events.map(({ hash: _hash, ...e }) => e) };
   const treeNodes = tree.nodes.map((n) => n.name);
   const stateAt = (t: number) => {
     const s = observed.states.get(t);

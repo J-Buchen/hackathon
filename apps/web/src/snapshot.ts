@@ -17,6 +17,7 @@ import type {
   Snapshot,
   SnapshotNode,
   SnapshotEvent,
+  SnapshotGrant,
   SnapshotMandate,
   IdentityStatus,
   EventType,
@@ -162,7 +163,7 @@ function isSnapshotEvent(v: unknown, path: string): SnapshotEvent {
       e.result,
     );
   }
-  return {
+  const out: SnapshotEvent = {
     seq: asNumber(e.seq, `${path}.seq`),
     type: e.type,
     node: asString(e.node, `${path}.node`),
@@ -171,6 +172,33 @@ function isSnapshotEvent(v: unknown, path: string): SnapshotEvent {
     amount: asStringOrNull(e.amount, `${path}.amount`),
     merchant: asStringOrNull(e.merchant, `${path}.merchant`),
   };
+  // Optional replay material: absent in older snapshots, checked when present.
+  if (e.grant !== undefined) out.grant = parseGrant(e.grant, `${path}.grant`);
+  if (e.before !== undefined) out.before = asString(e.before, `${path}.before`);
+  if (e.hash !== undefined) out.hash = asString(e.hash, `${path}.hash`);
+  return out;
+}
+
+function parseGrant(v: unknown, path: string): SnapshotGrant {
+  const g = asObject(v, path);
+  if (!isIdentityStatus(g.identityStatus)) {
+    fail(`${path}.identityStatus`, `'verified' | 'expired' | 'none'`, g.identityStatus);
+  }
+  const out: SnapshotGrant = {
+    parent: asStringOrNull(g.parent, `${path}.parent`),
+    identityStatus: g.identityStatus,
+    allowedMerchants: asStringArrayOrNull(g.allowedMerchants, `${path}.allowedMerchants`),
+    allowedPurposes: asStringArrayOrNull(g.allowedPurposes, `${path}.allowedPurposes`),
+    expiry: asNumber(g.expiry, `${path}.expiry`),
+  };
+  if (g.principal !== undefined) {
+    const p = asObject(g.principal, `${path}.principal`);
+    out.principal = {
+      name: asString(p.name, `${path}.principal.name`),
+      verified: asBoolean(p.verified, `${path}.principal.verified`),
+    };
+  }
+  return out;
 }
 
 /* -------------------------------------------------------------------------- */

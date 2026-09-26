@@ -58,6 +58,27 @@ export interface SnapshotEvent {
   /** Smallest-unit string, or null for non-monetary events. */
   amount: string | null;
   merchant: string | null;
+  /*
+   * Replay material and the hash-chain link (core's `SnapshotEvent`). Optional:
+   * snapshots written before they were serialized carry none of them, and the
+   * dashboard does not need them to render.
+   */
+  /** FUND / DELEGATE OK: the node as created. */
+  grant?: SnapshotGrant;
+  /** RESIZE OK: the budget before, smallest-unit string. */
+  before?: string;
+  /** SHA-256 hex chaining this event to the one before it. */
+  hash?: string;
+}
+
+export interface SnapshotGrant {
+  parent: string | null;
+  identityStatus: IdentityStatus;
+  allowedMerchants: string[] | null;
+  allowedPurposes: string[] | null;
+  expiry: number;
+  /** FUND only. */
+  principal?: { name: string; verified: boolean };
 }
 
 export interface Snapshot {

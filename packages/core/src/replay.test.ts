@@ -18,9 +18,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { AttenuationError } from "./attenuation";
 import { pay, type PaymentAdapters } from "./payment";
-import { toSnapshot } from "./serialize";
+import { replaySnapshot, toSnapshot, verifySnapshot } from "./serialize";
 import { DelegationTree, ReplayError, type LogDiscrepancy } from "./tree";
-import type { AgentNode, AllowanceEvent, PaymentOutcome } from "./types";
+import type { AgentNode, AllowanceEvent, PaymentOutcome, Snapshot } from "./types";
 
 const FAR = 4_000_000_000;
 const NOW = 1_000;
@@ -82,6 +82,30 @@ function assertReplays(tree: DelegationTree, label = ""): void {
   }
   assert.deepEqual(toSnapshot(rebuilt, { asOf: 0 }), toSnapshot(tree, { asOf: 0 }), `${label}: snapshot`);
   assert.equal(rebuilt.nextSeq, tree.nextSeq);
+  assertSnapshotReplays(tree, label);
+}
+
+/**
+ * The audit holds across persistence: toSnapshot -> JSON.stringify -> parse
+ * -> replaySnapshot gives the live tree (every node field, the principal, the
+ * children in order, the same log with the same hash chain), and the JSON
+ * verifies against the live tree's head.
+ */
+function assertSnapshotReplays(tree: DelegationTree, label = ""): void {
+  const snap = toSnapshot(tree, { asOf: 7 });
+  const json = JSON.parse(JSON.stringify(snap)) as Snapshot;
+  assert.deepEqual(verifySnapshot(json, { head: tree.head }), [], `${label}: snapshot verifies`);
+  const back = replaySnapshot(json, { head: tree.head });
+  assert.deepEqual(back.listNodes(), tree.listNodes(), `${label}: snapshot nodes`);
+  assert.deepEqual(back.principal, tree.principal, `${label}: snapshot principal`);
+  for (const n of tree.listNodes()) {
+    assert.deepEqual(back.childrenOf(n.name).map((c) => c.name), tree.childrenOf(n.name).map((c) => c.name), `${label}: snapshot children of ${n.name}`);
+  }
+  assert.deepEqual(back.events, tree.events, `${label}: snapshot log`);
+  assert.equal(back.head, tree.head, `${label}: snapshot head`);
+  assert.equal(back.nextSeq, tree.nextSeq, `${label}: snapshot seq`);
+  assert.deepEqual(toSnapshot(back, { asOf: 7 }), snap, `${label}: snapshot round trip`);
+  assert.deepEqual(back.verifyAgainstLog({ fromScratch: true }), [], `${label}: the replayed tree is its own log`);
 }
 
 const kinds = (d: readonly LogDiscrepancy[]) => d.map((x) => `${x.kind} ${x.node}`);
@@ -374,8 +398,13 @@ test("the log can only be appended to: events are frozen, and a replaced, remove
   assert.deepEqual(kinds(replaced.verifyAgainstLog()), ["LOG_REWRITTEN null"]);
   replaced.resize(B, 150n);
   assert.ok(kinds(replaced.verifyAgainstLog()).includes("LOG_REWRITTEN null"), "sticky");
-  // A replay of the rewritten log alone disagrees with the tree it did not build.
-  assert.deepEqual(kinds(replaced.verifyAgainstLog({ fromScratch: true })), [`UNLOGGED_WRITE ${B}`]);
+  // A replay of the rewritten log alone disagrees with the tree it did not
+  // build, and (since the hash chain) the edited event no longer carries the
+  // hash of its own fields.
+  const fromScratch = replaced.verifyAgainstLog({ fromScratch: true });
+  assert.deepEqual(kinds(fromScratch), [`LOG_REWRITTEN ${B}`, `UNLOGGED_WRITE ${B}`]);
+  assert.equal(fromScratch[0]!.seq, 3);
+  assert.match(fromScratch[0]!.message, /hash chain breaks/);
 
   // Removed.
   const truncated = await built();
@@ -399,7 +428,9 @@ test("the log can only be appended to: events are frozen, and a replaced, remove
     merchant: null,
     before: 200n,
   });
-  assert.deepEqual(kinds(smuggled.verifyAgainstLog()), ["LOG_REWRITTEN null", `UNLOGGED_WRITE ${B}`]);
+  // (since the hash chain) it also carries no hash, which the replay names first.
+  assert.deepEqual(kinds(smuggled.verifyAgainstLog()), [`LOG_REWRITTEN ${B}`, "LOG_REWRITTEN null", `UNLOGGED_WRITE ${B}`]);
+  assert.match(smuggled.verifyAgainstLog()[0]!.message, /carries no hash/);
 });
 
 test("events the tree never records do not replay: BAD_EVENT, and DelegationTree.replay throws", async () => {

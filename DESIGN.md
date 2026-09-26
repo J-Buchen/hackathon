@@ -302,8 +302,13 @@ class DelegationTree {
   //   agree): catches a direct write even when it keeps every invariant and a
   //   later resize overwrote it. runBook calls it at every audit. Limits: the
   //   log is not signed (recordEvent is public, so a forged matching event
-  //   hides a write), and snapshot JSON does not carry `grant`/`before`, so
-  //   only an in-memory log replays.
+  //   hides a write). (loop 7) Every event also carries `hash` =
+  //   SHA-256(previous hash + its fields), and the check walks the chain, so
+  //   an edited, deleted, inserted or reordered past event is caught; an
+  //   appended forgery is not (chained, not signed).
+  // serialize.ts (loop 7): snapshot events carry `grant`, `before` and `hash`;
+  //   verifySnapshot(json) / replaySnapshot(json) rebuild a tree from the JSON
+  //   alone and report every node that differs from the replayed log.
   recordEvent(event: Omit<AllowanceEvent, "seq">): AllowanceEvent; // custom events (frozen once recorded)
 }
 ```

@@ -82,7 +82,19 @@
       "detail": "principal \"alice\" funded root with budget 100000000",
       "result": "OK",
       "amount": "100000000",
-      "merchant": null
+      "merchant": null,
+      "grant": {
+        "parent": null,
+        "identityStatus": "verified",
+        "allowedMerchants": null,
+        "allowedPurposes": null,
+        "expiry": 1792929600,
+        "principal": {
+          "name": "alice",
+          "verified": true
+        }
+      },
+      "hash": "a1376460f56af198f37ce334784b17b8532780ca96a70688751cb54334129998"
     },
     {
       "seq": 1,
@@ -91,7 +103,19 @@
       "detail": "alice.eth delegated budget 30000000 to researcher",
       "result": "OK",
       "amount": "30000000",
-      "merchant": null
+      "merchant": null,
+      "grant": {
+        "parent": "alice.eth",
+        "identityStatus": "verified",
+        "allowedMerchants": [
+          "arxiv",
+          "openai",
+          "sanctioned-vendor"
+        ],
+        "allowedPurposes": null,
+        "expiry": 1792929600
+      },
+      "hash": "61a2c6a48eaaf6162d1bdc7a224d1264cb1d5e08b0eb5ac38e8caa68e9c9b69a"
     },
     {
       "seq": 2,
@@ -100,7 +124,17 @@
       "detail": "researcher.alice.eth delegated budget 10000000 to scraper",
       "result": "OK",
       "amount": "10000000",
-      "merchant": null
+      "merchant": null,
+      "grant": {
+        "parent": "researcher.alice.eth",
+        "identityStatus": "verified",
+        "allowedMerchants": [
+          "arxiv"
+        ],
+        "allowedPurposes": null,
+        "expiry": 1792929600
+      },
+      "hash": "e76f9436028f4b3cb0a8d04ad0233812d98fe8415474d5863942f2d5d772b05e"
     },
     {
       "seq": 3,
@@ -109,7 +143,8 @@
       "detail": "attenuation rejected (BUDGET_EXCEEDS_AVAILABLE): proposed budget 999000000 exceeds parent available 20000000",
       "result": "ATTENUATION_REJECTED",
       "amount": "999000000",
-      "merchant": null
+      "merchant": null,
+      "hash": "b9f4f9407fa97e93ceb46c930bf0b005fde87fb602cd16ccab54bfa833befab8"
     },
     {
       "seq": 4,
@@ -118,7 +153,8 @@
       "detail": "payment of 15000000 to arxiv -> BLOCKED_MANDATE: amount 15000000 exceeds available 10000000",
       "result": "BLOCKED_MANDATE",
       "amount": "15000000",
-      "merchant": "arxiv"
+      "merchant": "arxiv",
+      "hash": "46d231cff98aee98fb359b7f5040b5ccfd9d14525d4f1b12a3156a0c51ac317f"
     },
     {
       "seq": 5,
@@ -127,7 +163,8 @@
       "detail": "payment of 5000000 to sanctioned-vendor -> BLOCKED_SCREENING: merchant \"sanctioned-vendor\" matched a sanctions/denylist screen",
       "result": "BLOCKED_SCREENING",
       "amount": "5000000",
-      "merchant": "sanctioned-vendor"
+      "merchant": "sanctioned-vendor",
+      "hash": "e81e542fca58199959b711ec14629f99deed30c961c220cac3df659e6e1a481c"
     },
     {
       "seq": 6,
@@ -136,7 +173,8 @@
       "detail": "paid 8000000 to openai",
       "result": "SETTLED",
       "amount": "8000000",
-      "merchant": "openai"
+      "merchant": "openai",
+      "hash": "4eed6d285c04fa4bc7adcd7ecca3af6ca177b6bde5714ef6482f68e386a8b6b6"
     },
     {
       "seq": 7,
@@ -145,7 +183,15 @@
       "detail": "alice.eth delegated budget 5000000 to ghost",
       "result": "OK",
       "amount": "5000000",
-      "merchant": null
+      "merchant": null,
+      "grant": {
+        "parent": "alice.eth",
+        "identityStatus": "expired",
+        "allowedMerchants": null,
+        "allowedPurposes": null,
+        "expiry": 1792929600
+      },
+      "hash": "5b22263beb23da7ed04ceb2ecc4884cecb01d7b4bb3f09237ee59e103c160c1c"
     },
     {
       "seq": 8,
@@ -154,7 +200,8 @@
       "detail": "payment of 3000000 to arxiv -> DENIED_IDENTITY: ghost.alice.eth failed World ID (rogue/unregistered agent)",
       "result": "DENIED_IDENTITY",
       "amount": "3000000",
-      "merchant": "arxiv"
+      "merchant": "arxiv",
+      "hash": "01c7c5bdac4fe9e0056fd2f02420297c99800f982cd9dd0baa830661f5f33c86"
     },
     {
       "seq": 9,
@@ -163,7 +210,8 @@
       "detail": "mandate for \"researcher.alice.eth\" revoked; all descendants disabled",
       "result": "REVOKED",
       "amount": null,
-      "merchant": null
+      "merchant": null,
+      "hash": "07e35fe7d6c9e1a995594ad1b41d68041c3c39a310f999fdc0eee39cd0e74606"
     },
     {
       "seq": 10,
@@ -172,7 +220,8 @@
       "detail": "payment of 5000000 to arxiv -> REVOKED: node or an ancestor is revoked",
       "result": "REVOKED",
       "amount": "5000000",
-      "merchant": "arxiv"
+      "merchant": "arxiv",
+      "hash": "4195be85cbd7c5c725c26b461928338910e57f615dd60c183c57e14dd10d8646"
     }
   ]
 }

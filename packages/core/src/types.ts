@@ -162,6 +162,12 @@ export interface AllowanceEvent {
    * resize overwrites it. The tree's own API always sets it.
    */
   before?: bigint;
+  /**
+   * SHA-256 (hex) over the hash of the event before it and every field
+   * above (see `chain.ts`). `recordEvent` always sets it; replay reports an
+   * event without it, or with one that does not match, as LOG_REWRITTEN.
+   */
+  hash?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -267,6 +273,17 @@ export interface SnapshotNode {
   mandate: SnapshotMandate;
 }
 
+/** `EventGrant` as serialized: allowlists as arrays, `null` meaning "any". */
+export interface SnapshotGrant {
+  parent: string | null;
+  identityStatus: IdentityStatus;
+  allowedMerchants: string[] | null;
+  allowedPurposes: string[] | null;
+  expiry: number;
+  /** FUND only. */
+  principal?: { name: string; verified: boolean };
+}
+
 export interface SnapshotEvent {
   seq: number;
   type: EventType;
@@ -275,6 +292,16 @@ export interface SnapshotEvent {
   result: EventResult;
   amount: string | null;
   merchant: string | null;
+  /**
+   * What replay needs (see `AllowanceEvent`). Optional so that snapshots
+   * written before they were serialized still parse; such a snapshot shows
+   * its log but cannot be replayed (`verifySnapshot` reports it).
+   */
+  grant?: SnapshotGrant;
+  /** RESIZE / OK: the budget before, as a decimal string. */
+  before?: string;
+  /** The event's hash-chain link (see `chain.ts`). */
+  hash?: string;
 }
 
 export interface Snapshot {
