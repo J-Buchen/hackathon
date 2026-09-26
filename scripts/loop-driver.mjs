@@ -123,7 +123,8 @@ for (const [k, p] of proposals.entries()) {
     writeFileSync(f, p.diff.endsWith("\n") ? p.diff : p.diff + "\n");
     entry.diffFile = `docs/loops/loop-${L}/candidate-${k}.diff`;
   }
-  if (!p.review?.ok || !p.diff?.trim()) { entry.status = "rejected-review"; continue; }
+  if (!p.diff?.trim()) { entry.status = "no-diff"; continue; }
+  if (!p.review?.ok) { entry.status = "rejected-review"; continue; }
   const wt = worktree(`c${k}`, [p.diff]);
   if (wt.applied.length === 0) { entry.status = "does-not-apply"; continue; }
   if (!testsPass(wt.dir)) { entry.status = "tests-fail"; continue; }

@@ -206,13 +206,14 @@
    "reviewProblems": [
     "no diff"
    ],
-   "status": "rejected-review",
+   "status": "no-diff",
    "reviewSummary": "nothing to review",
    "research": {
     "checkBefore": "",
     "checkAfter": "",
     "variantsTried": 0
-   }
+   },
+   "statusNote": "the driver marked it rejected-review; it returned no diff, so there was nothing to review (relabelled after the final verification)"
   }
  ],
  "confirmations": [
@@ -437,5 +438,6 @@
    ],
    "note": "incident + replay composed by the orchestrator (conflict: the root package.json test list only)"
   }
- ]
+ ],
+ "provenanceNote": "this report was written by scripts/loop-driver.mjs as it stood at 87f49ef, before it kept maxDDAtBaselineVol in its books; riskSummary.centerMaxDDAtGuardrailsVolAfter comes from a separate sealed eval of block B on the merged code (volMatchedSource), which the final verification reproduced exactly"
 }

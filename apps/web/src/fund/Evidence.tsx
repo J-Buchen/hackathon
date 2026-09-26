@@ -200,6 +200,8 @@ function Axis({ ticks, x, label, top }: { ticks: number[]; x: (v: number) => str
 const STATUS_LABEL: Record<string, string> = {
   "winner-A": "won block A",
   "rejected-review": "rejected in code review",
+  "no-diff": "returned no diff",
+  "null-result": "null result (no diff)",
   "no-uplift-A": "no uplift on block A",
   "harms-A": "hurt block A",
   "tests-fail": "failed tests",

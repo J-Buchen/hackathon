@@ -355,7 +355,7 @@ investor, because in the arena its single name has no edge. Full numbers:
 against its own event log (R, C).** Both structural; no utility is claimed. On both sealed blocks
 (A: seeds 16000–16199, B: 16500–16699) every paired change is exactly zero: utility, max drawdown,
 Sharpe, and the Tiger overlay. On block B the center book returns a certainty equivalent of 13.71%
-vs 8.20% for per-agent guardrails, max drawdown 7.32% vs 6.95% (still above the guardrails', 6.58% at their volatility); the
+vs 8.20% for per-agent guardrails, max drawdown 7.32% vs 6.95%, still above the guardrails' (scaled to their volatility it is 6.58%, below them); the
 Tiger overlay −7.35% vs −21.89% for buy-and-hold, max drawdown 24.6% vs 41.9%.
 
 - **Incident.** When the book stops an agent out, it now reports one `stop-out` incident to an
@@ -364,8 +364,8 @@ Tiger overlay −7.35% vs −21.89% for buy-and-hold, max drawdown 24.6% vs 41.9
   `close` freed. A stop-out is a loss, not misconduct: it is never sent to AgentHire's dispute
   route, never a slash, and has its own limit (`maxOperatorStopOuts`, default 2), separate from
   the misconduct limit (default 0, unchanged). The same rule screens new AgentHire hires and new
-  grants in a fund's tree (`OperatorGrantScreen`). A refused grant creates no node and reserves
-  nothing. The arena passes no sink, so it is bit-identical.
+  grants in a fund's tree (`OperatorGrantScreen`), which also fails closed when no operator is named
+  or the incident record cannot be read. A refused grant creates no node and reserves nothing. The arena passes no sink, so it is bit-identical.
 - **Replay.** `DelegationTree.replay(events)` rebuilds a tree from its log, and
   `verifyAgainstLog()` lists every way the live tree differs. The book runs this check at its
   start, trade and end audits every tick. A direct write that bypasses the API (for example,
@@ -377,7 +377,7 @@ Tiger overlay −7.35% vs −21.89% for buy-and-hold, max drawdown 24.6% vs 41.9
 |---|---|---|---|
 | stop-outs on the operator's record (structure) | passed | 0.00 pp, max DD 0.00 pp | winner on A; confirmed with replay on B (0.00 pp); **merged** |
 | replay audit of the mandate tree (structure) | passed | 0.00 pp, max DD 0.00 pp | winner on A; confirmed with incident on B; **merged** |
-| wildcard | — | no diff | nothing to judge |
+| wildcard | — | no diff (returned a placeholder) | nothing to review or judge |
 
 **Limits, from the reviews.** The log is not signed. `recordEvent` is public, so a direct write
 paired with a forged matching event passes the check (a test documents this). Replay holds in

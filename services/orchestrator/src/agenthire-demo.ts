@@ -782,7 +782,7 @@ async function main(): Promise<void> {
     "AgentHire's escrow is off-chain in live flows (completion and refunds are DB-only), so nothing here is escrow-protected.",
     `WebCrawler X's sub-hires (steps 4, 4b) and overspend attempts (step 5) were made by this demo acting for agent 5 (SIMULATED behaviour); AgentHire's WebCrawler X never contacted Allowance.`,
     `Incidents are recorded Allowance-side in ${relative(repoRoot, incidentFile)} (a local JSON file, emptied at the start of each demo run). ` +
-      "They were sent to AgentHire's /api/dispute/submit, which keyless only prints them to its server log (pending_review): nothing is stored on AgentHire's side, and AgentHire has no keyless incident route that does not slash.",
+      "They were sent to AgentHire's /api/dispute/submit, which keyless only prints them to its server log (pending_review): nothing is stored on AgentHire's side, and AgentHire's only incident route (disputes) is the one that can lead to a slash, so Allowance keeps its own record instead.",
     "Operator World ID nullifiers come from the World ID mock (MockPrincipalVerifier), seeded by the deployer wallet.",
     `The PM's return path is the Tiger overlay on synthetic arena world #${arenaSeed}, not market data; the ladder stop-out is simulated.`,
     "The shadow audit replays AgentHire's simulated marketplace events; its headline assumption is stated in audit.report.assumption, and the strict total is by definition.",
